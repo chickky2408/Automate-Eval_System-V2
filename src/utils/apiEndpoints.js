@@ -5,7 +5,8 @@
  * Set API_BASE_URL in your environment variables or update it here
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000';
 
 export const API_ENDPOINTS = {
   // System Health
@@ -16,6 +17,8 @@ export const API_ENDPOINTS = {
   // Boards/Devices Management
   BOARDS: `${API_BASE_URL}/boards`,
   BOARD_BY_ID: (id) => `${API_BASE_URL}/boards/${id}`,
+  BOARD_CREATE: `${API_BASE_URL}/boards`,
+  BOARD_UPDATE: (id) => `${API_BASE_URL}/boards/${id}`,
   BOARD_TELEMETRY: (id) => `${API_BASE_URL}/boards/${id}/telemetry`,
   BOARD_REBOOT: (id) => `${API_BASE_URL}/boards/${id}/reboot`,
   BOARD_UPDATE_FIRMWARE: (id) => `${API_BASE_URL}/boards/${id}/firmware`,
@@ -31,6 +34,8 @@ export const API_ENDPOINTS = {
   JOB_STOP: (id) => `${API_BASE_URL}/jobs/${id}/stop`,
   JOB_STOP_ALL: `${API_BASE_URL}/jobs/stop-all`,
   JOB_EXPORT: (id) => `${API_BASE_URL}/jobs/${id}/export`,
+  JOB_REORDER: (id) => `${API_BASE_URL}/jobs/${id}/reorder`,
+  JOB_RUN_COMMAND: `${API_BASE_URL}/jobs/run-command`,
   
   // Files in Job
   JOB_FILES: (jobId) => `${API_BASE_URL}/jobs/${jobId}/files`,
@@ -49,10 +54,10 @@ export const API_ENDPOINTS = {
   NOTIFICATION_MARK_ALL_READ: `${API_BASE_URL}/notifications/read-all`,
   
   // WebSocket (for real-time updates)
-  WS_BASE_URL: import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:3000',
-  WS_SYSTEM: `${import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:3000'}/ws/system`,
-  WS_BOARDS: `${import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:3000'}/ws/boards`,
-  WS_JOBS: `${import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:3000'}/ws/jobs`,
+  WS_BASE_URL,
+  WS_SYSTEM: `${WS_BASE_URL}/ws/system`,
+  WS_BOARDS: `${WS_BASE_URL}/ws/boards`,
+  WS_JOBS: `${WS_BASE_URL}/ws/jobs`,
 };
 
 export default API_ENDPOINTS;

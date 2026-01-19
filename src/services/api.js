@@ -89,6 +89,28 @@ export const getBoards = (filters = {}) => {
 export const getBoardById = (id) => apiRequest(API_ENDPOINTS.BOARD_BY_ID(id));
 
 /**
+ * Create board
+ * Body: { name, status, ip, mac, firmware, model, tag, connections }
+ */
+export const createBoard = (payload) => {
+  return apiRequest(API_ENDPOINTS.BOARD_CREATE, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+};
+
+/**
+ * Update board
+ * Body: { name?, status?, ip?, mac?, firmware?, model?, tag?, connections? }
+ */
+export const updateBoard = (id, payload) => {
+  return apiRequest(API_ENDPOINTS.BOARD_UPDATE(id), {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+};
+
+/**
  * Get board telemetry data
  * Expected Response: { voltage, signal, temp, timestamp }
  */
@@ -199,6 +221,27 @@ export const stopAllJobs = () => apiRequest(API_ENDPOINTS.JOB_STOP_ALL, { method
  * Expected Response: JSON file download or JSON data
  */
 export const exportJob = (id) => apiRequest(API_ENDPOINTS.JOB_EXPORT(id));
+
+/**
+ * Run test command
+ * Body: { name?, command, tag?, boards?, configName?, firmware?, clientId? }
+ */
+export const runCommand = (payload) => {
+  return apiRequest(API_ENDPOINTS.JOB_RUN_COMMAND, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+};
+
+/**
+ * Reorder job in queue
+ * Query param: new_position
+ * Expected Response: { message: string }
+ */
+export const reorderJob = (id, newPosition) => {
+  const url = `${API_ENDPOINTS.JOB_REORDER(id)}?new_position=${newPosition}`;
+  return apiRequest(url, { method: 'POST' });
+};
 
 /**
  * Update job tag
@@ -360,6 +403,8 @@ export default {
   // Boards
   getBoards,
   getBoardById,
+  createBoard,
+  updateBoard,
   getBoardTelemetry,
   rebootBoard,
   updateBoardFirmware,
@@ -375,6 +420,8 @@ export default {
   stopJob,
   stopAllJobs,
   exportJob,
+  reorderJob,
+  runCommand,
   updateJobTag,
   
   // Job Files

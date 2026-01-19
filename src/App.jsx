@@ -19,12 +19,18 @@ const App = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [expandJobId, setExpandJobId] = useState(null); // สำหรับ expand job จาก history
   const { systemHealth, boards } = useTestStore();
+  const refreshAll = useTestStore((state) => state.refreshAll);
   const availableBoards = boards.filter(b => b.status === 'online' && !b.currentJob).length;
   const queuedBoardsLeft = availableBoards;
-  const [notifications] = useState([
-    { id: 1, title: 'Batch #2024-001 Completed', time: '5m ago', type: 'success' },
-    { id: 2, title: 'Board #9 Connection Lost', time: '15m ago', type: 'error' },
-  ]);
+
+  useEffect(() => {
+    if (!refreshAll) return;
+    refreshAll();
+    const intervalId = setInterval(() => {
+      refreshAll();
+    }, 5000);
+    return () => clearInterval(intervalId);
+  }, [refreshAll]);
 
   return (
     <div className="flex min-h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden">
@@ -503,6 +509,8 @@ const SetupPage = () => {
     uploadedFiles, 
     addUploadedFile, 
     removeUploadedFile, 
+    createJob,
+    runTestCommand,
     jobs, 
     boards, 
     testCommands,
@@ -556,26 +564,26 @@ const SetupPage = () => {
   };
   
   // File upload handlers
-  const handleFileSelect = (selectedFiles) => {
-    Array.from(selectedFiles).forEach(file => {
+  const handleFileSelect = async (selectedFiles) => {
+    for (const file of Array.from(selectedFiles)) {
       // Validate file type
       const extension = file.name.split('.').pop().toLowerCase();
       const validExtensions = ['vcd', 'bin', 'hex', 'elf'];
       
       if (!validExtensions.includes(extension)) {
         alert(`File type .${extension} is not supported. Please upload .vcd, .bin, .hex, or .elf files.`);
-        return;
+        continue;
       }
       
       // Validate file size (max 50MB)
       const maxSize = 50 * 1024 * 1024; // 50MB
       if (file.size > maxSize) {
         alert(`File ${file.name} is too large. Maximum size is 50MB.`);
-        return;
+        continue;
       }
       
-      addUploadedFile(file);
-    });
+      await addUploadedFile(file);
+    }
   };
   
   const handleDragOver = (e) => {
@@ -633,10 +641,10 @@ const SetupPage = () => {
     };
   
     // ฟังก์ชันลบไฟล์ที่เลือก
-    const handleDeleteSelected = () => {
+    const handleDeleteSelected = async () => {
     if (selectedIds.length === 0) return;
     if (window.confirm(`Are you sure you want to delete ${selectedIds.length} file(s)?`)) {
-      selectedIds.forEach(id => removeUploadedFile(id));
+      await Promise.all(selectedIds.map(id => removeUploadedFile(id)));
         setSelectedIds([]);
       }
     };
@@ -734,9 +742,9 @@ const SetupPage = () => {
                         </div>
                       </div>
                       <button
-                        onClick={() => {
+                        onClick={async () => {
                           if (window.confirm(`Delete ${file.name}?`)) {
-                            removeUploadedFile(file.id);
+                            await removeUploadedFile(file.id);
                           }
                         }}
                         className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-all"
@@ -1054,7 +1062,7 @@ const SetupPage = () => {
                 {setupMode === 'files' ? (
                   <button 
                     className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold shadow-xl hover:bg-black transition-all"
-                    onClick={() => {
+                    onClick={async () => {
                       if (selectedIds.length === 0) {
                         alert('Please select at least one file');
                         return;
@@ -1063,7 +1071,32 @@ const SetupPage = () => {
                         alert('Please select at least one board for this batch');
                         return;
                       }
-                      alert(`Creating batch with ${selectedIds.length} file(s)${tag ? ` and tag: ${tag}` : ''} on ${selectedBoardIds.length} board(s)`);
+
+                      const selectedFiles = uploadedFiles.filter(f => selectedIds.includes(f.id));
+                      const vcdFiles = selectedFiles.filter(f => f.type === 'vcd');
+                      const firmwareFiles = selectedFiles.filter(f => f.type !== 'vcd');
+                      const boardNames = selectableBoards
+                        .filter(b => selectedBoardIds.includes(b.id))
+                        .map(b => b.name);
+
+                      const jobPayload = {
+                        name: configName || `Batch ${new Date().toISOString()}`,
+                        tag: tag || undefined,
+                        firmware: firmwareFiles[0]?.name || '',
+                        boards: boardNames,
+                        files: vcdFiles.map((file, index) => ({
+                          name: file.name,
+                          order: index + 1,
+                        })),
+                        configName: configName || undefined,
+                      };
+
+                      const created = await createJob(jobPayload);
+                      if (created) {
+                        setSelectedIds([]);
+                        setSelectedBoardIds([]);
+                        setTag('');
+                      }
                     }}
                   >
                     Create Batch
@@ -1071,7 +1104,7 @@ const SetupPage = () => {
                 ) : (
                   <button 
                     className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold shadow-xl hover:bg-black transition-all flex items-center justify-center gap-2"
-                    onClick={() => {
+                    onClick={async () => {
                       if (!selectedTestCommand) {
                         alert('Please select a test command');
                         return;
@@ -1081,9 +1114,20 @@ const SetupPage = () => {
                         return;
                       }
                       const resolvedCmd = getResolvedCommand(selectedTestCommand);
-                      alert(`Running test command:\n\n${resolvedCmd}\n\nOn ${selectedBoardIds.length} board(s)`);
-                      // Note: Command execution will be handled by backend API
-                      // See API_DOCUMENTATION.md for endpoint: POST /api/jobs/run-command
+                      const boardNames = selectableBoards
+                        .filter(b => selectedBoardIds.includes(b.id))
+                        .map(b => b.name);
+                      const payload = {
+                        name: selectedTestCommand.name,
+                        command: resolvedCmd,
+                        tag: tag || undefined,
+                        boards: boardNames,
+                        configName: configName || undefined,
+                      };
+                      const created = await runTestCommand(payload);
+                      if (created) {
+                        setSelectedBoardIds([]);
+                      }
                     }}
                   >
                     <Play size={18} />
@@ -1173,6 +1217,8 @@ const SetupPage = () => {
 const JobsPage = () => {
   const { 
     jobs, 
+    startPendingJobs,
+    stopAllJobs,
     moveJobUp,
     moveJobDown,
     stopFile, 
@@ -1197,17 +1243,9 @@ const JobsPage = () => {
     );
   };
   
-  const handleStopAll = () => {
+  const handleStopAll = async () => {
     if (window.confirm('Are you sure you want to stop all running jobs?')) {
-      jobs.forEach(job => {
-        if (job.status === 'running') {
-          job.files?.forEach(file => {
-            if (file.status === 'running') {
-              stopFile(job.id, file.id);
-            }
-          });
-        }
-      });
+      await stopAllJobs();
     }
   };
   
@@ -1241,7 +1279,10 @@ const JobsPage = () => {
           <p className="text-slate-500 mt-1">Manage and monitor all test jobs</p>
         </div>
       <div className="flex gap-3">
-          <button className="bg-emerald-500 text-white px-6 py-2 rounded-xl font-bold shadow-lg hover:bg-emerald-600 transition-all flex items-center gap-2">
+          <button
+            onClick={startPendingJobs}
+            className="bg-emerald-500 text-white px-6 py-2 rounded-xl font-bold shadow-lg hover:bg-emerald-600 transition-all flex items-center gap-2"
+          >
             <PlayCircle size={18} />
             Run Batch
           </button>
@@ -1510,7 +1551,8 @@ const BoardsPage = () => {
     setFleetFilter,
     toggleBoardSelection,
     selectAllBoards,
-    clearBoardSelection
+    clearBoardSelection,
+    runBoardBatchAction
   } = useTestStore();
   
   const [selectedBoard, setSelectedBoard] = useState(null);
@@ -1548,9 +1590,24 @@ const BoardsPage = () => {
     setShowContextMenu(true);
   };
   
-  const handleBatchAction = (action) => {
+  const handleBatchAction = async (action) => {
     const targetBoards = contextMenu?.boards || selectedBoards;
-    alert(`${action} on ${targetBoards.length} board(s): ${targetBoards.join(', ')}`);
+    if (targetBoards.length === 0) {
+      alert('No boards selected');
+      return;
+    }
+
+    if (action === 'Update Firmware') {
+      const firmwareVersion = window.prompt('Enter firmware version to apply:');
+      if (!firmwareVersion) {
+        return;
+      }
+      await runBoardBatchAction(targetBoards, 'updateFirmware', { firmwareVersion });
+    } else if (action === 'Self-Test') {
+      await runBoardBatchAction(targetBoards, 'selfTest');
+    } else {
+      await runBoardBatchAction(targetBoards, 'reboot');
+    }
     setShowContextMenu(false);
     setContextMenu(null);
   };
@@ -3600,8 +3657,8 @@ const AddBoardModal = ({ onClose }) => {
     connections: 'MQTT, SSH',
   });
 
-  const submit = () => {
-    addBoard({
+  const submit = async () => {
+    const created = await addBoard({
       name: form.name,
       status: form.status,
       ip: form.ip,
@@ -3611,7 +3668,11 @@ const AddBoardModal = ({ onClose }) => {
       tag: form.tag,
       connections: form.connections.split(',').map(s => s.trim()).filter(Boolean),
     });
-    onClose();
+    if (created) {
+      onClose();
+    } else {
+      alert('Failed to add board');
+    }
   };
 
   return (

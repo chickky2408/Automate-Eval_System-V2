@@ -24,6 +24,7 @@
 
 import { create } from 'zustand';
 import { getClientId } from '../utils/sessionStorage';
+import api from '../services/api';
 
 // Load test commands from localStorage
 const loadTestCommands = () => {
@@ -56,190 +57,40 @@ const formatFileSize = (bytes) => {
   return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 };
 
-export const useTestStore = create((set) => ({
+const inferFileType = (name, typeHint) => {
+  if (typeHint) {
+    const lowered = String(typeHint).toLowerCase();
+    if (lowered.includes('vcd')) return 'vcd';
+  }
+  const ext = String(name || '').split('.').pop()?.toLowerCase();
+  if (ext === 'vcd') return 'vcd';
+  return 'firmware';
+};
+
+export const useTestStore = create((set, get) => ({
   // System Health
   systemHealth: {
-    totalBoards: 52,
-    onlineBoards: 45,
-    busyBoards: 5,
-    errorBoards: 2,
-    storageUsage: 68, // percentage
-    storageTotal: '10TB',
-    storageUsed: '6.8TB',
-    mqttBrokerStatus: 'online' // 'online' | 'offline'
+    totalBoards: 0,
+    onlineBoards: 0,
+    busyBoards: 0,
+    errorBoards: 0,
+    storageUsage: 0, // percentage
+    storageTotal: '0B',
+    storageUsed: '0B',
+    mqttBrokerStatus: 'offline' // 'online' | 'offline'
   },
   
   // Boards/Devices
-  boards: [
-    { id: 1, name: 'Board #1', status: 'online', ip: '192.168.1.101', mac: '00:1B:44:11:3A:B7', firmware: 'v2.3.1', model: 'STM32', voltage: 3.3, signal: -45, temp: 42, currentJob: 'Batch #2024-001', tag: 'Line A', capabilities: ['ssh', 'mqtt', 'flash'], connections: ['MQTT', 'SSH'] },
-    { id: 2, name: 'Board #2', status: 'online', ip: '192.168.1.102', mac: '00:1B:44:11:3A:B8', firmware: 'v2.3.1', model: 'STM32', voltage: 3.2, signal: -50, temp: 40, currentJob: null, tag: 'Line A', capabilities: ['ssh', 'mqtt'], connections: ['MQTT'] },
-    { id: 3, name: 'Board #3', status: 'busy', ip: '192.168.1.103', mac: '00:1B:44:11:3A:B9', firmware: 'v2.3.0', model: 'STM32', voltage: 3.3, signal: -42, temp: 45, currentJob: 'Batch #2024-002', tag: 'Line B', capabilities: ['ssh', 'mqtt', 'flash'], connections: ['MQTT', 'SSH'] },
-    { id: 4, name: 'Board #4', status: 'online', ip: '192.168.1.104', mac: '00:1B:44:11:3A:BA', firmware: 'v2.2.9', model: 'STM32', voltage: 3.1, signal: -55, temp: 38, currentJob: null, tag: '', capabilities: ['ssh'], connections: [] },
-    { id: 5, name: 'Board #5', status: 'error', ip: '192.168.1.105', mac: '00:1B:44:11:3A:BB', firmware: 'v2.3.1', model: 'STM32', voltage: 0, signal: null, temp: null, currentJob: null, tag: 'RMA', capabilities: [], connections: [] },
-    { id: 6, name: 'Board #6', status: 'online', ip: '192.168.1.106', mac: '00:1B:44:11:3A:BC', firmware: 'v2.3.1', model: 'STM32', voltage: 3.3, signal: -48, temp: 41, currentJob: null, tag: '', capabilities: ['mqtt'], connections: ['MQTT'] },
-    { id: 7, name: 'Board #7', status: 'busy', ip: '192.168.1.107', mac: '00:1B:44:11:3A:BD', firmware: 'v2.3.0', model: 'STM32', voltage: 3.2, signal: -46, temp: 43, currentJob: 'Batch #2024-001', tag: 'Line A', capabilities: ['ssh', 'flash'], connections: ['SSH'] },
-    { id: 8, name: 'Board #8', status: 'online', ip: '192.168.1.108', mac: '00:1B:44:11:3A:BE', firmware: 'v2.2.9', model: 'STM32', voltage: 3.3, signal: -44, temp: 39, currentJob: null, tag: '', capabilities: [], connections: [] },
-    { id: 9, name: 'Board #9', status: 'error', ip: '192.168.1.109', mac: '00:1B:44:11:3A:BF', firmware: 'v2.3.1', model: 'STM32', voltage: 2.8, signal: -80, temp: 55, currentJob: null, tag: 'Investigation', capabilities: [], connections: [] },
-    { id: 10, name: 'Board #10', status: 'online', ip: '192.168.1.110', mac: '00:1B:44:11:3A:C0', firmware: 'v2.3.1', model: 'STM32', voltage: 3.3, signal: -47, temp: 40, currentJob: null, tag: '', capabilities: ['ssh'], connections: ['SSH'] },
-  ],
+  boards: [],
   
   // Jobs/Batches
-  jobs: [
-    { 
-      id: '2024-001', 
-      name: 'ERQM Regression Test', 
-      progress: 75, 
-      status: 'running', 
-      clientId: getClientId(),
-      tag: 'Team A', // Tag/Group for identification
-      totalFiles: 20,
-      completedFiles: 15,
-      firmware: 'ERQM_v2.3.bin',
-      boards: ['Board #1', 'Board #3', 'Board #7'],
-      startedAt: '2026-01-13 10:30',
-      files: [
-        { id: 1, name: 'test_case_001.vcd', status: 'completed', result: 'pass', order: 1 },
-        { id: 2, name: 'test_case_002.vcd', status: 'completed', result: 'pass', order: 2 },
-        { id: 3, name: 'test_case_003.vcd', status: 'completed', result: 'pass', order: 3 },
-        { id: 4, name: 'test_case_004.vcd', status: 'running', result: null, order: 4 },
-        { id: 5, name: 'test_case_005.vcd', status: 'pending', result: null, order: 5 },
-      ]
-    },
-    { 
-      id: '2024-002', 
-      name: 'ULP Power Test', 
-      progress: 30, 
-      status: 'running', 
-      clientId: 'other_client',
-      tag: 'Team B',
-      totalFiles: 10,
-      completedFiles: 3,
-      firmware: 'ULP_v1.5.bin',
-      boards: ['Board #3'],
-      startedAt: '2026-01-13 11:00',
-      files: [
-        { id: 1, name: 'power_test_001.vcd', status: 'completed', result: 'pass', order: 1 },
-        { id: 2, name: 'power_test_002.vcd', status: 'completed', result: 'pass', order: 2 },
-        { id: 3, name: 'power_test_003.vcd', status: 'completed', result: 'fail', order: 3 },
-        { id: 4, name: 'power_test_004.vcd', status: 'running', result: null, order: 4 },
-        { id: 5, name: 'power_test_005.vcd', status: 'pending', result: null, order: 5 },
-      ]
-    },
-    { 
-      id: '2024-003', 
-      name: 'Security Check', 
-      progress: 100, 
-      status: 'completed', 
-      clientId: getClientId(),
-      tag: 'Team A',
-      totalFiles: 5,
-      completedFiles: 5,
-      firmware: 'ERQM_v2.3.bin',
-      boards: ['Board #2'],
-      startedAt: '2026-01-13 09:00',
-      completedAt: '2026-01-13 09:45',
-      files: [
-        { id: 1, name: 'security_001.vcd', status: 'completed', result: 'pass', order: 1 },
-        { id: 2, name: 'security_002.vcd', status: 'completed', result: 'pass', order: 2 },
-        { id: 3, name: 'security_003.vcd', status: 'completed', result: 'fail', order: 3, errorMessage: 'Authentication timeout after 30 seconds', completedAt: '2026-01-13 09:30', duration: '30s' },
-        { id: 4, name: 'security_004.vcd', status: 'completed', result: 'pass', order: 4 },
-        { id: 5, name: 'security_005.vcd', status: 'completed', result: 'fail', order: 5, errorMessage: 'Encryption key validation failed', completedAt: '2026-01-13 09:42', duration: '12s' },
-      ]
-    },
-    { 
-      id: '2024-007', 
-      name: 'ERQM Full Regression', 
-      progress: 100, 
-      status: 'completed', 
-      clientId: getClientId(),
-      tag: 'Team A',
-      totalFiles: 20,
-      completedFiles: 20,
-      firmware: 'ERQM_v2.3.bin',
-      boards: ['Board #1', 'Board #3', 'Board #5'],
-      startedAt: '2026-01-13 08:00',
-      completedAt: '2026-01-13 09:25',
-      files: [
-        { id: 1, name: 'regression_001.vcd', status: 'completed', result: 'pass', order: 1 },
-        { id: 2, name: 'regression_002.vcd', status: 'completed', result: 'pass', order: 2 },
-        { id: 3, name: 'regression_003.vcd', status: 'completed', result: 'pass', order: 3 },
-        { id: 4, name: 'regression_004.vcd', status: 'completed', result: 'pass', order: 4 },
-        { id: 5, name: 'regression_005.vcd', status: 'completed', result: 'pass', order: 5 },
-      ]
-    },
-    { 
-      id: '2024-004', 
-      name: 'Performance Benchmark', 
-      progress: 45, 
-      status: 'running', 
-      clientId: getClientId(),
-      tag: 'Team C',
-      totalFiles: 15,
-      completedFiles: 7,
-      firmware: 'PERF_v1.0.bin',
-      boards: ['Board #5', 'Board #6'],
-      startedAt: '2026-01-13 11:30',
-      files: [
-        { id: 1, name: 'perf_001.vcd', status: 'completed', result: 'pass', order: 1 },
-        { id: 2, name: 'perf_002.vcd', status: 'completed', result: 'pass', order: 2 },
-        { id: 3, name: 'perf_003.vcd', status: 'running', result: null, order: 3 },
-        { id: 4, name: 'perf_004.vcd', status: 'pending', result: null, order: 4 },
-      ]
-    },
-    { 
-      id: '2024-005', 
-      name: 'Temperature Stress Test', 
-      progress: 60, 
-      status: 'running', 
-      clientId: 'other_client',
-      tag: 'Team B',
-      totalFiles: 12,
-      completedFiles: 7,
-      firmware: 'TEMP_v2.1.bin',
-      boards: ['Board #4', 'Board #8'],
-      startedAt: '2026-01-13 10:45',
-      files: [
-        { id: 1, name: 'temp_001.vcd', status: 'completed', result: 'pass', order: 1 },
-        { id: 2, name: 'temp_002.vcd', status: 'completed', result: 'pass', order: 2 },
-        { id: 3, name: 'temp_003.vcd', status: 'running', result: null, order: 3 },
-      ]
-    },
-    { 
-      id: '2024-006', 
-      name: 'Memory Leak Test', 
-      progress: 20, 
-      status: 'running', 
-      clientId: getClientId(),
-      tag: 'Team A',
-      totalFiles: 25,
-      completedFiles: 5,
-      firmware: 'MEM_v1.5.bin',
-      boards: ['Board #9'],
-      startedAt: '2026-01-13 12:00',
-      files: [
-        { id: 1, name: 'mem_001.vcd', status: 'completed', result: 'pass', order: 1 },
-        { id: 2, name: 'mem_002.vcd', status: 'running', result: null, order: 2 },
-        { id: 3, name: 'mem_003.vcd', status: 'pending', result: null, order: 3 },
-      ]
-    }
-  ],
+  jobs: [],
   
   // Notifications
-  notifications: [
-    { id: 1, title: 'Batch #2024-001 Completed', message: 'All 20 files processed successfully', time: '5m ago', type: 'success', read: false },
-    { id: 2, title: 'Board #9 Connection Lost', message: 'Device disconnected unexpectedly', time: '15m ago', type: 'error', read: false },
-    { id: 3, title: 'Batch #2024-003 Finished', message: 'Security Check completed with 5/5 passed', time: '1h ago', type: 'success', read: true },
-    { id: 4, title: 'Firmware Update Available', message: 'New version v2.3.2 ready for deployment', time: '2h ago', type: 'info', read: true },
-  ],
+  notifications: [],
   
   // Common Commands (normally use)
-  commonCommands: [
-    { id: 1, name: 'Check Board Status', command: 'ssh board@192.168.1.101 "systemctl status test-agent"', category: 'diagnostics' },
-    { id: 2, name: 'Reboot Board', command: 'ssh board@192.168.1.101 "sudo reboot"', category: 'maintenance' },
-    { id: 3, name: 'View Logs', command: 'ssh board@192.168.1.101 "tail -f /var/log/test.log"', category: 'diagnostics' },
-    { id: 4, name: 'Flash Firmware', command: 'st-flash write firmware.bin 0x8000000', category: 'firmware' },
-    { id: 5, name: 'Run Quick Test', command: './test_runner.sh --quick --board 1', category: 'testing' },
-  ],
+  commonCommands: [],
   
   // Test Code Commands (pre-written test commands)
   // Load from localStorage or use default
@@ -248,29 +99,12 @@ export const useTestStore = create((set) => ({
     if (saved && saved.length > 0) {
       return saved;
     }
-    // Default commands
-    return [
-      { id: 1, name: 'ERQM Regression Suite', command: './run_tests.sh --suite erqm --board {board_id}', description: 'Full ERQM regression test suite', category: 'regression' },
-      { id: 2, name: 'ULP Power Test', command: './power_test.sh --board {board_id} --duration 3600', description: 'Power consumption test for 1 hour', category: 'power' },
-      { id: 3, name: 'Security Check', command: './security_test.sh --board {board_id} --level full', description: 'Full security validation', category: 'security' },
-      { id: 4, name: 'Boot Test', command: './boot_test.sh --board {board_id} --iterations 10', description: 'Boot cycle test 10 iterations', category: 'boot' },
-      { id: 5, name: 'Flash Test', command: './flash_test.sh --board {board_id} --firmware {firmware}', description: 'Firmware flash and verify', category: 'firmware' },
-    ];
+    return [];
   })(),
   
-  uploadedFiles: [
-    { id: 1, name: 'test_case_001.vcd', size: '2.4 MB', date: '2h ago', type: 'vcd', file: null },
-    { id: 2, name: 'test_case_002.vcd', size: '1.8 MB', date: '3h ago', type: 'vcd', file: null },
-    { id: 3, name: 'ERQM_v2.3.bin', size: '1.2 MB', date: '1h ago', type: 'firmware', file: null },
-  ],
-  vcdFiles: [
-    { id: 1, name: 'test_case_001.vcd', size: '2.4 MB', date: '2h ago' },
-    { id: 2, name: 'test_case_002.vcd', size: '1.8 MB', date: '3h ago' }
-  ],
-  firmwares: [
-    { id: 1, name: 'ERQM_v2.3.bin', type: 'ERQM' },
-    { id: 2, name: 'ULP_v1.5.bin', type: 'ULP' }
-  ],
+  uploadedFiles: [],
+  vcdFiles: [],
+  firmwareFiles: [],
   
   // UI State
   fleetViewMode: 'grid', // 'grid' | 'list'
@@ -284,34 +118,54 @@ export const useTestStore = create((set) => ({
   
   // Actions
   addVcd: (file) => set((state) => ({ vcdFiles: [...state.vcdFiles, file] })),
-  addBoard: (boardInput) => set((state) => {
-    const nextId = Math.max(0, ...state.boards.map(b => b.id)) + 1;
-    const board = {
-      id: nextId,
-      name: boardInput.name || `Board #${nextId}`,
-      status: boardInput.status || 'online',
-      ip: boardInput.ip || '',
-      mac: boardInput.mac || '',
-      firmware: boardInput.firmware || 'v0.0.0',
-      model: boardInput.model || 'STM32',
-      voltage: null,
-      signal: null,
-      temp: null,
-      currentJob: null,
-      tag: boardInput.tag || '',
-      capabilities: boardInput.capabilities || [],
-      connections: boardInput.connections || [],
-    };
-    return { boards: [...state.boards, board] };
-  }),
-  updateBoardTag: (boardId, tag) => set((state) => ({
-    boards: state.boards.map(b => b.id === boardId ? { ...b, tag } : b)
-  })),
-  updateBoardConnections: (boardId, connections) => set((state) => ({
-    boards: state.boards.map(b => b.id === boardId ? { ...b, connections } : b)
-  })),
-  addUploadedFile: (file) => set((state) => {
-    // Check for duplicate names
+  addVcdFile: (file) => set((state) => ({ vcdFiles: [...state.vcdFiles, file] })),
+  addFirmwareFile: (file) => set((state) => ({ firmwareFiles: [...state.firmwareFiles, file] })),
+  addBoard: async (boardInput) => {
+    try {
+      const payload = {
+        name: boardInput.name,
+        status: boardInput.status,
+        ip: boardInput.ip,
+        mac: boardInput.mac,
+        firmware: boardInput.firmware,
+        model: boardInput.model,
+        tag: boardInput.tag,
+        connections: boardInput.connections,
+      };
+      const created = await api.createBoard(payload);
+      await get().refreshBoards();
+      return created;
+    } catch (error) {
+      console.error('Failed to add board', error);
+      return null;
+    }
+  },
+  updateBoard: async (boardId, updates) => {
+    set((state) => ({
+      boards: state.boards.map(b => b.id === boardId ? { ...b, ...updates } : b)
+    }));
+    try {
+      const updated = await api.updateBoard(boardId, updates);
+      if (updated) {
+        set((state) => ({
+          boards: state.boards.map(b => b.id === boardId ? updated : b)
+        }));
+      }
+      return updated;
+    } catch (error) {
+      console.error('Failed to update board', error);
+      await get().refreshBoards();
+      return null;
+    }
+  },
+  updateBoardTag: (boardId, tag) => {
+    void get().updateBoard(boardId, { tag });
+  },
+  updateBoardConnections: (boardId, connections) => {
+    void get().updateBoard(boardId, { connections });
+  },
+  addUploadedFile: async (file) => {
+    const state = get();
     const existingNames = state.uploadedFiles.map(f => f.name);
     let finalName = file.name;
     let counter = 1;
@@ -322,24 +176,52 @@ export const useTestStore = create((set) => ({
       finalName = `${baseName}_${counter}.${extension}`;
       counter++;
     }
-    
-    const newFile = {
-      id: crypto.randomUUID(),
-      name: finalName,
-      originalName: file.name,
-      size: file.size,
-      sizeFormatted: formatFileSize(file.size),
-      date: 'Just now',
-      type: file.type || (file.name.endsWith('.vcd') ? 'vcd' : 'firmware'),
-      file: file, // Store the actual File object
-      uploadDate: new Date().toISOString()
-    };
-    
-    return { uploadedFiles: [...state.uploadedFiles, newFile] };
-  }),
-  removeUploadedFile: (id) => set((state) => ({
-    uploadedFiles: state.uploadedFiles.filter(f => f.id !== id)
-  })),
+
+    let uploadTarget = file;
+    if (finalName !== file.name) {
+      uploadTarget = new File([file], finalName, { type: file.type });
+    }
+
+    try {
+      const uploaded = await api.uploadFile(uploadTarget);
+      const mapped = {
+        id: uploaded.id,
+        name: uploaded.name,
+        originalName: file.name,
+        size: uploaded.size ?? file.size,
+        sizeFormatted: formatFileSize(uploaded.size ?? file.size),
+        date: uploaded.uploadDate || 'Just now',
+        type: inferFileType(uploaded.name, uploaded.type),
+        file: null,
+        uploadDate: uploaded.uploadDate,
+      };
+      set((prev) => ({
+        uploadedFiles: [...prev.uploadedFiles, mapped],
+        vcdFiles: inferFileType(mapped.name, mapped.type) === 'vcd'
+          ? [...prev.vcdFiles, mapped]
+          : prev.vcdFiles,
+        firmwareFiles: inferFileType(mapped.name, mapped.type) !== 'vcd'
+          ? [...prev.firmwareFiles, mapped]
+          : prev.firmwareFiles,
+      }));
+      return uploaded;
+    } catch (error) {
+      console.error('Failed to upload file', error);
+      return null;
+    }
+  },
+  removeUploadedFile: async (id) => {
+    try {
+      await api.deleteFile(id);
+    } catch (error) {
+      console.error('Failed to delete file', error);
+    }
+    set((state) => ({
+      uploadedFiles: state.uploadedFiles.filter(f => f.id !== id),
+      vcdFiles: state.vcdFiles.filter(f => f.id !== id),
+      firmwareFiles: state.firmwareFiles.filter(f => f.id !== id),
+    }));
+  },
   updateProgress: (id, val) => set((state) => ({
     jobs: state.jobs.map(j => j.id === id ? { ...j, progress: val } : j)
   })),
@@ -357,23 +239,160 @@ export const useTestStore = create((set) => ({
   })),
   clearBoardSelection: () => set({ selectedBoards: [] }),
   setJobFilter: (filter) => set({ selectedJobFilter: filter }),
-  markNotificationRead: (id) => set((state) => ({
-    notifications: state.notifications.map(n => n.id === id ? { ...n, read: true } : n)
-  })),
-  markAllNotificationsRead: () => set((state) => ({
-    notifications: state.notifications.map(n => ({ ...n, read: true }))
-  })),
+  markNotificationRead: (id) => {
+    set((state) => ({
+      notifications: state.notifications.map(n => n.id === id ? { ...n, read: true } : n)
+    }));
+    void api.markNotificationRead(id)
+      .then(() => get().refreshNotifications())
+      .catch((error) => console.error('Failed to mark notification read', error));
+  },
+  markAllNotificationsRead: () => {
+    set((state) => ({
+      notifications: state.notifications.map(n => ({ ...n, read: true }))
+    }));
+    void api.markAllNotificationsRead()
+      .then(() => get().refreshNotifications())
+      .catch((error) => console.error('Failed to mark all notifications read', error));
+  },
   updateSystemHealth: (health) => set((state) => ({
     systemHealth: { ...state.systemHealth, ...health }
   })),
+
+  // Backend sync actions
+  refreshSystemHealth: async () => {
+    try {
+      const data = await api.getSystemHealth();
+      set((state) => ({ systemHealth: { ...state.systemHealth, ...data } }));
+      return data;
+    } catch (error) {
+      console.error('Failed to refresh system health', error);
+      return null;
+    }
+  },
+  refreshBoards: async () => {
+    try {
+      const data = await api.getBoards();
+      set({ boards: data });
+      return data;
+    } catch (error) {
+      console.error('Failed to refresh boards', error);
+      return null;
+    }
+  },
+  refreshJobs: async () => {
+    try {
+      const data = await api.getJobs();
+      set({ jobs: data });
+      return data;
+    } catch (error) {
+      console.error('Failed to refresh jobs', error);
+      return null;
+    }
+  },
+  refreshNotifications: async () => {
+    try {
+      const data = await api.getNotifications();
+      set({ notifications: data });
+      return data;
+    } catch (error) {
+      console.error('Failed to refresh notifications', error);
+      return null;
+    }
+  },
+  refreshFiles: async () => {
+    try {
+      const data = await api.getFiles();
+      const mapped = (data || []).map((file) => ({
+        id: file.id,
+        name: file.name,
+        originalName: file.name,
+        size: file.size,
+        sizeFormatted: formatFileSize(file.size || 0),
+        date: file.uploadDate || '',
+        type: inferFileType(file.name, file.type),
+        file: null,
+        uploadDate: file.uploadDate,
+      }));
+      set({
+        uploadedFiles: mapped,
+        vcdFiles: mapped.filter((f) => f.type === 'vcd'),
+        firmwareFiles: mapped.filter((f) => f.type !== 'vcd'),
+      });
+      return data;
+    } catch (error) {
+      console.error('Failed to refresh files', error);
+      return null;
+    }
+  },
+  refreshAll: async () => {
+    await Promise.allSettled([
+      get().refreshSystemHealth(),
+      get().refreshBoards(),
+      get().refreshJobs(),
+      get().refreshNotifications(),
+      get().refreshFiles(),
+    ]);
+  },
   
   // Job Management Actions
+  createJob: async (jobPayload) => {
+    try {
+      const clientId = getClientId();
+      const payload = { ...jobPayload, clientId };
+      const created = await api.createJob(payload);
+      await get().refreshJobs();
+      return created;
+    } catch (error) {
+      console.error('Failed to create job', error);
+      return null;
+    }
+  },
+  runTestCommand: async (commandPayload) => {
+    try {
+      const clientId = getClientId();
+      const payload = { ...commandPayload, clientId };
+      const created = await api.runCommand(payload);
+      await get().refreshJobs();
+      return created;
+    } catch (error) {
+      console.error('Failed to run test command', error);
+      return null;
+    }
+  },
+  startPendingJobs: async () => {
+    const jobs = get().jobs.filter(j => j.status === 'pending');
+    await Promise.allSettled(jobs.map((job) => api.startJob(job.id)));
+    await get().refreshJobs();
+  },
+  stopAllJobs: async () => {
+    try {
+      await api.stopAllJobs();
+      await get().refreshJobs();
+    } catch (error) {
+      console.error('Failed to stop all jobs', error);
+    }
+  },
+  runBoardBatchAction: async (boardIds, action, params = {}) => {
+    try {
+      const response = await api.batchBoardActions(boardIds, action, params);
+      await get().refreshBoards();
+      return response;
+    } catch (error) {
+      console.error('Failed to run batch board action', error);
+      return null;
+    }
+  },
   moveJobUp: (jobId) => set((state) => {
     const idx = state.jobs.findIndex(j => j.id === jobId);
     if (idx <= 0) return state;
     const jobs = [...state.jobs];
     const [moved] = jobs.splice(idx, 1);
     jobs.splice(idx - 1, 0, moved);
+    const newPosition = idx;
+    void api.reorderJob(jobId, newPosition)
+      .then(() => get().refreshJobs())
+      .catch((error) => console.error('Failed to reorder job', error));
     return { jobs };
   }),
   moveJobDown: (jobId) => set((state) => {
@@ -382,104 +401,114 @@ export const useTestStore = create((set) => ({
     const jobs = [...state.jobs];
     const [moved] = jobs.splice(idx, 1);
     jobs.splice(idx + 1, 0, moved);
+    const newPosition = idx + 2;
+    void api.reorderJob(jobId, newPosition)
+      .then(() => get().refreshJobs())
+      .catch((error) => console.error('Failed to reorder job', error));
     return { jobs };
   }),
-  stopFile: (jobId, fileId) => set((state) => ({
-    jobs: state.jobs.map(job => 
-      job.id === jobId 
-        ? {
-            ...job,
-            files: job.files.map(file => 
-              file.id === fileId && file.status === 'running'
-                ? { ...file, status: 'stopped' }
-                : file
-            )
-          }
-        : job
-    )
-  })),
-  
-  moveFileUp: (jobId, fileId) => set((state) => {
-    const job = state.jobs.find(j => j.id === jobId);
-    if (!job) return state;
-    
-    const files = [...job.files].sort((a, b) => a.order - b.order);
-    const fileIndex = files.findIndex(f => f.id === fileId);
-    
-    if (fileIndex <= 0) return state; // Already at top
-    
-    // Swap orders
-    const tempOrder = files[fileIndex].order;
-    files[fileIndex].order = files[fileIndex - 1].order;
-    files[fileIndex - 1].order = tempOrder;
-    
-    return {
-      jobs: state.jobs.map(j => 
-        j.id === jobId ? { ...j, files } : j
+  stopFile: (jobId, fileId) => {
+    set((state) => ({
+      jobs: state.jobs.map(job =>
+        job.id === jobId
+          ? {
+              ...job,
+              files: job.files.map(file =>
+                file.id === fileId && file.status === 'running'
+                  ? { ...file, status: 'stopped' }
+                  : file
+              )
+            }
+          : job
       )
-    };
-  }),
+    }));
+    void api.stopJobFile(jobId, fileId)
+      .then(() => get().refreshJobs())
+      .catch((error) => console.error('Failed to stop job file', error));
+  },
   
-  moveFileDown: (jobId, fileId) => set((state) => {
-    const job = state.jobs.find(j => j.id === jobId);
-    if (!job) return state;
-    
-    const files = [...job.files].sort((a, b) => a.order - b.order);
-    const fileIndex = files.findIndex(f => f.id === fileId);
-    
-    if (fileIndex >= files.length - 1) return state; // Already at bottom
-    
-    // Swap orders
-    const tempOrder = files[fileIndex].order;
-    files[fileIndex].order = files[fileIndex + 1].order;
-    files[fileIndex + 1].order = tempOrder;
-    
-    return {
-      jobs: state.jobs.map(j => 
-        j.id === jobId ? { ...j, files } : j
-      )
-    };
-  }),
+  moveFileUp: (jobId, fileId) => {
+    set((state) => {
+      const job = state.jobs.find(j => j.id === jobId);
+      if (!job) return state;
+      
+      const files = [...job.files].sort((a, b) => a.order - b.order);
+      const fileIndex = files.findIndex(f => f.id === fileId);
+      
+      if (fileIndex <= 0) return state;
+      
+      const tempOrder = files[fileIndex].order;
+      files[fileIndex].order = files[fileIndex - 1].order;
+      files[fileIndex - 1].order = tempOrder;
+      
+      return {
+        jobs: state.jobs.map(j =>
+          j.id === jobId ? { ...j, files } : j
+        )
+      };
+    });
+    void api.moveJobFile(jobId, fileId, 'up')
+      .then(() => get().refreshJobs())
+      .catch((error) => console.error('Failed to move job file', error));
+  },
   
-  updateJobTag: (jobId, tag) => set((state) => ({
-    jobs: state.jobs.map(j => j.id === jobId ? { ...j, tag } : j)
-  })),
+  moveFileDown: (jobId, fileId) => {
+    set((state) => {
+      const job = state.jobs.find(j => j.id === jobId);
+      if (!job) return state;
+      
+      const files = [...job.files].sort((a, b) => a.order - b.order);
+      const fileIndex = files.findIndex(f => f.id === fileId);
+      
+      if (fileIndex >= files.length - 1) return state;
+      
+      const tempOrder = files[fileIndex].order;
+      files[fileIndex].order = files[fileIndex + 1].order;
+      files[fileIndex + 1].order = tempOrder;
+      
+      return {
+        jobs: state.jobs.map(j =>
+          j.id === jobId ? { ...j, files } : j
+        )
+      };
+    });
+    void api.moveJobFile(jobId, fileId, 'down')
+      .then(() => get().refreshJobs())
+      .catch((error) => console.error('Failed to move job file', error));
+  },
   
-  exportJobToJSON: (jobId) => {
-    const state = useTestStore.getState();
-    const job = state.jobs.find(j => j.id === jobId);
-    if (!job) return null;
-    
-    const exportData = {
-      jobId: job.id,
-      name: job.name,
-      tag: job.tag,
-      firmware: job.firmware,
-      boards: job.boards,
-      files: (job.files || []).sort((a, b) => (a.order || 0) - (b.order || 0)).map(f => ({
-        name: f.name,
-        order: f.order || 0,
-        status: f.status,
-        result: f.result
-      })),
-      metadata: {
-        createdAt: job.startedAt,
-        completedAt: job.completedAt,
-        progress: job.progress,
-        status: job.status,
-        clientId: job.clientId
-      }
-    };
-    
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `job_${jobId}_${new Date().toISOString().split('T')[0]}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-    
-    return exportData;
+  updateJobTag: (jobId, tag) => {
+    set((state) => ({
+      jobs: state.jobs.map(j => j.id === jobId ? { ...j, tag } : j)
+    }));
+    void api.updateJobTag(jobId, tag)
+      .then((response) => {
+        if (response && response.job) {
+          set((state) => ({
+            jobs: state.jobs.map(j => j.id === jobId ? response.job : j)
+          }));
+          return;
+        }
+        return get().refreshJobs();
+      })
+      .catch((error) => console.error('Failed to update job tag', error));
+  },
+  
+  exportJobToJSON: async (jobId) => {
+    try {
+      const data = await api.exportJob(jobId);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `job_${jobId}_${new Date().toISOString().split('T')[0]}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      return data;
+    } catch (error) {
+      console.error('Failed to export job', error);
+      return null;
+    }
   },
   
   // Test Commands Management Actions
