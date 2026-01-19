@@ -1,0 +1,58 @@
+/**
+ * API Endpoints Configuration
+ * 
+ * Backend developers: Update these endpoints to match your API routes
+ * Set API_BASE_URL in your environment variables or update it here
+ */
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
+
+export const API_ENDPOINTS = {
+  // System Health
+  SYSTEM_HEALTH: `${API_BASE_URL}/system/health`,
+  STORAGE_STATUS: `${API_BASE_URL}/system/storage`,
+  MQTT_STATUS: `${API_BASE_URL}/system/mqtt/status`,
+  
+  // Boards/Devices Management
+  BOARDS: `${API_BASE_URL}/boards`,
+  BOARD_BY_ID: (id) => `${API_BASE_URL}/boards/${id}`,
+  BOARD_TELEMETRY: (id) => `${API_BASE_URL}/boards/${id}/telemetry`,
+  BOARD_REBOOT: (id) => `${API_BASE_URL}/boards/${id}/reboot`,
+  BOARD_UPDATE_FIRMWARE: (id) => `${API_BASE_URL}/boards/${id}/firmware`,
+  BOARD_SELF_TEST: (id) => `${API_BASE_URL}/boards/${id}/self-test`,
+  BOARD_BATCH_ACTIONS: `${API_BASE_URL}/boards/batch`,
+  BOARD_SSH_CONNECT: (id) => `${API_BASE_URL}/boards/${id}/ssh/connect`,
+  
+  // Jobs/Batches Management
+  JOBS: `${API_BASE_URL}/jobs`,
+  JOB_BY_ID: (id) => `${API_BASE_URL}/jobs/${id}`,
+  JOB_CREATE: `${API_BASE_URL}/jobs`,
+  JOB_START: (id) => `${API_BASE_URL}/jobs/${id}/start`,
+  JOB_STOP: (id) => `${API_BASE_URL}/jobs/${id}/stop`,
+  JOB_STOP_ALL: `${API_BASE_URL}/jobs/stop-all`,
+  JOB_EXPORT: (id) => `${API_BASE_URL}/jobs/${id}/export`,
+  
+  // Files in Job
+  JOB_FILES: (jobId) => `${API_BASE_URL}/jobs/${jobId}/files`,
+  JOB_FILE_STOP: (jobId, fileId) => `${API_BASE_URL}/jobs/${jobId}/files/${fileId}/stop`,
+  JOB_FILE_MOVE: (jobId, fileId) => `${API_BASE_URL}/jobs/${jobId}/files/${fileId}/move`,
+  
+  // File Upload
+  FILE_UPLOAD: `${API_BASE_URL}/files/upload`,
+  FILES: `${API_BASE_URL}/files`,
+  FILE_BY_ID: (id) => `${API_BASE_URL}/files/${id}`,
+  FILE_DELETE: (id) => `${API_BASE_URL}/files/${id}`,
+  
+  // Notifications
+  NOTIFICATIONS: `${API_BASE_URL}/notifications`,
+  NOTIFICATION_MARK_READ: (id) => `${API_BASE_URL}/notifications/${id}/read`,
+  NOTIFICATION_MARK_ALL_READ: `${API_BASE_URL}/notifications/read-all`,
+  
+  // WebSocket (for real-time updates)
+  WS_BASE_URL: import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:3000',
+  WS_SYSTEM: `${import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:3000'}/ws/system`,
+  WS_BOARDS: `${import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:3000'}/ws/boards`,
+  WS_JOBS: `${import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:3000'}/ws/jobs`,
+};
+
+export default API_ENDPOINTS;

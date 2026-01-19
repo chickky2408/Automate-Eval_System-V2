@@ -1,0 +1,398 @@
+/**
+ * API Service Layer
+ * 
+ * This service handles all API communication with the backend.
+ * Backend developers should implement these endpoints according to the specifications below.
+ * 
+ * All functions return Promises that resolve with the response data or reject with an error.
+ */
+
+import API_ENDPOINTS from '../utils/apiEndpoints';
+
+// Helper function for making API requests
+const apiRequest = async (endpoint, options = {}) => {
+  const defaultOptions = {
+    headers: {
+      'Content-Type': 'application/json',
+      // Add authentication token if available
+      ...(localStorage.getItem('authToken') && {
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+      })
+    },
+  };
+
+  const config = {
+    ...defaultOptions,
+    ...options,
+    headers: {
+      ...defaultOptions.headers,
+      ...options.headers,
+    },
+  };
+
+  try {
+    const response = await fetch(endpoint, config);
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ message: response.statusText }));
+      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('API Request Error:', error);
+    throw error;
+  }
+};
+
+// ============================================
+// SYSTEM HEALTH APIs
+// ============================================
+
+/**
+ * Get system health summary
+ * Expected Response: { totalBoards, onlineBoards, busyBoards, errorBoards, storageUsage, storageTotal, storageUsed, mqttBrokerStatus }
+ */
+export const getSystemHealth = () => apiRequest(API_ENDPOINTS.SYSTEM_HEALTH);
+
+/**
+ * Get storage status
+ * Expected Response: { usage, total, used, percentage }
+ */
+export const getStorageStatus = () => apiRequest(API_ENDPOINTS.STORAGE_STATUS);
+
+/**
+ * Get MQTT broker status
+ * Expected Response: { status: 'online' | 'offline', lastConnected, messageCount }
+ */
+export const getMqttStatus = () => apiRequest(API_ENDPOINTS.MQTT_STATUS);
+
+// ============================================
+// BOARDS/DEVICES APIs
+// ============================================
+
+/**
+ * Get all boards
+ * Query params: ?status=online&model=STM32&firmware=v2.3.1
+ * Expected Response: Array of board objects
+ */
+export const getBoards = (filters = {}) => {
+  const queryParams = new URLSearchParams(filters).toString();
+  const url = queryParams ? `${API_ENDPOINTS.BOARDS}?${queryParams}` : API_ENDPOINTS.BOARDS;
+  return apiRequest(url);
+};
+
+/**
+ * Get board by ID
+ * Expected Response: Board object with full details
+ */
+export const getBoardById = (id) => apiRequest(API_ENDPOINTS.BOARD_BY_ID(id));
+
+/**
+ * Get board telemetry data
+ * Expected Response: { voltage, signal, temp, timestamp }
+ */
+export const getBoardTelemetry = (id) => apiRequest(API_ENDPOINTS.BOARD_TELEMETRY(id));
+
+/**
+ * Reboot a board
+ * Expected Response: { success: true, message: string }
+ */
+export const rebootBoard = (id) => apiRequest(API_ENDPOINTS.BOARD_REBOOT(id), { method: 'POST' });
+
+/**
+ * Update board firmware
+ * Body: { firmwareVersion: string, firmwareFile: File }
+ * Expected Response: { success: true, message: string }
+ */
+export const updateBoardFirmware = (id, firmwareVersion, firmwareFile) => {
+  const formData = new FormData();
+  formData.append('firmwareVersion', firmwareVersion);
+  formData.append('firmwareFile', firmwareFile);
+  
+  return apiRequest(API_ENDPOINTS.BOARD_UPDATE_FIRMWARE(id), {
+    method: 'POST',
+    headers: {}, // Let browser set Content-Type for FormData
+    body: formData,
+  });
+};
+
+/**
+ * Run self-test on board
+ * Expected Response: { success: true, results: object }
+ */
+export const runBoardSelfTest = (id) => apiRequest(API_ENDPOINTS.BOARD_SELF_TEST(id), { method: 'POST' });
+
+/**
+ * Batch actions on multiple boards
+ * Body: { boardIds: number[], action: 'reboot' | 'updateFirmware' | 'selfTest', ...additionalParams }
+ * Expected Response: { success: true, results: Array }
+ */
+export const batchBoardActions = (boardIds, action, params = {}) => {
+  return apiRequest(API_ENDPOINTS.BOARD_BATCH_ACTIONS, {
+    method: 'POST',
+    body: JSON.stringify({ boardIds, action, ...params }),
+  });
+};
+
+/**
+ * Connect to board via SSH (WebSocket)
+ * Returns WebSocket connection URL
+ */
+export const getBoardSSHConnection = (id) => {
+  return `${API_ENDPOINTS.BOARD_SSH_CONNECT(id)}?token=${localStorage.getItem('authToken') || ''}`;
+};
+
+// ============================================
+// JOBS/BATCHES APIs
+// ============================================
+
+/**
+ * Get all jobs
+ * Query params: ?status=running&tag=Team A&clientId=xxx
+ * Expected Response: Array of job objects
+ */
+export const getJobs = (filters = {}) => {
+  const queryParams = new URLSearchParams(filters).toString();
+  const url = queryParams ? `${API_ENDPOINTS.JOBS}?${queryParams}` : API_ENDPOINTS.JOBS;
+  return apiRequest(url);
+};
+
+/**
+ * Get job by ID
+ * Expected Response: Job object with full details including files
+ */
+export const getJobById = (id) => apiRequest(API_ENDPOINTS.JOB_BY_ID(id));
+
+/**
+ * Create a new job/batch
+ * Body: { name, tag, firmware, boards, files: [{ name, order, ... }], configName }
+ * Expected Response: { id, ...jobData }
+ */
+export const createJob = (jobData) => {
+  return apiRequest(API_ENDPOINTS.JOB_CREATE, {
+    method: 'POST',
+    body: JSON.stringify(jobData),
+  });
+};
+
+/**
+ * Start a job
+ * Expected Response: { success: true, message: string }
+ */
+export const startJob = (id) => apiRequest(API_ENDPOINTS.JOB_START(id), { method: 'POST' });
+
+/**
+ * Stop a job
+ * Expected Response: { success: true, message: string }
+ */
+export const stopJob = (id) => apiRequest(API_ENDPOINTS.JOB_STOP(id), { method: 'POST' });
+
+/**
+ * Stop all running jobs
+ * Expected Response: { success: true, stoppedCount: number }
+ */
+export const stopAllJobs = () => apiRequest(API_ENDPOINTS.JOB_STOP_ALL, { method: 'POST' });
+
+/**
+ * Export job to JSON
+ * Expected Response: JSON file download or JSON data
+ */
+export const exportJob = (id) => apiRequest(API_ENDPOINTS.JOB_EXPORT(id));
+
+/**
+ * Update job tag
+ * Body: { tag: string }
+ * Expected Response: { success: true, job: updatedJob }
+ */
+export const updateJobTag = (id, tag) => {
+  return apiRequest(API_ENDPOINTS.JOB_BY_ID(id), {
+    method: 'PATCH',
+    body: JSON.stringify({ tag }),
+  });
+};
+
+// ============================================
+// FILES IN JOB APIs
+// ============================================
+
+/**
+ * Get files in a job
+ * Expected Response: Array of file objects with status and order
+ */
+export const getJobFiles = (jobId) => apiRequest(API_ENDPOINTS.JOB_FILES(jobId));
+
+/**
+ * Stop a specific file in a job
+ * Expected Response: { success: true, file: updatedFile }
+ */
+export const stopJobFile = (jobId, fileId) => {
+  return apiRequest(API_ENDPOINTS.JOB_FILE_STOP(jobId, fileId), { method: 'POST' });
+};
+
+/**
+ * Move file up/down in job queue
+ * Body: { direction: 'up' | 'down' }
+ * Expected Response: { success: true, files: reorderedFiles }
+ */
+export const moveJobFile = (jobId, fileId, direction) => {
+  return apiRequest(API_ENDPOINTS.JOB_FILE_MOVE(jobId, fileId), {
+    method: 'POST',
+    body: JSON.stringify({ direction }),
+  });
+};
+
+// ============================================
+// FILE UPLOAD APIs
+// ============================================
+
+/**
+ * Upload a file
+ * Body: FormData with file and metadata
+ * Expected Response: { id, name, size, type, uploadDate }
+ */
+export const uploadFile = (file, metadata = {}) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  Object.keys(metadata).forEach(key => {
+    formData.append(key, metadata[key]);
+  });
+  
+  return apiRequest(API_ENDPOINTS.FILE_UPLOAD, {
+    method: 'POST',
+    headers: {}, // Let browser set Content-Type for FormData
+    body: formData,
+  });
+};
+
+/**
+ * Get all uploaded files
+ * Expected Response: Array of file objects
+ */
+export const getFiles = () => apiRequest(API_ENDPOINTS.FILES);
+
+/**
+ * Get file by ID
+ * Expected Response: File object
+ */
+export const getFileById = (id) => apiRequest(API_ENDPOINTS.FILE_BY_ID(id));
+
+/**
+ * Delete a file
+ * Expected Response: { success: true }
+ */
+export const deleteFile = (id) => {
+  return apiRequest(API_ENDPOINTS.FILE_DELETE(id), { method: 'DELETE' });
+};
+
+// ============================================
+// NOTIFICATIONS APIs
+// ============================================
+
+/**
+ * Get all notifications
+ * Query params: ?read=false&limit=50
+ * Expected Response: Array of notification objects
+ */
+export const getNotifications = (filters = {}) => {
+  const queryParams = new URLSearchParams(filters).toString();
+  const url = queryParams ? `${API_ENDPOINTS.NOTIFICATIONS}?${queryParams}` : API_ENDPOINTS.NOTIFICATIONS;
+  return apiRequest(url);
+};
+
+/**
+ * Mark notification as read
+ * Expected Response: { success: true }
+ */
+export const markNotificationRead = (id) => {
+  return apiRequest(API_ENDPOINTS.NOTIFICATION_MARK_READ(id), { method: 'POST' });
+};
+
+/**
+ * Mark all notifications as read
+ * Expected Response: { success: true, count: number }
+ */
+export const markAllNotificationsRead = () => {
+  return apiRequest(API_ENDPOINTS.NOTIFICATION_MARK_ALL_READ, { method: 'POST' });
+};
+
+// ============================================
+// WebSocket Helpers
+// ============================================
+
+/**
+ * Create WebSocket connection for real-time updates
+ * @param {string} endpoint - WebSocket endpoint
+ * @param {function} onMessage - Callback for messages
+ * @param {function} onError - Callback for errors
+ * @returns WebSocket instance
+ */
+export const createWebSocket = (endpoint, onMessage, onError) => {
+  const ws = new WebSocket(endpoint);
+  
+  ws.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      onMessage(data);
+    } catch (error) {
+      console.error('WebSocket message parse error:', error);
+    }
+  };
+  
+  ws.onerror = (error) => {
+    console.error('WebSocket error:', error);
+    if (onError) onError(error);
+  };
+  
+  ws.onclose = () => {
+    console.log('WebSocket connection closed');
+  };
+  
+  return ws;
+};
+
+export default {
+  // System
+  getSystemHealth,
+  getStorageStatus,
+  getMqttStatus,
+  
+  // Boards
+  getBoards,
+  getBoardById,
+  getBoardTelemetry,
+  rebootBoard,
+  updateBoardFirmware,
+  runBoardSelfTest,
+  batchBoardActions,
+  getBoardSSHConnection,
+  
+  // Jobs
+  getJobs,
+  getJobById,
+  createJob,
+  startJob,
+  stopJob,
+  stopAllJobs,
+  exportJob,
+  updateJobTag,
+  
+  // Job Files
+  getJobFiles,
+  stopJobFile,
+  moveJobFile,
+  
+  // Files
+  uploadFile,
+  getFiles,
+  getFileById,
+  deleteFile,
+  
+  // Notifications
+  getNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  
+  // WebSocket
+  createWebSocket,
+};
