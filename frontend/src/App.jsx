@@ -19,18 +19,58 @@ const App = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [expandJobId, setExpandJobId] = useState(null); // สำหรับ expand job จาก history
   const { systemHealth, boards } = useTestStore();
-  const refreshAll = useTestStore((state) => state.refreshAll);
+  const refreshSystemHealth = useTestStore((state) => state.refreshSystemHealth);
+  const refreshBoards = useTestStore((state) => state.refreshBoards);
+  const refreshJobs = useTestStore((state) => state.refreshJobs);
+  const refreshNotifications = useTestStore((state) => state.refreshNotifications);
+  const refreshFiles = useTestStore((state) => state.refreshFiles);
+  const silentRefreshSystemHealth = useTestStore((state) => state.silentRefreshSystemHealth);
+  const silentRefreshBoards = useTestStore((state) => state.silentRefreshBoards);
+  const silentRefreshJobs = useTestStore((state) => state.silentRefreshJobs);
+  const silentRefreshNotifications = useTestStore((state) => state.silentRefreshNotifications);
+  const silentRefreshFiles = useTestStore((state) => state.silentRefreshFiles);
   const availableBoards = boards.filter(b => b.status === 'online' && !b.currentJob).length;
   const queuedBoardsLeft = availableBoards;
 
   useEffect(() => {
-    if (!refreshAll) return;
-    refreshAll();
-    const intervalId = setInterval(() => {
-      refreshAll();
-    }, 5000);
+    // รอบแรก: ใช้ refresh ปกติ (มี loading state ให้ user เห็นชัด)
+    const initialFetch = async () => {
+      await Promise.allSettled([
+        refreshSystemHealth(),
+        refreshBoards(),
+        refreshJobs(),
+        refreshNotifications(),
+        refreshFiles(),
+      ]);
+    };
+
+    // รอบถัด ๆ ไป: ใช้ silent refresh ไม่แตะ loading เพื่อไม่ให้ UI กระพริบ
+    const silentFetchAll = async () => {
+      await Promise.allSettled([
+        silentRefreshSystemHealth(),
+        silentRefreshBoards(),
+        silentRefreshJobs(),
+        silentRefreshNotifications(),
+        silentRefreshFiles(),
+      ]);
+    };
+
+    void initialFetch();
+
+    const intervalId = setInterval(silentFetchAll, 15000); // ยิงซ้ำทุก 15 วินาที
     return () => clearInterval(intervalId);
-  }, [refreshAll]);
+  }, [
+    refreshSystemHealth,
+    refreshBoards,
+    refreshJobs,
+    refreshNotifications,
+    refreshFiles,
+    silentRefreshSystemHealth,
+    silentRefreshBoards,
+    silentRefreshJobs,
+    silentRefreshNotifications,
+    silentRefreshFiles,
+  ]);
 
   return (
     <div className="flex min-h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden">
@@ -206,7 +246,7 @@ const DashboardPage = () => {
   const isDashboardLoading = loading?.systemHealth || loading?.boards || loading?.jobs;
 
   return (
-    <div className="animate-in fade-in duration-500 space-y-2.5">
+    <div className="space-y-2.5">
       {(hasDashboardError || isDashboardLoading) && (
         <div className={`rounded-xl border px-4 py-3 text-sm ${
           hasDashboardError
@@ -506,7 +546,7 @@ const BoardOverviewPage = () => {
   }
 
   return (
-    <div className="animate-in fade-in duration-500 space-y-4">
+    <div className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
         {sortedBoards.map((board, index) => (
           <div
@@ -805,7 +845,7 @@ const SetupPage = () => {
     };
   
     return (
-      <div className="animate-in slide-in-from-bottom-4 duration-500 space-y-8">
+      <div className="space-y-8">
         <div className="flex justify-between items-end">
           <div>
             <h1 className="text-3xl font-bold text-slate-800">Test Case Setup</h1>
@@ -1502,7 +1542,7 @@ const JobsPage = () => {
   };
   
   return (
-  <div className="animate-in fade-in duration-500 space-y-4">
+  <div className="space-y-4">
     <div className="flex justify-between items-center">
         <div>
       <h1 className="text-3xl font-bold">Job Management</h1>
@@ -1892,7 +1932,7 @@ const BoardsPage = () => {
   const isBoardsLoading = loading?.boards;
 
   return (
-    <div className="animate-in fade-in duration-500 space-y-4">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
@@ -2589,7 +2629,7 @@ Summary:
   }, [downloadMenuOpen]);
   
   return (
-  <div className="animate-in fade-in duration-500 space-y-6">
+  <div className="space-y-6">
       <div className="flex justify-between items-end">
         <div>
     <h1 className="text-3xl font-bold">Test History</h1>

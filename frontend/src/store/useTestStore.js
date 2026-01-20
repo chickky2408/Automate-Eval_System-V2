@@ -342,6 +342,17 @@ export const useTestStore = create((set, get) => ({
       set((state) => ({ loading: { ...state.loading, systemHealth: false } }));
     }
   },
+  // Silent refresh – ไม่แตะ loading/errors ใช้กับ auto-poll เพื่อไม่ให้ UI กระพริบ
+  silentRefreshSystemHealth: async () => {
+    try {
+      const data = await api.getSystemHealth();
+      set((state) => ({ systemHealth: { ...state.systemHealth, ...data } }));
+      return data;
+    } catch (error) {
+      console.error('Failed to silent refresh system health', error);
+      return null;
+    }
+  },
   refreshBoards: async () => {
     try {
       set((state) => ({
@@ -359,6 +370,16 @@ export const useTestStore = create((set, get) => ({
       return null;
     } finally {
       set((state) => ({ loading: { ...state.loading, boards: false } }));
+    }
+  },
+  silentRefreshBoards: async () => {
+    try {
+      const data = await api.getBoards();
+      set({ boards: data });
+      return data;
+    } catch (error) {
+      console.error('Failed to silent refresh boards', error);
+      return null;
     }
   },
   refreshJobs: async () => {
@@ -380,6 +401,16 @@ export const useTestStore = create((set, get) => ({
       set((state) => ({ loading: { ...state.loading, jobs: false } }));
     }
   },
+  silentRefreshJobs: async () => {
+    try {
+      const data = await api.getJobs();
+      set({ jobs: data });
+      return data;
+    } catch (error) {
+      console.error('Failed to silent refresh jobs', error);
+      return null;
+    }
+  },
   refreshNotifications: async () => {
     try {
       set((state) => ({
@@ -397,6 +428,16 @@ export const useTestStore = create((set, get) => ({
       return null;
     } finally {
       set((state) => ({ loading: { ...state.loading, notifications: false } }));
+    }
+  },
+  silentRefreshNotifications: async () => {
+    try {
+      const data = await api.getNotifications();
+      set({ notifications: data });
+      return data;
+    } catch (error) {
+      console.error('Failed to silent refresh notifications', error);
+      return null;
     }
   },
   refreshFiles: async () => {
@@ -431,6 +472,31 @@ export const useTestStore = create((set, get) => ({
       return null;
     } finally {
       set((state) => ({ loading: { ...state.loading, files: false } }));
+    }
+  },
+  silentRefreshFiles: async () => {
+    try {
+      const data = await api.getFiles();
+      const mapped = (data || []).map((file) => ({
+        id: file.id,
+        name: file.name,
+        originalName: file.name,
+        size: file.size,
+        sizeFormatted: formatFileSize(file.size || 0),
+        date: file.uploadDate || '',
+        type: inferFileType(file.name, file.type),
+        file: null,
+        uploadDate: file.uploadDate,
+      }));
+      set({
+        uploadedFiles: mapped,
+        vcdFiles: mapped.filter((f) => f.type === 'vcd'),
+        firmwareFiles: mapped.filter((f) => f.type !== 'vcd'),
+      });
+      return data;
+    } catch (error) {
+      console.error('Failed to silent refresh files', error);
+      return null;
     }
   },
   refreshAll: async () => {
