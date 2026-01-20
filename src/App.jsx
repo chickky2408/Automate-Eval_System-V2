@@ -99,6 +99,7 @@ const App = () => {
           {activePage === 'history' && <HistoryPage onViewJob={(jobId) => { setExpandJobId(jobId); setActivePage('jobs'); }} />}
         </div>
       </main>
+      <ToastContainer />
     </div>
   );
 };
@@ -114,13 +115,57 @@ const NavItem = ({ icon, label, active, isOpen, onClick }) => (
   </button>
 );
 
+const ToastContainer = () => {
+  const { toasts, removeToast } = useTestStore();
+
+  if (!toasts || toasts.length === 0) return null;
+
+  const getToastStyles = (type) => {
+    switch (type) {
+      case 'success':
+        return 'bg-emerald-50 border-emerald-200 text-emerald-800';
+      case 'error':
+        return 'bg-red-50 border-red-200 text-red-800';
+      case 'warning':
+        return 'bg-amber-50 border-amber-200 text-amber-800';
+      default:
+        return 'bg-slate-50 border-slate-200 text-slate-800';
+    }
+  };
+
+  return (
+    <div className="fixed top-6 right-6 z-[70] space-y-3 max-w-sm w-full">
+      {toasts.map((toast) => (
+        <div
+          key={toast.id}
+          className={`flex items-start gap-3 border rounded-xl px-4 py-3 shadow-lg ${getToastStyles(toast.type)}`}
+        >
+          <div className="pt-0.5">
+            {toast.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+          </div>
+          <div className="flex-1 text-sm font-medium">{toast.message}</div>
+          <button
+            onClick={() => removeToast(toast.id)}
+            className="p-1 rounded hover:bg-black/5"
+            aria-label="Dismiss"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 // 1. DASHBOARD PAGE (Enhanced)
 const DashboardPage = () => {
   const { 
     systemHealth, 
     boards,
     jobs, 
-    commonCommands
+    commonCommands,
+    loading,
+    errors
   } = useTestStore();
   
   const [selectedBatch, setSelectedBatch] = useState(null);
@@ -157,8 +202,22 @@ const DashboardPage = () => {
     setTimeout(() => setCopiedCommand(null), 2000);
   };
   
+  const hasDashboardError = errors?.systemHealth || errors?.boards || errors?.jobs;
+  const isDashboardLoading = loading?.systemHealth || loading?.boards || loading?.jobs;
+
   return (
     <div className="animate-in fade-in duration-500 space-y-2.5">
+      {(hasDashboardError || isDashboardLoading) && (
+        <div className={`rounded-xl border px-4 py-3 text-sm ${
+          hasDashboardError
+            ? 'bg-red-50 border-red-200 text-red-700'
+            : 'bg-blue-50 border-blue-200 text-blue-700'
+        }`}>
+          {hasDashboardError
+            ? `Failed to load dashboard data: ${hasDashboardError}`
+            : 'Loading dashboard data...'}
+        </div>
+      )}
 
       {/* System Health Summary */}
     <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -305,50 +364,62 @@ const DashboardPage = () => {
       </div>
           ) : dashTab === 'devices' ? (
             <div className="space-y-3">
-              {deviceProgressRows.map(({ board, progress }) => (
-                <div key={board.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                  <div className="flex justify-between items-center mb-2">
-      <div>
-                      <div className="font-bold text-slate-800">{board.name}</div>
-                      <div className="text-xs text-slate-500">{board.currentJob ? board.currentJob : 'Idle'}</div>
-      </div>
-                    <div className="text-xs font-bold text-blue-700 bg-blue-100 px-2 py-1 rounded-lg">
-                      {board.currentJob ? `${progress}%` : '—'}
+              {deviceProgressRows.length === 0 ? (
+                <div className="p-6 text-center text-slate-500 bg-slate-50 rounded-2xl border border-slate-100">
+                  No devices available
+                </div>
+              ) : (
+                deviceProgressRows.map(({ board, progress }) => (
+                  <div key={board.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                    <div className="flex justify-between items-center mb-2">
+        <div>
+                        <div className="font-bold text-slate-800">{board.name}</div>
+                        <div className="text-xs text-slate-500">{board.currentJob ? board.currentJob : 'Idle'}</div>
+        </div>
+                      <div className="text-xs font-bold text-blue-700 bg-blue-100 px-2 py-1 rounded-lg">
+                        {board.currentJob ? `${progress}%` : '—'}
+                      </div>
+                    </div>
+                    <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-600 transition-all" style={{ width: `${board.currentJob ? progress : 0}%` }}></div>
                     </div>
                   </div>
-                  <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
-                    <div className="h-full bg-blue-600 transition-all" style={{ width: `${board.currentJob ? progress : 0}%` }}></div>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           ) : (
             <div className="space-y-3">
               <p className="text-sm text-slate-600 mb-4">Commonly used commands - Click to copy</p>
-              {commonCommands.map((cmd) => (
-                <div key={cmd.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-blue-300 transition-all">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="font-bold text-slate-800 text-sm mb-1">{cmd.name}</div>
-                      <div className="font-mono text-xs text-slate-600 bg-white p-2 rounded border border-slate-200">
-                        {cmd.command}
-                      </div>
-                      <div className="text-xs text-slate-400 mt-1">Category: {cmd.category}</div>
-                    </div>
-                    <button
-                      onClick={() => handleCopyCommand(cmd.command)}
-                      className="p-2 hover:bg-blue-100 rounded-lg transition-all"
-                      title="Copy command"
-                    >
-                      {copiedCommand === cmd.command ? (
-                        <CheckCircle2 size={18} className="text-green-600" />
-                      ) : (
-                        <Copy size={18} className="text-blue-600" />
-                      )}
-                    </button>
-                  </div>
+              {commonCommands.length === 0 ? (
+                <div className="p-6 text-center text-slate-500 bg-slate-50 rounded-2xl border border-slate-100">
+                  No commands configured
                 </div>
-              ))}
+              ) : (
+                commonCommands.map((cmd) => (
+                  <div key={cmd.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-blue-300 transition-all">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <div className="font-bold text-slate-800 text-sm mb-1">{cmd.name}</div>
+                        <div className="font-mono text-xs text-slate-600 bg-white p-2 rounded border border-slate-200">
+                          {cmd.command}
+                        </div>
+                        <div className="text-xs text-slate-400 mt-1">Category: {cmd.category}</div>
+                      </div>
+                      <button
+                        onClick={() => handleCopyCommand(cmd.command)}
+                        className="p-2 hover:bg-blue-100 rounded-lg transition-all"
+                        title="Copy command"
+                      >
+                        {copiedCommand === cmd.command ? (
+                          <CheckCircle2 size={18} className="text-green-600" />
+                        ) : (
+                          <Copy size={18} className="text-blue-600" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           )}
         </div>
@@ -370,7 +441,7 @@ const DashboardPage = () => {
 
 // 1.5. BOARD OVERVIEW PAGE (ภาพรวมบอร์ดที่รัน test อยู่)
 const BoardOverviewPage = () => {
-  const { boards } = useTestStore();
+  const { boards, loading, errors } = useTestStore();
 
   // Helper: get numeric order from id or name
   const getBoardOrderNumber = (board) => {
@@ -400,6 +471,28 @@ const BoardOverviewPage = () => {
         return 'bg-slate-100 text-slate-700 border-slate-200';
     }
   };
+
+  if (loading?.boards) {
+    return (
+      <div className="flex items-center justify-center h-full py-20">
+        <div className="bg-white p-12 rounded-2xl border border-slate-200 shadow-sm text-center">
+          <Monitor size={48} className="text-slate-400 mx-auto mb-4" />
+          <p className="text-slate-600">Loading boards...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (errors?.boards) {
+    return (
+      <div className="flex items-center justify-center h-full py-20">
+        <div className="bg-white p-12 rounded-2xl border border-red-200 shadow-sm text-center">
+          <Monitor size={48} className="text-red-400 mx-auto mb-4" />
+          <p className="text-red-700">Failed to load boards: {errors.boards}</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!sortedBoards.length) {
     return (
@@ -514,11 +607,14 @@ const SetupPage = () => {
     jobs, 
     boards, 
     testCommands,
+    loading,
+    errors,
     addTestCommand,
     updateTestCommand,
     deleteTestCommand,
     duplicateTestCommand
   } = useTestStore();
+  const addToast = useTestStore((state) => state.addToast);
     const [selectedIds, setSelectedIds] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
@@ -530,6 +626,11 @@ const SetupPage = () => {
   const [setupMode, setSetupMode] = useState('files'); // 'files' | 'commands'
   const [showCommandManager, setShowCommandManager] = useState(false);
   const [editingCommand, setEditingCommand] = useState(null);
+  const [setupErrors, setSetupErrors] = useState({ files: '', boards: '', command: '' });
+  const [fileValidationErrors, setFileValidationErrors] = useState([]);
+  const [isCreatingBatch, setIsCreatingBatch] = useState(false);
+  const [isRunningCommand, setIsRunningCommand] = useState(false);
+  const [isDeletingFiles, setIsDeletingFiles] = useState(false);
   const [commandForm, setCommandForm] = useState({
     name: '',
     command: '',
@@ -562,6 +663,25 @@ const SetupPage = () => {
     }
     return resolved;
   };
+
+  const pushFileError = (message) => {
+    setFileValidationErrors((prev) => [...prev, message].slice(-3));
+  };
+
+  const validateSetup = (mode) => {
+    const nextErrors = { files: '', boards: '', command: '' };
+    if (mode === 'files' && selectedIds.length === 0) {
+      nextErrors.files = 'Select at least one file.';
+    }
+    if (mode === 'commands' && !selectedTestCommand) {
+      nextErrors.command = 'Select a test command.';
+    }
+    if (selectedBoardIds.length === 0) {
+      nextErrors.boards = 'Select at least one board.';
+    }
+    setSetupErrors(nextErrors);
+    return !nextErrors.files && !nextErrors.command && !nextErrors.boards;
+  };
   
   // File upload handlers
   const handleFileSelect = async (selectedFiles) => {
@@ -571,14 +691,14 @@ const SetupPage = () => {
       const validExtensions = ['vcd', 'bin', 'hex', 'elf'];
       
       if (!validExtensions.includes(extension)) {
-        alert(`File type .${extension} is not supported. Please upload .vcd, .bin, .hex, or .elf files.`);
+        pushFileError(`File type .${extension} is not supported. Please upload .vcd, .bin, .hex, or .elf files.`);
         continue;
       }
       
       // Validate file size (max 50MB)
       const maxSize = 50 * 1024 * 1024; // 50MB
       if (file.size > maxSize) {
-        alert(`File ${file.name} is too large. Maximum size is 50MB.`);
+        pushFileError(`File ${file.name} is too large. Maximum size is 50MB.`);
         continue;
       }
       
@@ -621,6 +741,32 @@ const SetupPage = () => {
   const handleBrowseClick = () => {
     fileInputRef.current?.click();
   };
+
+  useEffect(() => {
+    if (selectedIds.length > 0 && setupErrors.files) {
+      setSetupErrors((prev) => ({ ...prev, files: '' }));
+    }
+  }, [selectedIds, setupErrors.files]);
+
+  useEffect(() => {
+    if (selectedBoardIds.length > 0 && setupErrors.boards) {
+      setSetupErrors((prev) => ({ ...prev, boards: '' }));
+    }
+  }, [selectedBoardIds, setupErrors.boards]);
+
+  useEffect(() => {
+    if (selectedTestCommand && setupErrors.command) {
+      setSetupErrors((prev) => ({ ...prev, command: '' }));
+    }
+  }, [selectedTestCommand, setupErrors.command]);
+
+  useEffect(() => {
+    setSetupErrors((prev) => ({
+      ...prev,
+      files: setupMode === 'files' ? prev.files : '',
+      command: setupMode === 'commands' ? prev.command : ''
+    }));
+  }, [setupMode]);
   
     // ฟังก์ชันเลือก/ไม่เลือก ทั้งหมด
     const handleSelectAll = () => {
@@ -644,8 +790,17 @@ const SetupPage = () => {
     const handleDeleteSelected = async () => {
     if (selectedIds.length === 0) return;
     if (window.confirm(`Are you sure you want to delete ${selectedIds.length} file(s)?`)) {
-      await Promise.all(selectedIds.map(id => removeUploadedFile(id)));
+      try {
+        setIsDeletingFiles(true);
+        await Promise.all(selectedIds.map(id => removeUploadedFile(id)));
         setSelectedIds([]);
+        addToast({ type: 'success', message: 'Files deleted successfully.' });
+      } catch (error) {
+        console.error('Failed to delete files', error);
+        addToast({ type: 'error', message: 'Failed to delete files.' });
+      } finally {
+        setIsDeletingFiles(false);
+      }
       }
     };
   
@@ -702,15 +857,24 @@ const SetupPage = () => {
                 {selectedIds.length > 0 && (
                   <button 
                     onClick={handleDeleteSelected}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-bold hover:bg-red-100 transition-colors animate-in fade-in zoom-in duration-200"
+                    disabled={isDeletingFiles}
+                    className={`flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-bold transition-colors animate-in fade-in zoom-in duration-200 ${isDeletingFiles ? 'opacity-60 cursor-not-allowed' : 'hover:bg-red-100'}`}
                   >
-                    ❌ Delete Selected
+                    {isDeletingFiles ? 'Deleting...' : '❌ Delete Selected'}
                   </button>
                 )}
               </div>
   
               <div className="divide-y divide-slate-100 max-h-[500px] overflow-y-auto">
-                {uploadedFiles.length > 0 ? (
+                {loading?.files ? (
+                  <div className="p-12 text-center text-slate-400">
+                    <p>Loading files...</p>
+                  </div>
+                ) : errors?.files ? (
+                  <div className="p-12 text-center text-red-600">
+                    <p>Failed to load files: {errors.files}</p>
+                  </div>
+                ) : uploadedFiles.length > 0 ? (
                   uploadedFiles.map((file) => (
                     <div 
                       key={file.id} 
@@ -762,6 +926,11 @@ const SetupPage = () => {
                 )}
               </div>
             </div>
+            {setupErrors.files && (
+              <div className="text-sm text-red-600 px-2">
+                {setupErrors.files}
+              </div>
+            )}
   
             {/* Drag & Drop Area */}
             <div
@@ -798,6 +967,13 @@ const SetupPage = () => {
                 Supported: .vcd, .bin, .hex, .elf (Max 50MB per file)
               </p>
             </div>
+            {fileValidationErrors.length > 0 && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {fileValidationErrors.map((msg, index) => (
+                  <div key={`${msg}-${index}`}>{msg}</div>
+                ))}
+              </div>
+            )}
               </>
             ) : (
               <>
@@ -879,6 +1055,11 @@ const SetupPage = () => {
                             </div>
                           </div>
                         ))}
+                      </div>
+                    )}
+                    {setupErrors.command && (
+                      <div className="mt-4 text-sm text-red-600">
+                        {setupErrors.command}
                       </div>
                     )}
                   </div>
@@ -1029,7 +1210,11 @@ const SetupPage = () => {
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-400 uppercase">Select Boards (available)</label>
                 <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-xl bg-slate-50 p-3">
-                  {selectableBoards.length === 0 ? (
+                  {loading?.boards ? (
+                    <div className="text-sm text-slate-500">Loading boards...</div>
+                  ) : errors?.boards ? (
+                    <div className="text-sm text-red-600">Failed to load boards: {errors.boards}</div>
+                  ) : selectableBoards.length === 0 ? (
                     <div className="text-sm text-slate-500">No available boards (online & idle)</div>
                   ) : (
                     <div className="space-y-2">
@@ -1056,19 +1241,21 @@ const SetupPage = () => {
                   )}
                 </div>
                 <p className="text-xs text-slate-400">เลือก board สำหรับ batch นี้ (frontend-only ตอนนี้)</p>
+                {setupErrors.boards && (
+                  <div className="text-sm text-red-600 mt-1">
+                    {setupErrors.boards}
+                  </div>
+                )}
               </div>
               
               <div className="space-y-2 pt-2 border-t border-slate-200">
                 {setupMode === 'files' ? (
                   <button 
-                    className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold shadow-xl hover:bg-black transition-all"
+                    disabled={isCreatingBatch}
+                    className={`w-full bg-slate-900 text-white py-4 rounded-2xl font-bold shadow-xl transition-all ${isCreatingBatch ? 'opacity-60 cursor-not-allowed' : 'hover:bg-black'}`}
                     onClick={async () => {
-                      if (selectedIds.length === 0) {
-                        alert('Please select at least one file');
-                        return;
-                      }
-                      if (selectedBoardIds.length === 0) {
-                        alert('Please select at least one board for this batch');
+                      if (isCreatingBatch) return;
+                      if (!validateSetup('files')) {
                         return;
                       }
 
@@ -1091,26 +1278,31 @@ const SetupPage = () => {
                         configName: configName || undefined,
                       };
 
-                      const created = await createJob(jobPayload);
-                      if (created) {
-                        setSelectedIds([]);
-                        setSelectedBoardIds([]);
-                        setTag('');
+                      try {
+                        setIsCreatingBatch(true);
+                        const created = await createJob(jobPayload);
+                        if (created) {
+                          setSelectedIds([]);
+                          setSelectedBoardIds([]);
+                          setTag('');
+                          addToast({ type: 'success', message: 'Batch created successfully.' });
+                        } else {
+                          addToast({ type: 'error', message: 'Failed to create batch.' });
+                        }
+                      } finally {
+                        setIsCreatingBatch(false);
                       }
                     }}
                   >
-                    Create Batch
+                    {isCreatingBatch ? 'Creating...' : 'Create Batch'}
                   </button>
                 ) : (
                   <button 
-                    className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold shadow-xl hover:bg-black transition-all flex items-center justify-center gap-2"
+                    disabled={isRunningCommand}
+                    className={`w-full bg-slate-900 text-white py-4 rounded-2xl font-bold shadow-xl transition-all flex items-center justify-center gap-2 ${isRunningCommand ? 'opacity-60 cursor-not-allowed' : 'hover:bg-black'}`}
                     onClick={async () => {
-                      if (!selectedTestCommand) {
-                        alert('Please select a test command');
-                        return;
-                      }
-                      if (selectedBoardIds.length === 0) {
-                        alert('Please select at least one board to run the command');
+                      if (isRunningCommand) return;
+                      if (!validateSetup('commands')) {
                         return;
                       }
                       const resolvedCmd = getResolvedCommand(selectedTestCommand);
@@ -1124,14 +1316,22 @@ const SetupPage = () => {
                         boards: boardNames,
                         configName: configName || undefined,
                       };
-                      const created = await runTestCommand(payload);
-                      if (created) {
-                        setSelectedBoardIds([]);
+                      try {
+                        setIsRunningCommand(true);
+                        const created = await runTestCommand(payload);
+                        if (created) {
+                          setSelectedBoardIds([]);
+                          addToast({ type: 'success', message: 'Test command queued.' });
+                        } else {
+                          addToast({ type: 'error', message: 'Failed to run test command.' });
+                        }
+                      } finally {
+                        setIsRunningCommand(false);
                       }
                     }}
                   >
                     <Play size={18} />
-                    Run Test Command
+                    {isRunningCommand ? 'Running...' : 'Run Test Command'}
                   </button>
                 )}
                 <button 
@@ -1225,8 +1425,11 @@ const JobsPage = () => {
     moveFileUp, 
     moveFileDown, 
     updateJobTag, 
-    exportJobToJSON 
+    exportJobToJSON,
+    loading,
+    errors
   } = useTestStore();
+  const addToast = useTestStore((state) => state.addToast);
   
   const [expandedJobs, setExpandedJobs] = useState([]);
   const [editingTag, setEditingTag] = useState(null);
@@ -1234,6 +1437,8 @@ const JobsPage = () => {
   const [testCasesView, setTestCasesView] = useState(null); // jobId ที่กำลังดู test cases
   const [testCasesFilter, setTestCasesFilter] = useState('all'); // 'all' | 'running' | 'completed' | 'pending' | 'failed'
   const [testCasesSearch, setTestCasesSearch] = useState('');
+  const [isRunningBatch, setIsRunningBatch] = useState(false);
+  const [isStoppingAll, setIsStoppingAll] = useState(false);
   
   const toggleJobExpanded = (jobId) => {
     setExpandedJobs(prev => 
@@ -1245,7 +1450,32 @@ const JobsPage = () => {
   
   const handleStopAll = async () => {
     if (window.confirm('Are you sure you want to stop all running jobs?')) {
-      await stopAllJobs();
+      if (isStoppingAll) return;
+      setIsStoppingAll(true);
+      const success = await stopAllJobs();
+      setIsStoppingAll(false);
+      if (success) {
+        addToast({ type: 'success', message: 'All jobs stopped.' });
+      } else {
+        addToast({ type: 'error', message: 'Failed to stop all jobs.' });
+      }
+    }
+  };
+
+  const handleRunBatch = async () => {
+    const pendingJobs = jobs.filter(j => j.status === 'pending');
+    if (pendingJobs.length === 0) {
+      addToast({ type: 'info', message: 'No pending jobs to run.' });
+      return;
+    }
+    if (isRunningBatch) return;
+    setIsRunningBatch(true);
+    const success = await startPendingJobs();
+    setIsRunningBatch(false);
+    if (success) {
+      addToast({ type: 'success', message: 'Batch started.' });
+    } else {
+      addToast({ type: 'error', message: 'Failed to start batch.' });
     }
   };
   
@@ -1280,22 +1510,38 @@ const JobsPage = () => {
         </div>
       <div className="flex gap-3">
           <button
-            onClick={startPendingJobs}
-            className="bg-emerald-500 text-white px-6 py-2 rounded-xl font-bold shadow-lg hover:bg-emerald-600 transition-all flex items-center gap-2"
+            onClick={handleRunBatch}
+            disabled={isRunningBatch}
+            className={`bg-emerald-500 text-white px-6 py-2 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 ${isRunningBatch ? 'opacity-60 cursor-not-allowed' : 'hover:bg-emerald-600'}`}
           >
             <PlayCircle size={18} />
-            Run Batch
+            {isRunningBatch ? 'Starting...' : 'Run Batch'}
           </button>
           <button 
             onClick={handleStopAll}
-            className="bg-red-500 text-white px-6 py-2 rounded-xl font-bold shadow-lg hover:bg-red-600 transition-all flex items-center gap-2"
+            disabled={isStoppingAll}
+            className={`bg-red-500 text-white px-6 py-2 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 ${isStoppingAll ? 'opacity-60 cursor-not-allowed' : 'hover:bg-red-600'}`}
           >
             <Square size={18} />
-            Stop All
+            {isStoppingAll ? 'Stopping...' : 'Stop All'}
           </button>
       </div>
     </div>
       
+      {(loading?.jobs || errors?.jobs) && (
+        <div className={`rounded-xl border px-4 py-3 text-sm ${
+          errors?.jobs ? 'bg-red-50 border-red-200 text-red-700' : 'bg-blue-50 border-blue-200 text-blue-700'
+        }`}>
+          {errors?.jobs ? `Failed to load jobs: ${errors.jobs}` : 'Loading jobs...'}
+        </div>
+      )}
+
+      {(!loading?.jobs && !errors?.jobs && jobs.length === 0) && (
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-slate-500">
+          No jobs yet
+        </div>
+      )}
+
       <div className="space-y-4">
         {jobs.map((job, jobIndex) => {
           const sortedFiles = getSortedFiles(job);
@@ -1552,8 +1798,12 @@ const BoardsPage = () => {
     toggleBoardSelection,
     selectAllBoards,
     clearBoardSelection,
-    runBoardBatchAction
+    runBoardBatchAction,
+    deleteBoards,
+    loading,
+    errors
   } = useTestStore();
+  const addToast = useTestStore((state) => state.addToast);
   
   const [selectedBoard, setSelectedBoard] = useState(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -1561,6 +1811,8 @@ const BoardsPage = () => {
   const [contextMenu, setContextMenu] = useState(null);
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [showAddBoard, setShowAddBoard] = useState(false);
+  const [isDeletingSelected, setIsDeletingSelected] = useState(false);
+  const [isBatchActionRunning, setIsBatchActionRunning] = useState(false);
   
   // Filter boards
   const filteredBoards = boards.filter(board => {
@@ -1593,7 +1845,7 @@ const BoardsPage = () => {
   const handleBatchAction = async (action) => {
     const targetBoards = contextMenu?.boards || selectedBoards;
     if (targetBoards.length === 0) {
-      alert('No boards selected');
+      addToast({ type: 'warning', message: 'No boards selected.' });
       return;
     }
 
@@ -1602,16 +1854,43 @@ const BoardsPage = () => {
       if (!firmwareVersion) {
         return;
       }
-      await runBoardBatchAction(targetBoards, 'updateFirmware', { firmwareVersion });
+      if (isBatchActionRunning) return;
+      setIsBatchActionRunning(true);
+      const response = await runBoardBatchAction(targetBoards, 'updateFirmware', { firmwareVersion });
+      setIsBatchActionRunning(false);
+      if (response) {
+        addToast({ type: 'success', message: 'Firmware update queued.' });
+      } else {
+        addToast({ type: 'error', message: 'Failed to update firmware.' });
+      }
     } else if (action === 'Self-Test') {
-      await runBoardBatchAction(targetBoards, 'selfTest');
+      if (isBatchActionRunning) return;
+      setIsBatchActionRunning(true);
+      const response = await runBoardBatchAction(targetBoards, 'selfTest');
+      setIsBatchActionRunning(false);
+      if (response) {
+        addToast({ type: 'success', message: 'Self-test started.' });
+      } else {
+        addToast({ type: 'error', message: 'Failed to start self-test.' });
+      }
     } else {
-      await runBoardBatchAction(targetBoards, 'reboot');
+      if (isBatchActionRunning) return;
+      setIsBatchActionRunning(true);
+      const response = await runBoardBatchAction(targetBoards, 'reboot');
+      setIsBatchActionRunning(false);
+      if (response) {
+        addToast({ type: 'success', message: 'Reboot started.' });
+      } else {
+        addToast({ type: 'error', message: 'Failed to reboot boards.' });
+      }
     }
     setShowContextMenu(false);
     setContextMenu(null);
   };
   
+  const hasBoardError = errors?.boards;
+  const isBoardsLoading = loading?.boards;
+
   return (
     <div className="animate-in fade-in duration-500 space-y-4">
       {/* Header */}
@@ -1726,27 +2005,63 @@ const BoardsPage = () => {
           </span>
           <div className="flex gap-2">
             <button
+              onClick={async () => {
+                if (!window.confirm(`Delete ${selectedBoards.length} board(s)?`)) return;
+                if (isDeletingSelected) return;
+                setIsDeletingSelected(true);
+                const success = await deleteBoards(selectedBoards);
+                setIsDeletingSelected(false);
+                if (success) {
+                  addToast({ type: 'success', message: 'Boards deleted successfully.' });
+                } else {
+                  addToast({ type: 'error', message: 'Failed to delete boards.' });
+                }
+              }}
+              disabled={isDeletingSelected}
+              className={`px-4 py-2 bg-red-50 border border-red-200 rounded-lg text-sm font-bold text-red-700 transition-all ${isDeletingSelected ? 'opacity-60 cursor-not-allowed' : 'hover:bg-red-100'}`}
+            >
+              <XCircle size={16} className="inline mr-2" />
+              {isDeletingSelected ? 'Deleting...' : 'Delete Selected'}
+            </button>
+            <button
               onClick={() => handleBatchAction('Reboot')}
-              className="px-4 py-2 bg-white border border-blue-300 rounded-lg text-sm font-bold text-blue-700 hover:bg-blue-100 transition-all"
+              disabled={isBatchActionRunning}
+              className={`px-4 py-2 bg-white border border-blue-300 rounded-lg text-sm font-bold text-blue-700 transition-all ${isBatchActionRunning ? 'opacity-60 cursor-not-allowed' : 'hover:bg-blue-100'}`}
             >
               <RefreshCw size={16} className="inline mr-2" />
               Reboot Selected
             </button>
             <button
               onClick={() => handleBatchAction('Update Firmware')}
-              className="px-4 py-2 bg-white border border-blue-300 rounded-lg text-sm font-bold text-blue-700 hover:bg-blue-100 transition-all"
+              disabled={isBatchActionRunning}
+              className={`px-4 py-2 bg-white border border-blue-300 rounded-lg text-sm font-bold text-blue-700 transition-all ${isBatchActionRunning ? 'opacity-60 cursor-not-allowed' : 'hover:bg-blue-100'}`}
             >
               <Download size={16} className="inline mr-2" />
               Update Firmware
             </button>
             <button
               onClick={() => handleBatchAction('Self-Test')}
-              className="px-4 py-2 bg-white border border-blue-300 rounded-lg text-sm font-bold text-blue-700 hover:bg-blue-100 transition-all"
+              disabled={isBatchActionRunning}
+              className={`px-4 py-2 bg-white border border-blue-300 rounded-lg text-sm font-bold text-blue-700 transition-all ${isBatchActionRunning ? 'opacity-60 cursor-not-allowed' : 'hover:bg-blue-100'}`}
             >
               <Activity size={16} className="inline mr-2" />
               Self-Test
             </button>
         </div>
+        </div>
+      )}
+
+      {(isBoardsLoading || hasBoardError) && (
+        <div className={`rounded-xl border px-4 py-3 text-sm ${
+          hasBoardError ? 'bg-red-50 border-red-200 text-red-700' : 'bg-blue-50 border-blue-200 text-blue-700'
+        }`}>
+          {hasBoardError ? `Failed to load boards: ${hasBoardError}` : 'Loading boards...'}
+        </div>
+      )}
+
+      {(!isBoardsLoading && !hasBoardError && filteredBoards.length === 0) && (
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-slate-500">
+          No boards found
         </div>
       )}
       
@@ -1820,6 +2135,28 @@ const BoardsPage = () => {
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
             <button
+              onClick={async () => {
+                const targetBoards = contextMenu?.boards || [];
+                if (targetBoards.length === 0) return;
+                if (!window.confirm(`Delete ${targetBoards.length} board(s)?`)) return;
+                if (isDeletingSelected) return;
+                setIsDeletingSelected(true);
+                const success = await deleteBoards(targetBoards);
+                setIsDeletingSelected(false);
+                if (success) {
+                  addToast({ type: 'success', message: 'Boards deleted successfully.' });
+                } else {
+                  addToast({ type: 'error', message: 'Failed to delete boards.' });
+                }
+                setShowContextMenu(false);
+                setContextMenu(null);
+              }}
+              className="w-full text-left px-4 py-2 text-sm hover:bg-red-50 text-red-700 flex items-center gap-2"
+            >
+              <XCircle size={16} />
+              Delete Selected
+            </button>
+            <button
               onClick={() => handleBatchAction('Reboot Selected')}
               className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2"
             >
@@ -1879,11 +2216,35 @@ const BoardsPage = () => {
 
 // 5. HISTORY PAGE
 const HistoryPage = ({ onViewJob }) => {
-  const { jobs, exportJobToJSON, exportAllFailedLogs } = useTestStore();
+  const { jobs, exportJobToJSON, exportAllFailedLogs, loading, errors } = useTestStore();
   const [downloadMenuOpen, setDownloadMenuOpen] = useState({});
   
   // Filter completed jobs
   const completedJobs = jobs.filter(job => job.status === 'completed');
+
+  if (loading?.jobs) {
+    return (
+      <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-6 text-blue-700">
+        Loading history...
+      </div>
+    );
+  }
+
+  if (errors?.jobs) {
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-6 text-red-700">
+        Failed to load history: {errors.jobs}
+      </div>
+    );
+  }
+
+  if (completedJobs.length === 0) {
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-slate-500">
+        No completed jobs yet
+      </div>
+    );
+  }
   
   // Helper to check if a job has failed files
   const hasFailedFiles = (job) => {
@@ -2451,7 +2812,7 @@ const FileItem = ({ name, size }) => (
 
 // Notification Bell Component with Dropdown
 const NotificationBell = () => {
-  const { notifications, markNotificationRead, markAllNotificationsRead } = useTestStore();
+  const { notifications, markNotificationRead, markAllNotificationsRead, loading, errors } = useTestStore();
   const [showNotifications, setShowNotifications] = useState(false);
   const notificationRef = useRef(null);
   
@@ -2511,7 +2872,17 @@ const NotificationBell = () => {
           </div>
           
           <div className="overflow-y-auto max-h-[500px]">
-            {notifications.length === 0 ? (
+            {loading?.notifications ? (
+              <div className="p-8 text-center text-slate-400">
+                <Bell size={32} className="mx-auto mb-2 opacity-50" />
+                <p className="text-sm">Loading notifications...</p>
+              </div>
+            ) : errors?.notifications ? (
+              <div className="p-8 text-center text-red-600">
+                <Bell size={32} className="mx-auto mb-2 opacity-50" />
+                <p className="text-sm">Failed to load notifications</p>
+              </div>
+            ) : notifications.length === 0 ? (
               <div className="p-8 text-center text-slate-400">
                 <Bell size={32} className="mx-auto mb-2 opacity-50" />
                 <p className="text-sm">No notifications</p>
@@ -3194,10 +3565,12 @@ const BoardTableRow = ({ board, selected, onSelect, onClick, onSSHClick }) => {
 
 // Device Details Side Panel
 const DeviceDetailsPanel = ({ board, onClose, onSSHClick }) => {
-  const { updateBoardTag, updateBoardConnections } = useTestStore();
+  const { updateBoardTag, updateBoardConnections, deleteBoard } = useTestStore();
+  const addToast = useTestStore((state) => state.addToast);
   const [boardTag, setBoardTag] = useState(board.tag || '');
   const [connectionsText, setConnectionsText] = useState((board.connections || []).join(', '));
   const [isEditing, setIsEditing] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     setBoardTag(board.tag || '');
@@ -3350,6 +3723,25 @@ const DeviceDetailsPanel = ({ board, onClose, onSSHClick }) => {
           </div>
           
           <div className="flex gap-3 pt-4 border-t border-slate-200">
+            <button
+              onClick={async () => {
+                if (!window.confirm(`Delete ${board.name || board.id}?`)) return;
+                if (isDeleting) return;
+                setIsDeleting(true);
+                const success = await deleteBoard(board.id);
+                setIsDeleting(false);
+                if (success) {
+                  addToast({ type: 'success', message: 'Board deleted successfully.' });
+                  onClose();
+                } else {
+                  addToast({ type: 'error', message: 'Failed to delete board.' });
+                }
+              }}
+              disabled={isDeleting}
+              className={`px-4 py-3 bg-red-50 text-red-700 rounded-lg font-bold transition-all ${isDeleting ? 'opacity-60 cursor-not-allowed' : 'hover:bg-red-100'}`}
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </button>
             <button
               onClick={onSSHClick}
               className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
@@ -3646,6 +4038,7 @@ const TestCommandsManagerModal = ({
 // Add Board Modal (frontend-only)
 const AddBoardModal = ({ onClose }) => {
   const { addBoard } = useTestStore();
+  const addToast = useTestStore((state) => state.addToast);
   const [form, setForm] = useState({
     name: '',
     status: 'online',
@@ -3656,22 +4049,51 @@ const AddBoardModal = ({ onClose }) => {
     tag: '',
     connections: 'MQTT, SSH',
   });
+  const [errors, setErrors] = useState({});
+  const [formError, setFormError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const isValidIp = (value) => {
+    const ipRegex = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+    return ipRegex.test(value);
+  };
+
+  const isValidMac = (value) => {
+    const macRegex = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
+    return macRegex.test(value);
+  };
+
+  const validate = () => {
+    const nextErrors = {};
+    if (!form.name.trim()) nextErrors.name = 'Name is required.';
+    if (form.ip && !isValidIp(form.ip)) nextErrors.ip = 'Invalid IP address.';
+    if (form.mac && !isValidMac(form.mac)) nextErrors.mac = 'Invalid MAC address.';
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
 
   const submit = async () => {
+    if (isSubmitting) return;
+    setFormError('');
+    if (!validate()) return;
+    setIsSubmitting(true);
     const created = await addBoard({
-      name: form.name,
+      name: form.name.trim(),
       status: form.status,
-      ip: form.ip,
-      mac: form.mac,
+      ip: form.ip.trim(),
+      mac: form.mac.trim(),
       firmware: form.firmware,
       model: form.model,
-      tag: form.tag,
+      tag: form.tag.trim(),
       connections: form.connections.split(',').map(s => s.trim()).filter(Boolean),
     });
+    setIsSubmitting(false);
     if (created) {
+      addToast({ type: 'success', message: 'Board added successfully.' });
       onClose();
     } else {
-      alert('Failed to add board');
+      setFormError('Failed to add board.');
+      addToast({ type: 'error', message: 'Failed to add board.' });
     }
   };
 
@@ -3689,7 +4111,14 @@ const AddBoardModal = ({ onClose }) => {
             <div>
               <label className="text-xs font-bold text-slate-400 uppercase">Name</label>
               <input className="w-full mt-1 bg-slate-50 border border-slate-200 p-3 rounded-xl outline-none"
-                value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Board #11" />
+                value={form.name}
+                onChange={(e) => {
+                  setForm({ ...form, name: e.target.value });
+                  if (errors.name) setErrors((prev) => ({ ...prev, name: '' }));
+                }}
+                placeholder="Board #11"
+              />
+              {errors.name && <div className="text-xs text-red-600 mt-1">{errors.name}</div>}
             </div>
             <div>
               <label className="text-xs font-bold text-slate-400 uppercase">Status</label>
@@ -3703,12 +4132,26 @@ const AddBoardModal = ({ onClose }) => {
             <div>
               <label className="text-xs font-bold text-slate-400 uppercase">IP</label>
               <input className="w-full mt-1 bg-slate-50 border border-slate-200 p-3 rounded-xl outline-none"
-                value={form.ip} onChange={(e) => setForm({ ...form, ip: e.target.value })} placeholder="192.168.1.111" />
+                value={form.ip}
+                onChange={(e) => {
+                  setForm({ ...form, ip: e.target.value });
+                  if (errors.ip) setErrors((prev) => ({ ...prev, ip: '' }));
+                }}
+                placeholder="192.168.1.111"
+              />
+              {errors.ip && <div className="text-xs text-red-600 mt-1">{errors.ip}</div>}
             </div>
             <div>
               <label className="text-xs font-bold text-slate-400 uppercase">MAC</label>
               <input className="w-full mt-1 bg-slate-50 border border-slate-200 p-3 rounded-xl outline-none"
-                value={form.mac} onChange={(e) => setForm({ ...form, mac: e.target.value })} placeholder="00:1B:44:..." />
+                value={form.mac}
+                onChange={(e) => {
+                  setForm({ ...form, mac: e.target.value });
+                  if (errors.mac) setErrors((prev) => ({ ...prev, mac: '' }));
+                }}
+                placeholder="00:1B:44:..."
+              />
+              {errors.mac && <div className="text-xs text-red-600 mt-1">{errors.mac}</div>}
             </div>
             <div>
               <label className="text-xs font-bold text-slate-400 uppercase">Model</label>
@@ -3732,13 +4175,20 @@ const AddBoardModal = ({ onClose }) => {
             <input className="w-full mt-1 bg-slate-50 border border-slate-200 p-3 rounded-xl outline-none"
               value={form.connections} onChange={(e) => setForm({ ...form, connections: e.target.value })} />
           </div>
+          {formError && (
+            <div className="text-sm text-red-600">{formError}</div>
+          )}
         </div>
         <div className="p-6 border-t border-slate-200 flex justify-end gap-3">
           <button onClick={onClose} className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg font-bold hover:bg-slate-200">
             Cancel
           </button>
-          <button onClick={submit} className="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700">
-            Add
+          <button
+            onClick={submit}
+            disabled={isSubmitting}
+            className={`px-4 py-2 bg-blue-600 text-white rounded-lg font-bold ${isSubmitting ? 'opacity-60 cursor-not-allowed' : 'hover:bg-blue-700'}`}
+          >
+            {isSubmitting ? 'Adding...' : 'Add'}
           </button>
         </div>
       </div>

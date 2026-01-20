@@ -11,9 +11,10 @@ import API_ENDPOINTS from '../utils/apiEndpoints';
 
 // Helper function for making API requests
 const apiRequest = async (endpoint, options = {}) => {
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const defaultOptions = {
     headers: {
-      'Content-Type': 'application/json',
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       // Add authentication token if available
       ...(localStorage.getItem('authToken') && {
         'Authorization': `Bearer ${localStorage.getItem('authToken')}`
@@ -29,6 +30,9 @@ const apiRequest = async (endpoint, options = {}) => {
       ...options.headers,
     },
   };
+  if (isFormData && config.headers['Content-Type']) {
+    delete config.headers['Content-Type'];
+  }
 
   try {
     const response = await fetch(endpoint, config);
@@ -108,6 +112,13 @@ export const updateBoard = (id, payload) => {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
+};
+
+/**
+ * Delete board
+ */
+export const deleteBoard = (id) => {
+  return apiRequest(API_ENDPOINTS.BOARD_DELETE(id), { method: 'DELETE' });
 };
 
 /**
@@ -405,6 +416,7 @@ export default {
   getBoardById,
   createBoard,
   updateBoard,
+  deleteBoard,
   getBoardTelemetry,
   rebootBoard,
   updateBoardFirmware,

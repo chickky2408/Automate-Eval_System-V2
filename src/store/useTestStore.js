@@ -115,6 +115,39 @@ export const useTestStore = create((set, get) => ({
   },
   selectedBoards: [],
   selectedJobFilter: 'all', // 'all' | 'my'
+  loading: {
+    systemHealth: false,
+    boards: false,
+    jobs: false,
+    notifications: false,
+    files: false,
+  },
+  errors: {
+    systemHealth: null,
+    boards: null,
+    jobs: null,
+    notifications: null,
+    files: null,
+  },
+  toasts: [],
+  addToast: (toast) => {
+    const id = toast?.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const entry = {
+      id,
+      type: 'info',
+      message: '',
+      duration: 4000,
+      ...toast,
+    };
+    set((state) => ({ toasts: [...state.toasts, entry] }));
+    if (entry.duration !== 0) {
+      setTimeout(() => {
+        get().removeToast(id);
+      }, entry.duration);
+    }
+    return id;
+  },
+  removeToast: (id) => set((state) => ({ toasts: state.toasts.filter(t => t.id !== id) })),
   
   // Actions
   addVcd: (file) => set((state) => ({ vcdFiles: [...state.vcdFiles, file] })),
@@ -138,6 +171,36 @@ export const useTestStore = create((set, get) => ({
     } catch (error) {
       console.error('Failed to add board', error);
       return null;
+    }
+  },
+  deleteBoard: async (boardId) => {
+    set((state) => ({
+      boards: state.boards.filter(b => b.id !== boardId),
+      selectedBoards: state.selectedBoards.filter(id => id !== boardId),
+    }));
+    try {
+      await api.deleteBoard(boardId);
+      await get().refreshBoards();
+      return true;
+    } catch (error) {
+      console.error('Failed to delete board', error);
+      await get().refreshBoards();
+      return false;
+    }
+  },
+  deleteBoards: async (boardIds) => {
+    set((state) => ({
+      boards: state.boards.filter(b => !boardIds.includes(b.id)),
+      selectedBoards: state.selectedBoards.filter(id => !boardIds.includes(id)),
+    }));
+    try {
+      await api.batchBoardActions(boardIds, 'delete');
+      await get().refreshBoards();
+      return true;
+    } catch (error) {
+      console.error('Failed to delete boards', error);
+      await get().refreshBoards();
+      return false;
     }
   },
   updateBoard: async (boardId, updates) => {
@@ -262,46 +325,86 @@ export const useTestStore = create((set, get) => ({
   // Backend sync actions
   refreshSystemHealth: async () => {
     try {
+      set((state) => ({
+        loading: { ...state.loading, systemHealth: true },
+        errors: { ...state.errors, systemHealth: null },
+      }));
       const data = await api.getSystemHealth();
       set((state) => ({ systemHealth: { ...state.systemHealth, ...data } }));
       return data;
     } catch (error) {
       console.error('Failed to refresh system health', error);
+      set((state) => ({
+        errors: { ...state.errors, systemHealth: error?.message || 'Failed to load system health' },
+      }));
       return null;
+    } finally {
+      set((state) => ({ loading: { ...state.loading, systemHealth: false } }));
     }
   },
   refreshBoards: async () => {
     try {
+      set((state) => ({
+        loading: { ...state.loading, boards: true },
+        errors: { ...state.errors, boards: null },
+      }));
       const data = await api.getBoards();
       set({ boards: data });
       return data;
     } catch (error) {
       console.error('Failed to refresh boards', error);
+      set((state) => ({
+        errors: { ...state.errors, boards: error?.message || 'Failed to load boards' },
+      }));
       return null;
+    } finally {
+      set((state) => ({ loading: { ...state.loading, boards: false } }));
     }
   },
   refreshJobs: async () => {
     try {
+      set((state) => ({
+        loading: { ...state.loading, jobs: true },
+        errors: { ...state.errors, jobs: null },
+      }));
       const data = await api.getJobs();
       set({ jobs: data });
       return data;
     } catch (error) {
       console.error('Failed to refresh jobs', error);
+      set((state) => ({
+        errors: { ...state.errors, jobs: error?.message || 'Failed to load jobs' },
+      }));
       return null;
+    } finally {
+      set((state) => ({ loading: { ...state.loading, jobs: false } }));
     }
   },
   refreshNotifications: async () => {
     try {
+      set((state) => ({
+        loading: { ...state.loading, notifications: true },
+        errors: { ...state.errors, notifications: null },
+      }));
       const data = await api.getNotifications();
       set({ notifications: data });
       return data;
     } catch (error) {
       console.error('Failed to refresh notifications', error);
+      set((state) => ({
+        errors: { ...state.errors, notifications: error?.message || 'Failed to load notifications' },
+      }));
       return null;
+    } finally {
+      set((state) => ({ loading: { ...state.loading, notifications: false } }));
     }
   },
   refreshFiles: async () => {
     try {
+      set((state) => ({
+        loading: { ...state.loading, files: true },
+        errors: { ...state.errors, files: null },
+      }));
       const data = await api.getFiles();
       const mapped = (data || []).map((file) => ({
         id: file.id,
@@ -322,7 +425,12 @@ export const useTestStore = create((set, get) => ({
       return data;
     } catch (error) {
       console.error('Failed to refresh files', error);
+      set((state) => ({
+        errors: { ...state.errors, files: error?.message || 'Failed to load files' },
+      }));
       return null;
+    } finally {
+      set((state) => ({ loading: { ...state.loading, files: false } }));
     }
   },
   refreshAll: async () => {
@@ -361,16 +469,24 @@ export const useTestStore = create((set, get) => ({
     }
   },
   startPendingJobs: async () => {
-    const jobs = get().jobs.filter(j => j.status === 'pending');
-    await Promise.allSettled(jobs.map((job) => api.startJob(job.id)));
-    await get().refreshJobs();
+    try {
+      const jobs = get().jobs.filter(j => j.status === 'pending');
+      await Promise.allSettled(jobs.map((job) => api.startJob(job.id)));
+      await get().refreshJobs();
+      return true;
+    } catch (error) {
+      console.error('Failed to start pending jobs', error);
+      return false;
+    }
   },
   stopAllJobs: async () => {
     try {
       await api.stopAllJobs();
       await get().refreshJobs();
+      return true;
     } catch (error) {
       console.error('Failed to stop all jobs', error);
+      return false;
     }
   },
   runBoardBatchAction: async (boardIds, action, params = {}) => {

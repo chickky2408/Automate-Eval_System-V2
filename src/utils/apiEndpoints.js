@@ -19,6 +19,7 @@ export const API_ENDPOINTS = {
   BOARD_BY_ID: (id) => `${API_BASE_URL}/boards/${id}`,
   BOARD_CREATE: `${API_BASE_URL}/boards`,
   BOARD_UPDATE: (id) => `${API_BASE_URL}/boards/${id}`,
+  BOARD_DELETE: (id) => `${API_BASE_URL}/boards/${id}`,
   BOARD_TELEMETRY: (id) => `${API_BASE_URL}/boards/${id}/telemetry`,
   BOARD_REBOOT: (id) => `${API_BASE_URL}/boards/${id}/reboot`,
   BOARD_UPDATE_FIRMWARE: (id) => `${API_BASE_URL}/boards/${id}/firmware`,
