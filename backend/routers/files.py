@@ -36,6 +36,7 @@ async def upload_file(file: UploadFile = File(...), metadata: Optional[str] = Fo
 
 @router.get("")
 async def list_files():
+    file_store.sync_with_dir(UPLOAD_DIR)
     return [
         {
             "id": f["id"],
