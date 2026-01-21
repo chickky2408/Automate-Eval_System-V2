@@ -877,8 +877,6 @@ const SetupPage = () => {
   
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
-            {setupMode === 'files' ? (
-              <>
             {/* ส่วนแสดงรายการไฟล์พร้อมระบบเลือก */}
             <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
@@ -966,54 +964,56 @@ const SetupPage = () => {
                 )}
               </div>
             </div>
-            {setupErrors.files && (
-              <div className="text-sm text-red-600 px-2">
-                {setupErrors.files}
-              </div>
-            )}
-  
-            {/* Drag & Drop Area */}
-            <div
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onClick={handleBrowseClick}
-              className={`bg-white border-2 border-dashed rounded-3xl p-10 text-center transition-all cursor-pointer group ${
-                isDragging 
-                  ? 'border-blue-500 bg-blue-50 scale-105' 
-                  : 'border-slate-200 hover:border-blue-400'
-              }`}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept=".vcd,.bin,.hex,.elf"
-                onChange={handleFileInputChange}
-                className="hidden"
-              />
-              <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 transition-transform ${
-                isDragging ? 'bg-blue-100 scale-110' : 'bg-blue-50 group-hover:scale-110'
-              }`}>
-                <Upload size={28} className={isDragging ? 'text-blue-600' : 'text-blue-600'} />
-               </div>
-              <h3 className="text-lg font-bold text-slate-800">
-                {isDragging ? 'Drop files here' : 'Add more files'}
-              </h3>
-              <p className="text-slate-400 text-sm mt-1">
-                {isDragging ? 'Release to upload' : 'Drag and drop or click to browse'}
-              </p>
-              <p className="text-xs text-slate-400 mt-3">
-                Supported: .vcd, .bin, .hex, .elf (Max 50MB per file)
-              </p>
-            </div>
-            {fileValidationErrors.length > 0 && (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {fileValidationErrors.map((msg, index) => (
-                  <div key={`${msg}-${index}`}>{msg}</div>
-                ))}
-              </div>
-            )}
+            {setupMode === 'files' ? (
+              <>
+                {setupErrors.files && (
+                  <div className="text-sm text-red-600 px-2">
+                    {setupErrors.files}
+                  </div>
+                )}
+    
+                {/* Drag & Drop Area */}
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={handleBrowseClick}
+                  className={`bg-white border-2 border-dashed rounded-3xl p-10 text-center transition-all cursor-pointer group ${
+                    isDragging 
+                      ? 'border-blue-500 bg-blue-50 scale-105' 
+                      : 'border-slate-200 hover:border-blue-400'
+                  }`}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept=".vcd,.bin,.hex,.elf"
+                    onChange={handleFileInputChange}
+                    className="hidden"
+                  />
+                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 transition-transform ${
+                    isDragging ? 'bg-blue-100 scale-110' : 'bg-blue-50 group-hover:scale-110'
+                  }`}>
+                    <Upload size={28} className={isDragging ? 'text-blue-600' : 'text-blue-600'} />
+                   </div>
+                  <h3 className="text-lg font-bold text-slate-800">
+                    {isDragging ? 'Drop files here' : 'Add more files'}
+                  </h3>
+                  <p className="text-slate-400 text-sm mt-1">
+                    {isDragging ? 'Release to upload' : 'Drag and drop or click to browse'}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-3">
+                    Supported: .vcd, .bin, .hex, .elf (Max 50MB per file)
+                  </p>
+                </div>
+                {fileValidationErrors.length > 0 && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    {fileValidationErrors.map((msg, index) => (
+                      <div key={`${msg}-${index}`}>{msg}</div>
+                    ))}
+                  </div>
+                )}
               </>
             ) : (
               <>
