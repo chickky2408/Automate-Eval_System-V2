@@ -1,4 +1,4 @@
-# API Usage Summary (Backend vs Frontend)
+# API Usage Summary (Frontend <--> Backend <--> ARM)
 
 สรุปจากการตรวจ `backend/routers/*.py` และฝั่ง frontend (`frontend/src/utils/apiEndpoints.js`, `frontend/src/services/api.js`, `frontend/src/store/useTestStore.js`, `frontend/src/App.jsx`)
 
@@ -205,6 +205,85 @@
 | `GET /api/v1/measurements?since=` | ดึงรายการผลที่ยังไม่ sync | ใช้ timestamp ล่าสุด |
 | `POST /api/v1/identify` | สั่งบอร์ด blink เพื่อ identify | optional |
 
+#### ตัวอย่าง `GET /api/v1/health`
+```json
+{
+  "board_id": "zybo-01",
+  "uptime_seconds": 12345,
+  "state": "online",
+  "cpu": { "load": 0.42, "temp": 58.3 },
+  "ram": { "used": 512, "total": 1024, "percent": 50 },
+  "disk": { "used": 2048, "total": 8192, "percent": 25 },
+  "errors": [],
+  "last_heartbeat": "2026-01-13T10:30:05Z"
+}
+```
+
+#### ตัวอย่างอื่น (BE -> ARM)
+
+**POST `/api/v1/files/upload`** (multipart)
+```bash
+curl -X POST http://<board-ip>/api/v1/files/upload \
+  -F "file=@case_001.vcd" \
+  -F "sha256=9b1c...f0"
+```
+Response:
+```json
+{ "file_id": "file-vcd-1", "size": 1048576, "sha256": "9b1c...f0" }
+```
+
+**POST `/api/v1/jobs`**
+```json
+{
+  "job_id": "job-001",
+  "vcd_file_id": "file-vcd-1",
+  "meta_file_id": "file-meta-1",
+  "fw_file_id": "file-fw-1"
+}
+```
+Response:
+```json
+{ "zybo_job_id": "zybo-job-12", "state": "READY" }
+```
+
+**POST `/api/v1/runs`**
+```json
+{ "zybo_job_id": "zybo-job-12" }
+```
+Response:
+```json
+{ "run_id": "run-123", "state": "STARTING" }
+```
+
+**GET `/api/v1/runs/{run_id}`**
+```json
+{ "state": "RUNNING", "progress": 32, "frame_idx": 120, "error_code": null }
+```
+
+**GET `/api/v1/runs/{run_id}/measurements`**
+```json
+[
+  { "meas_id": "meas-01", "size": 2048, "sha256": "aa11...ff" }
+]
+```
+
+**GET `/api/v1/sync/events?after_seq=120&limit=500`**
+```json
+{
+  "events": [{ "event_id": "evt-01", "seq": 121, "type": "run_done" }],
+  "last_seq": 121
+}
+```
+
+**POST `/api/v1/identify`**
+```json
+{ "duration_ms": 3000, "pattern": "blink" }
+```
+Response:
+```json
+{ "success": true }
+```
+
 ### ARM --> BE
 
 | Endpoint (บน BE) | วัตถุประสงค์ | หมายเหตุ |
@@ -228,49 +307,9 @@
 | `GET /api/results/{id}/log/download` | ดาวน์โหลด log | สำหรับ debug |
 | `GET /api/metrics` | metrics สำหรับ monitoring | ใช้กับ Prometheus |
 
-## สรุป API ของ ARM board (ให้ BE เรียก)
-
-| Endpoint | วัตถุประสงค์ | หมายเหตุ |
-| --- | --- | --- |
-| `POST /api/v1/files/upload` | อัปโหลดไฟล์เข้า board | รองรับ `vcd`, `job.json`, `firmware` + `sha256` |
-| `POST /api/v1/jobs` | สร้าง job บน board | ใช้ `job_id`, `vcd_file_id`, `meta_file_id`, `fw_file_id` |
-| `POST /api/v1/runs` | เริ่มรันงาน | ส่ง `zybo_job_id` → ได้ `run_id` |
-| `GET /api/v1/runs/{run_id}` | อ่านสถานะรัน (polling) | `state`, `progress`, `frame_idx`, `error_code` |
-| `POST /api/v1/runs/{run_id}/stop` | หยุด/ยกเลิกรัน | แนะนำให้รองรับ |
-| `GET /api/v1/runs/{run_id}/measurements` | รายการ measurement | ได้ `meas_id`, `size`, `sha256` |
-| `GET /api/v1/measurements/{meas_id}/download` | ดาวน์โหลดผล | binary stream |
-| `GET /api/v1/health` | Health snapshot แบบ pull | ใส่ CPU/RAM/DISK; ถ้ามีแล้วให้ขยาย payload ไม่ต้องเพิ่ม endpoint ใหม่ |
-| `GET /api/v1/sync/events?after_seq=&limit=` | ดึง outbox events | สำหรับ offline→online sync |
-| `GET /api/v1/measurements?since=` | ดึงรายการผลที่ยังไม่ sync | ใช้ timestamp ล่าสุด |
-| `POST /api/v1/identify` | สั่งบอร์ด blink เพื่อ identify | optional |
-
-### GET `/api/v1/health`
-ดึง health แบบ pull (เช่น ทุก 30-60 วินาที)
-
-Response (ตัวอย่าง):
-```json
-{
-  "board_id": "zybo-01",
-  "uptime_seconds": 12345,
-  "state": "online",
-  "cpu": { "load": 0.42, "temp": 58.3 },
-  "ram": { "used": 512, "total": 1024, "percent": 50 },
-  "disk": { "used": 2048, "total": 8192, "percent": 25 },
-  "errors": [],
-  "last_heartbeat": "2026-01-13T10:30:05Z"
-}
-```
-
 ## รายละเอียด API ของ BE ที่ ARM board เรียกใช้
 
 หมายเหตุ: ซิงค์เวลาให้ใช้ NTP (ไม่ใช่ REST API)
-
-| Endpoint | วัตถุประสงค์ | หมายเหตุ |
-| --- | --- | --- |
-| `POST /api/boards/hello` | แจ้งตัวเมื่อออนไลน์ | upsert board + set status ONLINE |
-| `POST /api/boards/heartbeat` | ส่ง heartbeat | ส่ง CPU/RAM/DISK + state/current_run |
-| `POST /api/boards/{id}/runs/{run_id}/status` | ส่งสถานะรัน (push) | optional ถ้าไม่อยากให้ BE polling |
-| `POST /api/boards/{id}/measurements` | แจ้งผลเสร็จแล้ว | optional สำหรับ push result metadata |
 
 ### POST `/api/boards/hello`
 ใช้สำหรับบอร์ดแจ้งตัวเมื่อออนไลน์
@@ -317,5 +356,41 @@ Response (ตัวอย่าง):
   "success": true,
   "server_time": "2026-01-13T10:30:05Z"
 }
+```
+
+### POST `/api/boards/{id}/runs/{run_id}/status`
+ส่งสถานะรันแบบ push จากบอร์ดไป BE
+
+Request (ตัวอย่าง):
+```json
+{
+  "state": "RUNNING",
+  "progress": 45,
+  "frame_idx": 512,
+  "error_code": null
+}
+```
+
+Response (ตัวอย่าง):
+```json
+{ "success": true }
+```
+
+### POST `/api/boards/{id}/measurements`
+แจ้งผลที่พร้อมให้ดึง (metadata)
+
+Request (ตัวอย่าง):
+```json
+{
+  "run_id": "run-123",
+  "meas_id": "meas-01",
+  "size": 2048,
+  "sha256": "aa11...ff"
+}
+```
+
+Response (ตัวอย่าง):
+```json
+{ "success": true }
 ```
 
