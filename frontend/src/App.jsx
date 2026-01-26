@@ -197,6 +197,230 @@ const ToastContainer = () => {
   );
 };
 
+// Preview page for mapping VCD ↔ BIN 1:1, with save/load JSON
+const ConfigBuilderPage = () => {
+  const vcdFiles = useTestStore((state) => state.vcdFiles);
+  const firmwareFiles = useTestStore((state) => state.firmwareFiles);
+  const [selectedVcdId, setSelectedVcdId] = useState('');
+  const [selectedBinId, setSelectedBinId] = useState('');
+  const [pairs, setPairs] = useState([]);
+  const fileInputRef = useRef(null);
+
+  const getFileLabel = (id, list) => list.find((f) => f.id === id)?.name || '—';
+
+  const addPair = () => {
+    if (!selectedVcdId || !selectedBinId) return;
+    setPairs((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        vcdId: selectedVcdId,
+        binId: selectedBinId,
+      },
+    ]);
+    setSelectedVcdId('');
+    setSelectedBinId('');
+  };
+
+  const removePair = (id) => {
+    setPairs((prev) => prev.filter((p) => p.id !== id));
+  };
+
+  const movePair = (index, direction) => {
+    setPairs((prev) => {
+      const next = [...prev];
+      const target = direction === 'up' ? index - 1 : index + 1;
+      if (target < 0 || target >= next.length) return prev;
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
+  const saveConfig = () => {
+    const data = { pairs };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `config_pairs_${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleLoad = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const parsed = JSON.parse(e.target?.result || '{}');
+        if (!Array.isArray(parsed?.pairs)) throw new Error('Invalid format');
+        setPairs(parsed.pairs.map((p, idx) => ({
+          id: p.id || `loaded-${idx}-${Date.now()}`,
+          vcdId: p.vcdId,
+          binId: p.binId,
+        })));
+      } catch (err) {
+        alert('Load config failed: ' + err?.message);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Config Builder (beta)</h1>
+          <p className="text-slate-500 text-sm">จับคู่ 1 VCD ต่อ 1 BIN พร้อมบันทึก/โหลด config เป็น .json</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={saveConfig}
+            className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-black"
+          >
+            Save config (.json)
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-semibold hover:border-slate-300"
+          >
+            Load config (.json)
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={handleLoad}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        {/* Library: VCD */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-lg font-bold text-slate-900">VCD Library</h3>
+            <span className="text-xs text-slate-500">{vcdFiles.length} files</span>
+          </div>
+          <div className="space-y-2 max-h-[360px] overflow-y-auto">
+            {vcdFiles.length === 0 && (
+              <div className="text-sm text-slate-400">ยังไม่มีไฟล์ VCD (อัปโหลดจากเมนู Files)</div>
+            )}
+            {vcdFiles.map((file) => (
+              <label key={file.id} className={`flex items-center gap-3 p-3 rounded-xl border ${
+                selectedVcdId === file.id ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-blue-200'
+              }`}>
+                <input
+                  type="radio"
+                  name="vcd-select"
+                  checked={selectedVcdId === file.id}
+                  onChange={() => setSelectedVcdId(file.id)}
+                />
+                <div className="flex-1">
+                  <div className="font-semibold text-sm text-slate-800">{file.name}</div>
+                  <div className="text-xs text-slate-500">{file.sizeFormatted || ''}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Library: BIN */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-lg font-bold text-slate-900">BIN Library</h3>
+            <span className="text-xs text-slate-500">{firmwareFiles.length} files</span>
+          </div>
+          <div className="space-y-2 max-h-[360px] overflow-y-auto">
+            {firmwareFiles.length === 0 && (
+              <div className="text-sm text-slate-400">ยังไม่มีไฟล์ BIN (อัปโหลดจากเมนู Files)</div>
+            )}
+            {firmwareFiles.map((file) => (
+              <label key={file.id} className={`flex items-center gap-3 p-3 rounded-xl border ${
+                selectedBinId === file.id ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-blue-200'
+              }`}>
+                <input
+                  type="radio"
+                  name="bin-select"
+                  checked={selectedBinId === file.id}
+                  onChange={() => setSelectedBinId(file.id)}
+                />
+                <div className="flex-1">
+                  <div className="font-semibold text-sm text-slate-800">{file.name}</div>
+                  <div className="text-xs text-slate-500">{file.sizeFormatted || ''}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Selected mapping */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className="text-lg font-bold text-slate-900">Selected (1 VCD : 1 BIN)</h3>
+              <p className="text-xs text-slate-500">สามารถ reorder (move up/down) ได้</p>
+            </div>
+            <button
+              onClick={addPair}
+              disabled={!selectedVcdId || !selectedBinId}
+              className={`px-4 py-2 rounded-lg text-sm font-semibold ${
+                !selectedVcdId || !selectedBinId
+                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                  : 'bg-blue-600 text-white hover:bg-blue-700'
+              }`}
+            >
+              Add pair
+            </button>
+          </div>
+
+          <div className="border border-slate-200 rounded-xl overflow-hidden">
+            <div className="grid grid-cols-4 bg-slate-50 text-xs font-semibold text-slate-600">
+              <div className="px-3 py-2">#</div>
+              <div className="px-3 py-2">VCD</div>
+              <div className="px-3 py-2">BIN</div>
+              <div className="px-3 py-2 text-right">Actions</div>
+            </div>
+            {pairs.length === 0 ? (
+              <div className="p-4 text-sm text-slate-400">ยังไม่ได้เลือกไฟล์</div>
+            ) : (
+              pairs.map((pair, idx) => (
+                <div key={pair.id} className="grid grid-cols-4 items-center text-sm border-t border-slate-100">
+                  <div className="px-3 py-2 text-slate-500">{idx + 1}</div>
+                  <div className="px-3 py-2">{getFileLabel(pair.vcdId, vcdFiles)}</div>
+                  <div className="px-3 py-2">{getFileLabel(pair.binId, firmwareFiles)}</div>
+                  <div className="px-3 py-2 flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => movePair(idx, 'up')}
+                      className="px-2 py-1 rounded border border-slate-200 text-xs hover:border-slate-300"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      onClick={() => movePair(idx, 'down')}
+                      className="px-2 py-1 rounded border border-slate-200 text-xs hover:border-slate-300"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      onClick={() => removePair(pair.id)}
+                      className="px-2 py-1 rounded border border-red-200 text-xs text-red-600 hover:border-red-300"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // 1. DASHBOARD PAGE (Enhanced)
 const DashboardPage = () => {
   const { 
