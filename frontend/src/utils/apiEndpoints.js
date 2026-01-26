@@ -42,6 +42,7 @@ export const API_ENDPOINTS = {
   JOB_FILES: (jobId) => `${API_BASE_URL}/jobs/${jobId}/files`,
   JOB_FILE_STOP: (jobId, fileId) => `${API_BASE_URL}/jobs/${jobId}/files/${fileId}/stop`,
   JOB_FILE_MOVE: (jobId, fileId) => `${API_BASE_URL}/jobs/${jobId}/files/${fileId}/move`,
+  JOB_PAIRS: (jobId) => `${API_BASE_URL}/jobs/${jobId}/pairs`, // Get pairs data for editing
   
   // File Upload
   FILE_UPLOAD: `${API_BASE_URL}/files/upload`,

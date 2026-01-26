@@ -22,6 +22,10 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 class JobFileCreate(BaseModel):
     name: str
     order: Optional[int] = None
+    vcd: Optional[str] = None  # VCD file name
+    erom: Optional[str] = None  # ERoM (BIN) file name
+    ulp: Optional[str] = None   # ULP (LIN) file name
+    try_count: Optional[int] = None   # Number of test rounds
 
 
 class JobCreatePayload(BaseModel):
@@ -32,6 +36,7 @@ class JobCreatePayload(BaseModel):
     files: Optional[List[JobFileCreate]] = None
     configName: Optional[str] = None
     clientId: Optional[str] = None
+    pairsData: Optional[List[dict]] = None  # เก็บ pairs data สำหรับ edit batch
 
 
 class JobTagUpdate(BaseModel):
@@ -97,6 +102,10 @@ def _serialize_files(files) -> List[dict]:
             "status": file_item.status,
             "result": file_item.result,
             "order": file_item.order,
+            "vcd": getattr(file_item, "vcd", None),  # VCD file name
+            "erom": getattr(file_item, "erom", None),  # ERoM (BIN) file name
+            "ulp": getattr(file_item, "ulp", None),   # ULP (LIN) file name
+            "try_count": getattr(file_item, "try_count", None),  # Number of test rounds
         }
         for file_item in sorted(files, key=lambda f: f.order)
     ]
@@ -185,6 +194,11 @@ async def create_job(payload: JobCreatePayload):
         config_name=payload.configName,
         default_file_name=vcd_filename,
     )
+    
+    # เก็บ pairs data สำหรับ edit batch
+    if payload.pairsData:
+        fe_job_store.save_pairs_data(job.id, payload.pairsData)
+    
     return await _build_fe_job(job)
 
 
@@ -257,6 +271,18 @@ async def get_job_files(job_id: str):
     fe_job_store.ensure_meta(job.id, default_file_name=job.vcd_filename)
     files = fe_job_store.list_files(job.id)
     return _serialize_files(files)
+
+
+@router.get("/{job_id}/pairs")
+async def get_job_pairs(job_id: str):
+    """Get pairs data (pair table history) for editing batch."""
+    job = await job_queue_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    pairs_data = fe_job_store.get_pairs_data(job.id)
+    if pairs_data is None:
+        raise HTTPException(status_code=404, detail="Pairs data not found for this job")
+    return {"pairsData": pairs_data}
 
 
 @router.post("/{job_id}/files/{file_id}/stop")

@@ -1,12 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Menu, X, LayoutDashboard, Settings, PlayCircle, Cpu, 
   History, Bell, Upload, FileCode, Box, Search, 
   CheckCircle2, AlertCircle, Clock, Zap, Database, ChevronRight,
   Grid3x3, List, Filter, Terminal, Wifi, WifiOff, HardDrive,
   RefreshCw, Download, Activity, XCircle, Eye, MoreVertical,
-  ArrowUp, ArrowDown, Square, Tag, FileJson, StopCircle,
-  Command, Copy, Play, Layers, Monitor, ChevronDown, ChevronUp
+  ArrowUp, ArrowDown, Square, Tag, FileJson, StopCircle, Plus,
+  Command, Copy, Play, Layers, Monitor, ChevronDown, ChevronUp, GripVertical, ChevronLeft, CheckSquare, Pencil
 } from 'lucide-react';
 import { useTestStore } from './store/useTestStore';
 import { Terminal as XTerm } from '@xterm/xterm';
@@ -133,8 +133,8 @@ const App = () => {
         <div className="p-8 overflow-y-auto">
           {activePage === 'dashboard' && <DashboardPage />}
           {activePage === 'overview' && <BoardOverviewPage />}
-          {activePage === 'setup' && <SetupPage />}
-          {activePage === 'jobs' && <JobsPage expandJobId={expandJobId} onExpandComplete={() => setExpandJobId(null)} />}
+          {activePage === 'setup' && <SetupPage editJobId={expandJobId} onEditComplete={() => setExpandJobId(null)} />}
+          {activePage === 'jobs' && <JobsPage expandJobId={expandJobId} onExpandComplete={() => setExpandJobId(null)} onEditJob={(jobId) => { setExpandJobId(jobId); setActivePage('setup'); }} />}
           {activePage === 'boards' && <BoardsPage />}
           {activePage === 'history' && <HistoryPage onViewJob={(jobId) => { setExpandJobId(jobId); setActivePage('jobs'); }} />}
         </div>
@@ -637,7 +637,7 @@ const BoardOverviewPage = () => {
 
 
 // 2. SETUP PAGE (Version with File Upload)
-const SetupPage = () => {
+const SetupPage = ({ editJobId, onEditComplete }) => {
   const { 
     uploadedFiles, 
     addUploadedFile, 
@@ -656,6 +656,7 @@ const SetupPage = () => {
   } = useTestStore();
   const addToast = useTestStore((state) => state.addToast);
     const [selectedIds, setSelectedIds] = useState([]);
+  const [isLoadingPairs, setIsLoadingPairs] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
   const [configName, setConfigName] = useState('Default_Setup');
@@ -670,7 +671,23 @@ const SetupPage = () => {
   const [fileValidationErrors, setFileValidationErrors] = useState([]);
   const [isCreatingBatch, setIsCreatingBatch] = useState(false);
   const [isRunningCommand, setIsRunningCommand] = useState(false);
+  const [fileFilter, setFileFilter] = useState('all'); // 'all' | 'vcd' | 'bin'
+  const [fileSearch, setFileSearch] = useState('');
+  const [fileSort, setFileSort] = useState('time'); // time | file-name | tag | name-asc | name-desc
+  const [selectedPairVcdId, setSelectedPairVcdId] = useState('');
+  const [selectedPairBinId, setSelectedPairBinId] = useState('');
+  const [selectedPairLinId, setSelectedPairLinId] = useState('');
+  const [selectedPairs, setSelectedPairs] = useState([]);
+  const [isDraggingJson, setIsDraggingJson] = useState(false);
+  const jsonInputRef = useRef(null);
+  const [draggingRowIndex, setDraggingRowIndex] = useState(null);
+  const [dropTargetRowIndex, setDropTargetRowIndex] = useState(null);
+  const draggingRowIndexRef = useRef(null);
   const [isDeletingFiles, setIsDeletingFiles] = useState(false);
+  const [fileListExpanded, setFileListExpanded] = useState(false);
+  const [selectedTestCaseIds, setSelectedTestCaseIds] = useState([]); // สำหรับ checkbox ใน pairs table
+  const isAutoPairingRef = useRef(false); // ป้องกัน auto-pair ซ้ำ
+  const isLoadingConfigRef = useRef(false); // track ว่าเป็นการ load config หรือไม่
   const [commandForm, setCommandForm] = useState({
     name: '',
     command: '',
@@ -710,8 +727,8 @@ const SetupPage = () => {
 
   const validateSetup = (mode) => {
     const nextErrors = { files: '', boards: '', command: '' };
-    if (mode === 'files' && selectedIds.length === 0) {
-      nextErrors.files = 'Select at least one file.';
+    if (mode === 'files' && selectedPairs.length === 0) {
+      nextErrors.files = 'Create at least one test case pair.';
     }
     if (mode === 'commands' && !selectedTestCommand) {
       nextErrors.command = 'Select a test command.';
@@ -724,6 +741,604 @@ const SetupPage = () => {
   };
   
   // File upload handlers
+  const getFileKind = (file) => {
+    const ext = String(file?.name || '').split('.').pop()?.toLowerCase();
+    if (ext === 'vcd') return 'vcd';
+    if (['bin', 'hex', 'elf'].includes(ext)) return 'bin';
+    return 'other';
+  };
+
+  // ใช้เฉพาะไฟล์ที่ถูกเลือก (checkbox) — เรียงตาม selectedIds (ใช้กับ Create Batch และ move up/down)
+  const selectedFiles = selectedIds
+    .map((id) => uploadedFiles.find((f) => f.id === id))
+    .filter(Boolean);
+  const vcdFilesList = selectedFiles.filter((f) => getFileKind(f) === 'vcd');
+  const binFilesList = selectedFiles.filter((f) => getFileKind(f) === 'bin');
+  const linFilesList = selectedFiles.filter((f) => {
+    const ext = String(f?.name || '').split('.').pop()?.toLowerCase();
+    return ext === 'lin' || ext === 'txt'; // lin files อาจเป็น .lin หรือ .txt
+  });
+
+  // Auto-pair แบบ Smart: pair อัตโนมัติเมื่อ select files (แต่ไม่ pair เมื่อ load config)
+  const autoPairSmart = useCallback(() => {
+    // ไม่ auto-pair ถ้า:
+    // 1. กำลัง load config
+    // 2. กำลัง auto-pairing อยู่ (ป้องกัน loop)
+    // 3. ไม่มี VCD หรือ BIN
+    // 4. มี pairs อยู่แล้ว (ไม่ pair ซ้ำ)
+    if (isLoadingConfigRef.current || isAutoPairingRef.current) return;
+    
+    const currentSelectedFiles = selectedIds
+      .map((id) => uploadedFiles.find((f) => f.id === id))
+      .filter(Boolean);
+    const currentVcdFiles = currentSelectedFiles.filter((f) => getFileKind(f) === 'vcd');
+    const currentBinFiles = currentSelectedFiles.filter((f) => getFileKind(f) === 'bin');
+    
+    if (currentVcdFiles.length === 0 || currentBinFiles.length === 0) return;
+    
+      setSelectedPairs((prev) => {
+      // ถ้ามี pairs อยู่แล้ว หรือกำลัง auto-pairing อยู่ ไม่ต้อง auto-pair
+      if (prev.length > 0 || isAutoPairingRef.current) return prev;
+      
+      isAutoPairingRef.current = true;
+      const newPairs = [];
+      
+      // ใช้ลำดับจาก selectedFiles (ตาม selectedIds order) เพื่อ pair ตามที่ user เรียงไว้
+      const orderedFiles = currentSelectedFiles;
+      
+      // หา VCD, BIN, LIN ตามลำดับที่เรียงไว้
+      const orderedVcds = orderedFiles.filter(f => getFileKind(f) === 'vcd');
+      const orderedBins = orderedFiles.filter(f => getFileKind(f) === 'bin');
+      const orderedLins = orderedFiles.filter(f => {
+        const ext = String(f?.name || '').split('.').pop()?.toLowerCase();
+        return ext === 'lin' || ext === 'txt';
+      });
+
+      // Pair ตามลำดับที่เรียงไว้: VCD กับ BIN ที่อยู่ใกล้กันที่สุด
+      orderedVcds.forEach((vcdFile, vcdIdx) => {
+        const vcdIndexInOrdered = orderedFiles.findIndex(f => f.id === vcdFile.id);
+        
+        // หา BIN ที่ใกล้ที่สุด
+        let nearestBin = null;
+        let minDistance = Infinity;
+        
+        orderedBins.forEach(binFile => {
+          const binIndexInOrdered = orderedFiles.findIndex(f => f.id === binFile.id);
+          const distance = Math.abs(binIndexInOrdered - vcdIndexInOrdered);
+          if (distance < minDistance) {
+            minDistance = distance;
+            nearestBin = binFile;
+          }
+        });
+
+        const binFile = nearestBin || orderedBins[vcdIdx % orderedBins.length];
+        
+        // หา LIN ที่ใกล้ที่สุด (ถ้ามี)
+        let nearestLin = null;
+        let minLinDistance = Infinity;
+        
+        orderedLins.forEach(linFile => {
+          const linIndexInOrdered = orderedFiles.findIndex(f => f.id === linFile.id);
+          const distance = Math.abs(linIndexInOrdered - vcdIndexInOrdered);
+          if (distance < minLinDistance) {
+            minLinDistance = distance;
+            nearestLin = linFile;
+          }
+        });
+
+        newPairs.push({
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}-${vcdIdx}`,
+          vcdId: vcdFile.id,
+          binId: binFile.id,
+          linId: nearestLin?.id || null,
+          try: 1,
+        });
+      });
+
+      // Reset flag หลังจากเสร็จ
+      setTimeout(() => {
+        isAutoPairingRef.current = false;
+      }, 100);
+
+      return newPairs;
+    });
+  }, [selectedIds, uploadedFiles]);
+
+  // ถ้ามีไฟล์ที่เคยอยู่ใน pair แต่ถูก unselect ออกจาก selectedIds ให้ลบทิ้ง
+  useEffect(() => {
+    setSelectedPairs((prev) => {
+      const filtered = prev.filter(
+        (p) => 
+          selectedIds.includes(p.vcdId) && 
+          selectedIds.includes(p.binId) &&
+          (!p.linId || selectedIds.includes(p.linId))
+      );
+      return filtered;
+    });
+  }, [selectedIds]);
+
+  // Auto-pair เมื่อ selectedIds เปลี่ยน (แต่ไม่ pair เมื่อ load config หรือกำลัง auto-pairing)
+  useEffect(() => {
+    if (!isLoadingConfigRef.current && !isAutoPairingRef.current && selectedIds.length > 0) {
+      // ใช้ setTimeout เพื่อให้ state อัปเดตเสร็จก่อน
+      const timer = setTimeout(() => {
+        autoPairSmart();
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [selectedIds, autoPairSmart]);
+
+  // Load pairs data เมื่อ editJobId มีค่า (Edit Batch mode)
+  useEffect(() => {
+    if (editJobId) {
+      const loadPairsFromJob = async () => {
+        setIsLoadingPairs(true);
+        isLoadingConfigRef.current = true; // ป้องกัน auto-pair ระหว่าง load
+        
+        try {
+          const api = await import('./services/api');
+          const response = await api.getJobPairs(editJobId);
+          const pairsData = response.pairsData || [];
+          
+          // Map file names กลับไปหา file IDs
+          const loadedPairs = pairsData.map(pairData => {
+            // หา file IDs จาก file names
+            // Map file names กลับไปหา file IDs
+            // pairsData เก็บ vcdId, binId, linId อยู่แล้ว แต่ถ้าไม่มีให้ใช้ file names
+            let vcdFile = pairData.vcdId ? uploadedFiles.find(f => f.id === pairData.vcdId) : null;
+            if (!vcdFile && pairData.vcdName) {
+              vcdFile = uploadedFiles.find(f => f.name === pairData.vcdName || f.originalName === pairData.vcdName);
+            }
+            if (!vcdFile && pairData.vcd) {
+              vcdFile = uploadedFiles.find(f => f.name === pairData.vcd || f.originalName === pairData.vcd);
+            }
+            
+            let binFile = pairData.binId ? uploadedFiles.find(f => f.id === pairData.binId) : null;
+            if (!binFile && pairData.binName) {
+              binFile = uploadedFiles.find(f => f.name === pairData.binName || f.originalName === pairData.binName);
+            }
+            if (!binFile && pairData.erom) {
+              binFile = uploadedFiles.find(f => f.name === pairData.erom || f.originalName === pairData.erom);
+            }
+            
+            let linFile = null;
+            if (pairData.linId) {
+              linFile = uploadedFiles.find(f => f.id === pairData.linId);
+            }
+            if (!linFile && pairData.linName) {
+              linFile = uploadedFiles.find(f => f.name === pairData.linName || f.originalName === pairData.linName);
+            }
+            if (!linFile && pairData.ulp) {
+              linFile = uploadedFiles.find(f => f.name === pairData.ulp || f.originalName === pairData.ulp);
+            }
+            
+            return {
+              id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+              vcdId: vcdFile?.id || pairData.vcdId || '',
+              binId: binFile?.id || pairData.binId || '',
+              linId: linFile?.id || pairData.linId || null,
+              try: pairData.try || pairData.try_count || 1,
+            };
+          }).filter(pair => pair.vcdId && pair.binId); // กรองเฉพาะ pairs ที่มี VCD และ BIN
+          
+          if (loadedPairs.length > 0) {
+            setSelectedPairs(loadedPairs);
+            
+            // Select files ที่ใช้ใน pairs
+            const fileIdsToSelect = new Set();
+            loadedPairs.forEach(pair => {
+              if (pair.vcdId) fileIdsToSelect.add(pair.vcdId);
+              if (pair.binId) fileIdsToSelect.add(pair.binId);
+              if (pair.linId) fileIdsToSelect.add(pair.linId);
+            });
+            setSelectedIds(Array.from(fileIdsToSelect));
+            
+            // Load job data เพื่อ set config name, tag, boards
+            const job = jobs.find(j => j.id === editJobId);
+            if (job) {
+              if (job.configName) setConfigName(job.configName);
+              if (job.tag) setTag(job.tag);
+              
+              // Map board names กลับไปหา board IDs
+              if (job.boards && job.boards.length > 0) {
+                const boardIds = job.boards
+                  .map(boardName => boards.find(b => b.name === boardName)?.id)
+                  .filter(Boolean);
+                setSelectedBoardIds(boardIds);
+              }
+            }
+            
+            addToast({ type: 'success', message: `Loaded ${loadedPairs.length} pairs from batch.` });
+          } else {
+            addToast({ type: 'warning', message: 'No pairs data found or files not available.' });
+          }
+        } catch (error) {
+          console.error('Failed to load pairs from job', error);
+          addToast({ type: 'error', message: 'Failed to load pairs data from batch.' });
+        } finally {
+          setIsLoadingPairs(false);
+          isLoadingConfigRef.current = false;
+        }
+      };
+      
+      loadPairsFromJob();
+    }
+  }, [editJobId, uploadedFiles, jobs, boards]);
+
+  const addPair = () => {
+    if (!selectedPairVcdId || !selectedPairBinId) return;
+    // ป้องกัน duplicate คู่เดิม
+    const exists = selectedPairs.some(
+      (p) => p.vcdId === selectedPairVcdId && p.binId === selectedPairBinId && p.linId === selectedPairLinId
+    );
+    if (exists) return;
+    setSelectedPairs((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        vcdId: selectedPairVcdId,
+        binId: selectedPairBinId,
+        linId: selectedPairLinId || null, // lin is optional
+        try: 1, // default จำนวนรอบ test
+      },
+    ]);
+    setSelectedPairVcdId('');
+    setSelectedPairBinId('');
+    setSelectedPairLinId('');
+  };
+
+  const pairAll = () => {
+    if (vcdFilesList.length === 0 || binFilesList.length === 0) {
+      addToast({ type: 'warning', message: 'Please select at least one VCD and one BIN file first' });
+      return;
+    }
+
+    const newPairs = [];
+    // ใช้ลำดับจาก selectedFiles (ตาม selectedIds order) เพื่อ pair ตามที่ user เรียงไว้
+    // selectedFiles ถูกเรียงตาม selectedIds order อยู่แล้ว
+    const orderedFiles = selectedFiles; // ใช้ลำดับที่ user เรียงไว้
+    
+    // หา VCD, BIN, LIN ตามลำดับที่เรียงไว้
+    const orderedVcds = orderedFiles.filter(f => getFileKind(f) === 'vcd');
+    const orderedBins = orderedFiles.filter(f => getFileKind(f) === 'bin');
+    const orderedLins = orderedFiles.filter(f => {
+      const ext = String(f?.name || '').split('.').pop()?.toLowerCase();
+      return ext === 'lin' || ext === 'txt';
+    });
+
+    // Pair ตามลำดับที่เรียงไว้: VCD กับ BIN ที่อยู่ใกล้กันที่สุด
+    // ถ้ามี VCD, ULM, EROM ติดกัน ให้ pair เป็นกลุ่ม
+    orderedVcds.forEach((vcdFile, vcdIdx) => {
+      // หา BIN ที่ใกล้ที่สุด (ใช้ BIN ที่มี index ใกล้กับ VCD index ใน orderedFiles)
+      const vcdIndexInOrdered = orderedFiles.findIndex(f => f.id === vcdFile.id);
+      
+      // หา BIN ที่ใกล้ที่สุด (ถ้ามีหลาย BIN ให้ใช้ตัวที่ใกล้ที่สุด)
+      let nearestBin = null;
+      let minDistance = Infinity;
+      
+      orderedBins.forEach(binFile => {
+        const binIndexInOrdered = orderedFiles.findIndex(f => f.id === binFile.id);
+        const distance = Math.abs(binIndexInOrdered - vcdIndexInOrdered);
+        if (distance < minDistance) {
+          minDistance = distance;
+          nearestBin = binFile;
+        }
+      });
+
+      // ถ้าไม่เจอ BIN ที่ใกล้ ให้ใช้ BIN แรก
+      const binFile = nearestBin || orderedBins[vcdIdx % orderedBins.length];
+      
+      // หา LIN ที่ใกล้ที่สุด (ถ้ามี)
+      let nearestLin = null;
+      let minLinDistance = Infinity;
+      
+      orderedLins.forEach(linFile => {
+        const linIndexInOrdered = orderedFiles.findIndex(f => f.id === linFile.id);
+        const distance = Math.abs(linIndexInOrdered - vcdIndexInOrdered);
+        if (distance < minLinDistance) {
+          minLinDistance = distance;
+          nearestLin = linFile;
+        }
+      });
+
+      const exists = selectedPairs.some(
+        (p) => p.vcdId === vcdFile.id && p.binId === binFile.id
+      );
+      
+      if (!exists) {
+        newPairs.push({
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}-${vcdIdx}`,
+          vcdId: vcdFile.id,
+          binId: binFile.id,
+          linId: nearestLin?.id || null, // pair LIN ที่ใกล้ที่สุดถ้ามี
+          try: 1,
+        });
+      }
+    });
+
+    if (newPairs.length > 0) {
+      setSelectedPairs((prev) => [...prev, ...newPairs]);
+      addToast({ type: 'success', message: `Created ${newPairs.length} pair(s) based on file order` });
+    } else {
+      addToast({ type: 'info', message: 'All possible pairs already exist' });
+    }
+  };
+
+  const clearAllPairs = () => {
+    if (selectedPairs.length === 0) {
+      addToast({ type: 'info', message: 'No pairs to clear' });
+      return;
+    }
+    if (window.confirm(`Are you sure you want to clear all ${selectedPairs.length} pair(s)?`)) {
+      // ตั้ง flag เพื่อป้องกัน auto-pair ทันที
+      isAutoPairingRef.current = true;
+      setSelectedPairs([]);
+      setSelectedTestCaseIds([]);
+      addToast({ type: 'success', message: 'All pairs cleared' });
+      
+      // Reset flag หลังจาก clear เสร็จ (ไม่ auto-pair ใหม่ ให้ user กด Pair All เอง)
+      setTimeout(() => {
+        isAutoPairingRef.current = false;
+      }, 500);
+    }
+  };
+
+  const removePair = (id) => {
+    setSelectedPairs((prev) => prev.filter((p) => p.id !== id));
+    setSelectedTestCaseIds((prev) => prev.filter((testId) => testId !== id));
+  };
+
+  const duplicatePair = (id) => {
+    const pair = selectedPairs.find((p) => p.id === id);
+    if (!pair) return;
+    const newPair = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      vcdId: pair.vcdId,
+      binId: pair.binId,
+      linId: pair.linId,
+      try: pair.try || 1,
+    };
+    const pairIndex = selectedPairs.findIndex((p) => p.id === id);
+    setSelectedPairs((prev) => {
+      const next = [...prev];
+      next.splice(pairIndex + 1, 0, newPair);
+      return next;
+    });
+    addToast({ type: 'success', message: 'Test case duplicated' });
+  };
+
+  const toggleTestCaseSelection = (id) => {
+    setSelectedTestCaseIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllTestCases = () => {
+    if (selectedTestCaseIds.length === selectedPairs.length) {
+      setSelectedTestCaseIds([]);
+    } else {
+      setSelectedTestCaseIds(selectedPairs.map((p) => p.id));
+    }
+  };
+
+  const updatePairTry = (pairId, tryCount) => {
+    // อนุญาตให้เป็น empty string เพื่อให้ผู้ใช้ลบได้
+    if (tryCount === '' || tryCount === null || tryCount === undefined) {
+      setSelectedPairs((prev) =>
+        prev.map((p) => (p.id === pairId ? { ...p, try: '' } : p))
+      );
+      return;
+    }
+    // ถ้ามีค่า ให้ parse และ validate
+    const num = parseInt(tryCount);
+    if (isNaN(num)) {
+      // ถ้า parse ไม่ได้ ให้เก็บเป็น empty string
+      setSelectedPairs((prev) =>
+        prev.map((p) => (p.id === pairId ? { ...p, try: '' } : p))
+      );
+      return;
+    }
+    // จำกัด 1-100
+    const count = Math.max(1, Math.min(100, num));
+    setSelectedPairs((prev) =>
+      prev.map((p) => (p.id === pairId ? { ...p, try: count } : p))
+    );
+  };
+
+  const updatePairFile = (pairId, fileType, fileId) => {
+    setSelectedPairs((prev) =>
+      prev.map((p) => {
+        if (p.id !== pairId) return p;
+        const updated = { ...p };
+        if (fileType === 'vcd') updated.vcdId = fileId;
+        else if (fileType === 'bin') updated.binId = fileId;
+        else if (fileType === 'lin') updated.linId = fileId || null;
+        return updated;
+      })
+    );
+  };
+
+  const reorderList = (arr, fromIndex, toIndex) => {
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= arr.length || toIndex >= arr.length) return arr;
+    const next = [...arr];
+    const [item] = next.splice(fromIndex, 1);
+    const insertAt = fromIndex < toIndex ? toIndex - 1 : toIndex;
+    next.splice(insertAt, 0, item);
+    return next;
+  };
+
+  const handleRowDragStart = (e, index) => {
+    draggingRowIndexRef.current = index;
+    setDraggingRowIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+  };
+
+  const handleRowDragOver = (e, index) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    setDropTargetRowIndex(index);
+  };
+
+  const handleRowDrop = (e, toIndex) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const fromIndex = draggingRowIndexRef.current;
+    if (fromIndex == null) return;
+    if (selectedPairs.length > 0) {
+      setSelectedPairs((prev) => reorderList(prev, fromIndex, toIndex));
+    } else {
+      setSelectedIds((prev) => reorderList(prev, fromIndex, toIndex));
+    }
+    draggingRowIndexRef.current = null;
+    setDraggingRowIndex(null);
+    setDropTargetRowIndex(null);
+  };
+
+  const handleRowDragEnd = () => {
+    draggingRowIndexRef.current = null;
+    setDraggingRowIndex(null);
+    setDropTargetRowIndex(null);
+  };
+
+  // Save config to JSON file (เก็บ configName, tag, pairs และ fileNames — โหลดกลับมาแสดงไฟล์ได้)
+  const saveConfigJson = () => {
+    const config = {
+      configName,
+      tag,
+      pairs: selectedPairs.map((p) => {
+        const vcdFile = uploadedFiles.find((f) => f.id === p.vcdId);
+        const binFile = uploadedFiles.find((f) => f.id === p.binId);
+        const linFile = p.linId ? uploadedFiles.find((f) => f.id === p.linId) : null;
+        return {
+          vcd: vcdFile?.name || '',
+          bin: binFile?.name || '',
+          lin: linFile?.name || null,
+          try: p.try || 1,
+        };
+      }),
+      fileNames: selectedFiles.map((f) => f.name),
+      createdAt: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${configName || 'config'}_${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    addToast({ type: 'success', message: 'Config saved successfully!' });
+  };
+
+  // Load config from JSON — โหลด pairs และ/หรือ fileNames แล้ว auto-select ไฟล์ที่พบใน library
+  const loadConfigJson = async (file) => {
+    try {
+      isLoadingConfigRef.current = true; // ตั้ง flag ว่าเป็นการ load config
+      const text = await file.text();
+      const config = JSON.parse(text);
+
+      const pairs = Array.isArray(config.pairs) ? config.pairs : [];
+      const newPairs = [];
+      const idsToSelect = new Set(selectedIds);
+
+      for (const pair of pairs) {
+        const vcdFile = uploadedFiles.find((f) => f.name === pair.vcd);
+        const binFile = uploadedFiles.find((f) => f.name === pair.bin);
+        const linFile = pair.lin ? uploadedFiles.find((f) => f.name === pair.lin) : null;
+
+        if (!vcdFile || !binFile) {
+          addToast({ 
+            type: 'warning', 
+            message: `ข้ามคู่: ${pair.vcd} / ${pair.bin} — ไม่พบไฟล์ใน library (ต้อง add ไฟล์ก่อน)` 
+          });
+          continue;
+        }
+
+        idsToSelect.add(vcdFile.id);
+        idsToSelect.add(binFile.id);
+        if (linFile) idsToSelect.add(linFile.id);
+
+        newPairs.push({
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          vcdId: vcdFile.id,
+          binId: binFile.id,
+          linId: linFile?.id || null,
+          try: pair.try || 1,
+        });
+      }
+
+      // โหลด fileNames (รายการไฟล์ที่เลือก) — แม้ไม่มี pairs ก็แสดงในตารางได้
+      let loadedFromFileNames = 0;
+      if (Array.isArray(config.fileNames)) {
+        for (const name of config.fileNames) {
+          const f = uploadedFiles.find((x) => x.name === name);
+          if (f && !idsToSelect.has(f.id)) {
+            idsToSelect.add(f.id);
+            loadedFromFileNames++;
+          }
+        }
+      }
+
+      setSelectedIds([...idsToSelect]);
+      setSelectedPairs(newPairs);
+      if (config.configName) setConfigName(config.configName);
+      if (config.tag) setTag(config.tag);
+
+      if (newPairs.length > 0) {
+        addToast({ type: 'success', message: `โหลด ${newPairs.length} คู่ และเลือกไฟล์ที่เกี่ยวข้องให้แล้ว` });
+      } else if (loadedFromFileNames > 0) {
+        addToast({ type: 'success', message: `โหลด config และเลือก ${loadedFromFileNames} ไฟล์ให้แล้ว` });
+      } else if (pairs.length === 0 && (!config.fileNames || config.fileNames.length === 0)) {
+        addToast({ type: 'success', message: 'โหลด config (configName, tag) แล้ว' });
+      } else if (pairs.length > 0) {
+        addToast({ type: 'warning', message: 'โหลด 0 คู่ — ตรวจว่าไฟล์ใน config อยู่ใน library หรือยัง (add ไฟล์ก่อน)' });
+      } else {
+        addToast({ type: 'warning', message: 'ไม่พบไฟล์จาก config ใน library — add ไฟล์ก่อนแล้วโหลดใหม่' });
+      }
+    } catch (error) {
+      console.error('Failed to load config:', error);
+      addToast({ type: 'error', message: `Failed to load config: ${error.message}` });
+    } finally {
+      isLoadingConfigRef.current = false; // reset flag
+    }
+  };
+
+  const handleJsonDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    setIsDraggingJson(true);
+  };
+
+  const handleJsonDragLeave = (e) => {
+    e.preventDefault();
+    if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget)) return;
+    setIsDraggingJson(false);
+  };
+
+  const handleJsonDrop = (e) => {
+    e.preventDefault();
+    setIsDraggingJson(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+    const jsonFile = files.find((f) => f.name.endsWith('.json'));
+    if (jsonFile) {
+      loadConfigJson(jsonFile);
+    } else {
+      addToast({ type: 'warning', message: 'Please drop a JSON file' });
+    }
+  };
+
+  const handleJsonFileInput = (e) => {
+    const file = e.target.files?.[0];
+    if (file && file.name.endsWith('.json')) {
+      loadConfigJson(file);
+    } else {
+      addToast({ type: 'warning', message: 'Please select a JSON file' });
+    }
+    if (jsonInputRef.current) jsonInputRef.current.value = '';
+  };
+
   const handleFileSelect = async (selectedFiles) => {
     for (const file of Array.from(selectedFiles)) {
       // Validate file type
@@ -755,7 +1370,11 @@ const SetupPage = () => {
   const handleDragLeave = (e) => {
     e.preventDefault();
     e.stopPropagation();
+    // Only set dragging to false if we're actually leaving the container
+    // (not just moving to a child element)
+    if (!e.currentTarget.contains(e.relatedTarget)) {
     setIsDragging(false);
+    }
   };
   
   const handleDrop = (e) => {
@@ -844,13 +1463,37 @@ const SetupPage = () => {
       }
     };
   
-    return (
-      <div className="space-y-8">
-        <div className="flex justify-between items-end">
-          <div>
-            <h1 className="text-3xl font-bold text-slate-800">Test Case Setup</h1>
-            <p className="text-slate-500 mt-1">Configure and manage your test files or use pre-written test commands.</p>
-          </div>
+  return (
+  <div className="space-y-8">
+    <div className="flex justify-between items-end">
+      <div>
+    <h1 className="text-3xl font-bold text-slate-800">
+      {editJobId ? `Edit Batch #${editJobId}` : 'Test Case Setup'}
+    </h1>
+        <p className="text-slate-500 mt-1">
+          {editJobId 
+            ? 'Edit pairs and configuration for this batch' 
+            : 'Configure and manage your test files or use pre-written test commands.'}
+        </p>
+      </div>
+      {editJobId && (
+        <button
+          onClick={() => {
+            if (onEditComplete) onEditComplete();
+            // Reset states
+            setSelectedPairs([]);
+            setSelectedIds([]);
+            setSelectedBoardIds([]);
+            setSelectedTestCaseIds([]);
+            setConfigName('Default_Setup');
+            setTag('');
+          }}
+          className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-200 transition-all flex items-center gap-2"
+        >
+          <X size={16} />
+          Cancel Edit
+        </button>
+      )}
           <div className="flex gap-2 bg-slate-100 rounded-lg p-1">
             <button
               onClick={() => setSetupMode('files')}
@@ -878,7 +1521,12 @@ const SetupPage = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
             {/* ส่วนแสดงรายการไฟล์พร้อมระบบเลือก */}
-            <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+            <div 
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className="bg-white rounded-3xl border-2 border-slate-200 shadow-sm overflow-hidden transition-all"
+            >
               <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
                 <div className="flex items-center gap-3">
                   <input 
@@ -903,7 +1551,70 @@ const SetupPage = () => {
                 )}
               </div>
   
-              <div className="divide-y divide-slate-100 max-h-[500px] overflow-y-auto">
+              {/* Compact add-files (+) */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept=".vcd,.bin,.hex,.elf"
+                onChange={handleFileInputChange}
+                className="hidden"
+              />
+  
+              {/* Filter: All/VCD/Binary + Time, File Name, Tag */}
+              <div className="px-4 py-3 flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white">
+                <div className="flex items-center gap-2">
+                  {[
+                    { key: 'all', label: 'All' },
+                    { key: 'vcd', label: 'VCD' },
+                    { key: 'bin', label: 'Binary' },
+                  ].map((opt) => (
+                    <button
+                      key={opt.key}
+                      onClick={() => setFileFilter(opt.key)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                        fileFilter === opt.key
+                          ? 'bg-blue-50 border-blue-200 text-blue-700'
+                          : 'bg-white border-slate-200 text-slate-600 hover:border-blue-200'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2 ml-auto">
+                  <button
+                    onClick={handleBrowseClick}
+                    className="h-8 w-8 inline-flex items-center justify-center rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                    title="Add files"
+                  >
+                    <Plus size={16} />
+                  </button>
+                  <input
+                    type="text"
+                    value={fileSearch}
+                    onChange={(e) => setFileSearch(e.target.value)}
+                    placeholder="Search name..."
+                    className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:border-blue-300 focus:ring-0"
+                  />
+                  <select
+                    value={fileSort}
+                    onChange={(e) => setFileSort(e.target.value)}
+                    className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:border-blue-300 focus:ring-0"
+                  >
+                    <option value="time">Time</option>
+                    {/* <option value="file-name">File Name</option> */}
+                    <option value="tag">Tag</option>
+                    {/* <option value="name-asc">Name A-Z</option>
+                    <option value="name-desc">Name Z-A</option> */}
+                  </select>
+                </div>
+              </div>
+  
+              <div className={`divide-y divide-slate-100 overflow-y-auto relative transition-[max-height] duration-300 ${
+                fileListExpanded ? 'max-h-[500px]' : 'max-h-[220px]'
+              }`}>
                 {loading?.files ? (
                   <div className="p-12 text-center text-slate-400">
                     <p>Loading files...</p>
@@ -913,7 +1624,49 @@ const SetupPage = () => {
                     <p>Failed to load files: {errors.files}</p>
                   </div>
                 ) : uploadedFiles.length > 0 ? (
-                  uploadedFiles.map((file) => (
+                  [...uploadedFiles]
+                    .filter((file) => {
+                      // Filter by file type (All/VCD/Binary)
+                      const kind = getFileKind(file);
+                      if (fileFilter === 'all') {
+                        // pass all
+                      } else if (fileFilter === 'vcd') {
+                        if (kind !== 'vcd') return false;
+                      } else if (fileFilter === 'bin') {
+                        if (kind !== 'bin') return false;
+                      }
+                      
+                      // Filter by search
+                      if (!fileSearch.trim()) return true;
+                      return file.name.toLowerCase().includes(fileSearch.trim().toLowerCase());
+                    })
+                    .sort((a, b) => {
+                      if (fileSort === 'time') {
+                        // Sort by upload date (newest first)
+                        return (new Date(b.uploadDate || b.date || 0)) - (new Date(a.uploadDate || a.date || 0));
+                      }
+                      if (fileSort === 'file-name') {
+                        // Sort by file name A-Z
+                        return a.name.localeCompare(b.name);
+                      }
+                      if (fileSort === 'tag') {
+                        // Sort by tag if available, otherwise by name
+                        const aTag = a.tag || '';
+                        const bTag = b.tag || '';
+                        if (aTag && bTag) return aTag.localeCompare(bTag);
+                        if (aTag) return -1;
+                        if (bTag) return 1;
+                        return a.name.localeCompare(b.name);
+                      }
+                      if (fileSort === 'name-asc') {
+                        return a.name.localeCompare(b.name);
+                      }
+                      if (fileSort === 'name-desc') {
+                        return b.name.localeCompare(a.name);
+                      }
+                      return 0;
+                    })
+                    .map((file) => (
                     <div 
                       key={file.id} 
                       className={`flex items-center gap-4 p-4 transition-colors hover:bg-slate-50 ${selectedIds.includes(file.id) ? 'bg-blue-50/50' : ''}`}
@@ -959,54 +1712,41 @@ const SetupPage = () => {
                 ) : (
                   <div className="p-12 text-center text-slate-400">
                     <p>No files uploaded yet.</p>
-                    <p className="text-xs mt-2">Upload files using the area below</p>
+                    <p className="text-xs mt-2">Drag and drop files here or use the + button above</p>
                   </div>
                 )}
               </div>
+
+              {/* Show more / Show less */}
+              {uploadedFiles.length > 0 && !loading?.files && !errors?.files && (
+                <button
+                  type="button"
+                  onClick={() => setFileListExpanded((e) => !e)}
+                  className="w-full py-2.5 flex items-center justify-center gap-2 text-xs font-bold text-slate-600 hover:bg-slate-50 border-t border-slate-200 transition-colors"
+                >
+                  {fileListExpanded ? (
+                    <>
+                      <ChevronUp size={14} />
+                      Show less
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown size={14} />
+                      Show more
+                    </>
+                  )}
+                </button>
+              )}
             </div>
+            
             {setupMode === 'files' ? (
               <>
-                {setupErrors.files && (
-                  <div className="text-sm text-red-600 px-2">
-                    {setupErrors.files}
-                  </div>
-                )}
-    
-                {/* Drag & Drop Area */}
-                <div
-                  onDragOver={handleDragOver}
-                  onDragLeave={handleDragLeave}
-                  onDrop={handleDrop}
-                  onClick={handleBrowseClick}
-                  className={`bg-white border-2 border-dashed rounded-3xl p-10 text-center transition-all cursor-pointer group ${
-                    isDragging 
-                      ? 'border-blue-500 bg-blue-50 scale-105' 
-                      : 'border-slate-200 hover:border-blue-400'
-                  }`}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    accept=".vcd,.bin,.hex,.elf"
-                    onChange={handleFileInputChange}
-                    className="hidden"
-                  />
-                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 transition-transform ${
-                    isDragging ? 'bg-blue-100 scale-110' : 'bg-blue-50 group-hover:scale-110'
-                  }`}>
-                    <Upload size={28} className={isDragging ? 'text-blue-600' : 'text-blue-600'} />
-                   </div>
-                  <h3 className="text-lg font-bold text-slate-800">
-                    {isDragging ? 'Drop files here' : 'Add more files'}
-                  </h3>
-                  <p className="text-slate-400 text-sm mt-1">
-                    {isDragging ? 'Release to upload' : 'Drag and drop or click to browse'}
-                  </p>
-                  <p className="text-xs text-slate-400 mt-3">
-                    Supported: .vcd, .bin, .hex, .elf (Max 50MB per file)
-                  </p>
-                </div>
+            {setupErrors.files && (
+              <div className="text-sm text-red-600 px-2">
+                {setupErrors.files}
+              </div>
+            )}
+  
                 {fileValidationErrors.length > 0 && (
                   <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                     {fileValidationErrors.map((msg, index) => (
@@ -1014,6 +1754,619 @@ const SetupPage = () => {
                     ))}
                   </div>
                 )}
+
+                {/* Select — ลากไฟล์ .json มาวางที่แผนที่นี้ได้ หรือใช้ LOAD CONFIG. JSON */}
+                <div
+                  onDragOver={handleJsonDragOver}
+                  onDragLeave={handleJsonDragLeave}
+                  onDrop={handleJsonDrop}
+                  title="ลากไฟล์ .json มาวางเพื่อโหลด config"
+                  className={`bg-white rounded-3xl border shadow-sm overflow-hidden transition-all ${
+                    isDraggingJson ? 'border-blue-500 ring-2 ring-blue-300 ring-offset-2' : 'border-slate-200'
+                  }`}
+                >
+                  <input ref={jsonInputRef} type="file" accept=".json" onChange={handleJsonFileInput} className="hidden" />
+                  <div className="p-4 flex flex-col gap-3 border-b border-slate-200 bg-slate-50">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-lg font-bold text-slate-900">
+                              {editJobId ? `Edit Batch #${editJobId}` : 'Pair Files'}
+                            </h3>
+                            {selectedPairs.length > 0 && (
+                              <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs font-semibold">
+                                {selectedPairs.length} pairs
+                              </span>
+                            )}
+                            {isLoadingPairs && (
+                              <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-semibold flex items-center gap-1">
+                                <RefreshCw size={12} className="animate-spin" />
+                                Loading...
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            {editJobId ? 'Edit pairs and create a new batch' : 'pair up VCD and BIN files'}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={selectedPairVcdId}
+                            onChange={(e) => setSelectedPairVcdId(e.target.value)}
+                            className="px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:border-blue-300 focus:ring-0"
+                          >
+                            <option value="">Select VCD</option>
+                            {vcdFilesList.map((f) => (
+                              <option key={f.id} value={f.id}>{f.name}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={selectedPairBinId}
+                            onChange={(e) => setSelectedPairBinId(e.target.value)}
+                            className="px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:border-blue-300 focus:ring-0"
+                          >
+                            <option value="">Select BIN</option>
+                            {binFilesList.map((f) => (
+                              <option key={f.id} value={f.id}>{f.name}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={selectedPairLinId}
+                            onChange={(e) => setSelectedPairLinId(e.target.value)}
+                            className="px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:border-blue-300 focus:ring-0"
+                          >
+                            <option value="">Select LIN (optional)</option>
+                            {linFilesList.map((f) => (
+                              <option key={f.id} value={f.id}>{f.name}</option>
+                            ))}
+                          </select>
+                          <button
+                            onClick={addPair}
+                            disabled={!selectedPairVcdId || !selectedPairBinId}
+                            className={`px-3 py-2 rounded-lg text-xs font-semibold ${
+                              !selectedPairVcdId || !selectedPairBinId
+                                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                : 'bg-blue-600 text-white hover:bg-blue-700'
+                            }`}
+                          >
+                            Add pair
+                          </button>
+              </div>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={pairAll}
+                            disabled={vcdFilesList.length === 0 || binFilesList.length === 0}
+                            className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all ${
+                              vcdFilesList.length === 0 || binFilesList.length === 0
+                                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                            }`}
+                            title="Pair all VCD files with BIN files automatically"
+                          >
+                            <Layers size={14} />
+                            Pair All
+                          </button>
+                          <button
+                            onClick={clearAllPairs}
+                            disabled={selectedPairs.length === 0}
+                            className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition-all ${
+                              selectedPairs.length === 0
+                                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                : 'bg-red-600 text-white hover:bg-red-700'
+                            }`}
+                            title="Clear all pairs"
+                          >
+                            <X size={14} />
+                            Clear
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={saveConfigJson}
+                            className="px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 bg-blue-600 text-white hover:bg-blue-700"
+                          >
+                            <FileJson size={14} />
+                            SAVE CONFIG. JSON
+                          </button>
+                          <button
+                            onClick={() => jsonInputRef.current?.click()}
+                            className="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center gap-2"
+                          >
+                            <FileJson size={14} />
+                            LOAD CONFIG. JSON
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto">
+                      {selectedIds.length > 0 ? (
+                        <>
+                          <div className="px-3 py-2 bg-slate-50 border-b border-slate-200">
+                            <h4 className="text-sm font-bold text-slate-900">Test Case</h4>
+                          </div>
+                          <div className="grid bg-slate-50 text-xs font-semibold text-slate-600 border border-slate-300" style={{ gridTemplateColumns: '40px 40px 1fr 1fr 1fr 80px 120px' }}>
+                            <div className="px-2 py-2 flex items-center justify-center border-r border-slate-300">
+                              <input
+                                type="checkbox"
+                                checked={selectedTestCaseIds.length === selectedPairs.length && selectedPairs.length > 0}
+                                onChange={toggleSelectAllTestCases}
+                                className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                title="Select all"
+                              />
+                            </div>
+                            <div className="px-2 py-2 text-center border-r border-slate-300">#</div>
+                            <div className="px-3 py-2 border-r border-slate-300">VCD</div>
+                            <div className="px-3 py-2 border-r border-slate-300">ERoM</div>
+                            <div className="px-3 py-2 border-r border-slate-300">ULP</div>
+                            <div className="px-2 py-2 text-center border-r border-slate-300">try</div>
+                            <div className="px-3 py-2 text-right">Actions</div>
+                          </div>
+                          {selectedPairs.map((pair, idx) => {
+                            const vcdName = vcdFilesList.find((f) => f.id === pair.vcdId)?.name || '—';
+                            const binName = binFilesList.find((f) => f.id === pair.binId)?.name || '—';
+                            const linName = pair.linId ? linFilesList.find((f) => f.id === pair.linId)?.name || '—' : '—';
+                            return (
+                              <div
+                                key={pair.id}
+                                onDragEnter={(e) => e.preventDefault()}
+                                onDragOver={(e) => handleRowDragOver(e, idx)}
+                                onDrop={(e) => handleRowDrop(e, idx)}
+                                className={`grid items-center text-sm border border-slate-300 cursor-pointer ${draggingRowIndex === idx ? 'opacity-50' : ''} ${dropTargetRowIndex === idx ? 'ring-1 ring-blue-400 bg-blue-50/50' : ''} ${selectedTestCaseIds.includes(pair.id) ? 'bg-blue-50/30' : 'hover:bg-slate-50'}`}
+                                style={{ gridTemplateColumns: '40px 40px 1fr 1fr 1fr 80px 120px' }}
+                              >
+                                <div 
+                                  className="px-2 py-2 flex items-center justify-center border-r border-slate-300"
+                                  onClick={(e) => {
+                                    if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT' && !e.target.closest('button') && !e.target.closest('[draggable]')) {
+                                      toggleTestCaseSelection(pair.id);
+                                    }
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedTestCaseIds.includes(pair.id)}
+                                    onChange={() => toggleTestCaseSelection(pair.id)}
+                                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                    onClick={(e) => e.stopPropagation()}
+                                  />
+                                </div>
+                                <div 
+                                  className="px-2 py-2 text-slate-500 text-center border-r border-slate-300"
+                                  onClick={(e) => {
+                                    if (!e.target.closest('button') && !e.target.closest('[draggable]') && !e.target.closest('select')) {
+                                      toggleTestCaseSelection(pair.id);
+                                    }
+                                  }}
+                                >
+                                  {idx + 1}
+                                </div>
+                                <div 
+                                  className="px-3 py-2 border-r border-slate-300"
+                                  onClick={(e) => {
+                                    if (!e.target.closest('select') && !e.target.closest('button') && !e.target.closest('[draggable]')) {
+                                      toggleTestCaseSelection(pair.id);
+                                    }
+                                  }}
+                                >
+                                  <select
+                                    value={pair.vcdId || ''}
+                                    onChange={(e) => updatePairFile(pair.id, 'vcd', e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="w-full px-2 py-1 text-xs rounded border border-slate-300 bg-white focus:border-blue-400 focus:ring-1 focus:ring-blue-400 cursor-pointer"
+                                  >
+                                    <option value="">— Select VCD —</option>
+                                    {vcdFilesList.map((f) => (
+                                      <option key={f.id} value={f.id}>{f.name}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div 
+                                  className="px-3 py-2 border-r border-slate-300"
+                                  onClick={(e) => {
+                                    if (!e.target.closest('select') && !e.target.closest('button') && !e.target.closest('[draggable]')) {
+                                      toggleTestCaseSelection(pair.id);
+                                    }
+                                  }}
+                                >
+                                  <select
+                                    value={pair.binId || ''}
+                                    onChange={(e) => updatePairFile(pair.id, 'bin', e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="w-full px-2 py-1 text-xs rounded border border-slate-300 bg-white focus:border-blue-400 focus:ring-1 focus:ring-blue-400 cursor-pointer"
+                                  >
+                                    <option value="">— Select ERoM —</option>
+                                    {binFilesList.map((f) => (
+                                      <option key={f.id} value={f.id}>{f.name}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div 
+                                  className="px-3 py-2 border-r border-slate-300"
+                                  onClick={(e) => {
+                                    if (!e.target.closest('select') && !e.target.closest('button') && !e.target.closest('[draggable]')) {
+                                      toggleTestCaseSelection(pair.id);
+                                    }
+                                  }}
+                                >
+                                  <select
+                                    value={pair.linId || ''}
+                                    onChange={(e) => updatePairFile(pair.id, 'lin', e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="w-full px-2 py-1 text-xs rounded border border-slate-300 bg-white focus:border-blue-400 focus:ring-1 focus:ring-blue-400 cursor-pointer"
+                                  >
+                                    <option value="">— Select ULP (optional) —</option>
+                                    {linFilesList.map((f) => (
+                                      <option key={f.id} value={f.id}>{f.name}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                                <div 
+                                  className="px-2 py-2 border-r border-slate-300"
+                                  onClick={(e) => {
+                                    if (!e.target.closest('input') && !e.target.closest('button') && !e.target.closest('[draggable]')) {
+                                      toggleTestCaseSelection(pair.id);
+                                    }
+                                  }}
+                                >
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={pair.try === '' || pair.try === null || pair.try === undefined ? '' : pair.try}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      // อนุญาตให้เป็น empty string หรือตัวเลขเท่านั้น
+                                      if (val === '' || /^\d+$/.test(val)) {
+                                        updatePairTry(pair.id, val);
+                                      }
+                                    }}
+                                    onBlur={(e) => {
+                                      // เมื่อ blur ถ้าเป็น empty string ให้ตั้งเป็น 1
+                                      if (e.target.value === '' || e.target.value === null || e.target.value === undefined) {
+                                        updatePairTry(pair.id, '1');
+                                      }
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onKeyDown={(e) => {
+                                      // อนุญาตให้พิมพ์ตัวเลข, backspace, delete, arrow keys, tab
+                                      if (!/[0-9]/.test(e.key) && !['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Tab', 'Enter'].includes(e.key)) {
+                                        e.preventDefault();
+                                      }
+                                    }}
+                                    placeholder="1"
+                                    className="w-full px-1 py-1 text-xs rounded border border-slate-300 bg-white focus:border-blue-400 focus:ring-1 focus:ring-blue-400 text-center"
+                                    title="จำนวนรอบในการ test (พิมพ์ได้, default: 1)"
+                                  />
+                                </div>
+                                <div className="px-3 py-2 flex items-center justify-end gap-1">
+                                  <span
+                                    draggable
+                                    onDragStart={(e) => handleRowDragStart(e, idx)}
+                                    onDragEnd={handleRowDragEnd}
+                                    className="p-1.5 rounded cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                                    title="ลากเพื่อเรียง"
+                                  >
+                                    <GripVertical size={16} />
+                                  </span>
+                                  <button
+                                    onClick={() => duplicatePair(pair.id)}
+                                    className="p-1.5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                                    title="Duplicate"
+                                  >
+                                    <Copy size={16} />
+                                  </button>
+                                  <button
+                                    onClick={() => removePair(pair.id)}
+                                    className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                    title="Remove"
+                                  >
+                                    <X size={16} />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                          {selectedPairs.length === 0 && (
+                            <div className="p-8 text-center text-slate-400 border border-slate-300 border-t-0">
+                              <p className="text-sm mb-2">No test cases yet</p>
+                              <p className="text-xs">Use "Pair All" or "Add pair" to create test cases</p>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <div className="p-4 text-sm text-slate-400">Select files above to create test cases</div>
+                      )}
+                    </div>
+
+                    {/* Config Editor Section - รวมอยู่ใน Pair Files card */}
+                    {selectedIds.length > 0 && (
+                      <div className="p-4 border-t border-slate-200 bg-slate-50">
+                        <h4 className="text-sm font-bold text-slate-900 mb-4 flex items-center gap-2">
+                          <Box size={16} className="text-orange-500" />
+                          Config Editor
+                        </h4>
+                        <div className="space-y-4">
+                          {/* Config Name */}
+                          <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-400 uppercase">Config Name</label>
+                            <input 
+                              type="text" 
+                              value={configName}
+                              onChange={(e) => setConfigName(e.target.value)}
+                              className="w-full bg-white border border-slate-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" 
+                              placeholder="Enter config name"
+                            />
+                          </div>
+                          
+                          {/* Tag */}
+                          <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-400 uppercase flex items-center gap-2">
+                              <Tag size={12} />
+                              Tag / Group
+                            </label>
+                            <div className="relative">
+                              <input 
+                                type="text" 
+                                value={tag}
+                                onChange={(e) => {
+                                  setTag(e.target.value);
+                                  setShowTagSuggestions(e.target.value.length > 0 && existingTags.length > 0);
+                                }}
+                                onFocus={() => {
+                                  if (existingTags.length > 0) setShowTagSuggestions(true);
+                                }}
+                                onBlur={() => {
+                                  setTimeout(() => setShowTagSuggestions(false), 200);
+                                }}
+                                className="w-full bg-white border border-slate-200 p-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" 
+                                placeholder="e.g., Team A, Project X, etc."
+                              />
+                              
+                              {/* Tag Suggestions */}
+                              {showTagSuggestions && existingTags.length > 0 && (
+                                <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                                  {existingTags
+                                    .filter(t => t.toLowerCase().includes(tag.toLowerCase()))
+                                    .map((suggestedTag, idx) => (
+                                      <button
+                                        key={idx}
+                                        type="button"
+                                        onClick={() => {
+                                          setTag(suggestedTag);
+                                          setShowTagSuggestions(false);
+                                        }}
+                                        className="w-full text-left px-3 py-1.5 hover:bg-blue-50 text-xs flex items-center gap-2"
+                                      >
+                                        <Tag size={10} className="text-purple-500" />
+                                        <span>{suggestedTag}</span>
+                                      </button>
+                                    ))}
+                                </div>
+                              )}
+                            </div>
+                            {existingTags.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                {existingTags.slice(0, 5).map((existingTag, idx) => (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => setTag(existingTag)}
+                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-all ${
+                                      tag === existingTag
+                                        ? 'bg-purple-600 text-white'
+                                        : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                                    }`}
+                                  >
+                                    {existingTag}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Preview */}
+                          {selectedPairs.length > 0 && (
+                            <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                              <p className="text-xs font-bold text-blue-700 uppercase mb-2">Preview</p>
+                              <div className="space-y-1 text-xs">
+                                <div className="flex justify-between">
+                                  <span className="text-slate-600">Test Cases:</span>
+                                  <span className="font-bold text-slate-800">{selectedPairs.length}</span>
+                                </div>
+                                {tag && (
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-slate-600">Tag:</span>
+                                    <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-[10px] font-bold">
+                                      {tag}
+                                    </span>
+                                  </div>
+                                )}
+                                {configName && (
+                                  <div className="flex justify-between">
+                                    <span className="text-slate-600">Config:</span>
+                                    <span className="font-bold text-slate-800">{configName}</span>
+                                  </div>
+                                )}
+                                <div className="flex justify-between">
+                                  <span className="text-slate-600">Selected Boards:</span>
+                                  <span className="font-bold text-slate-800">{selectedBoardIds.length}</span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Select Boards */}
+                          <div className="space-y-2">
+                            <label className="text-xs font-bold text-slate-400 uppercase">Select Boards (available)</label>
+                            <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-lg bg-white p-2">
+                              {loading?.boards ? (
+                                <div className="text-xs text-slate-500">Loading boards...</div>
+                              ) : errors?.boards ? (
+                                <div className="text-xs text-red-600">Failed to load boards</div>
+                              ) : selectableBoards.length === 0 ? (
+                                <div className="text-xs text-slate-500">No available boards</div>
+                              ) : (
+                                <div className="space-y-1.5">
+                                  {selectableBoards.map(b => (
+                                    <label key={b.id} className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer">
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedBoardIds.includes(b.id)}
+                                        onChange={() => toggleSelectedBoard(b.id)}
+                                        className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600"
+                                      />
+                                      <div className="flex-1 min-w-0">
+                                        <div className="text-xs font-bold text-slate-800 truncate">{b.name}</div>
+                                        <div className="text-[10px] text-slate-500">{b.ip || 'No IP'} • {b.firmware}</div>
+                                      </div>
+                                      {b.tag && (
+                                        <span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full shrink-0">
+                                          {b.tag}
+                                        </span>
+                                      )}
+                                    </label>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            {setupErrors.boards && (
+                              <div className="text-xs text-red-600">
+                                {setupErrors.boards}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Create Batch Button */}
+                          <button 
+                            disabled={isCreatingBatch || selectedPairs.length === 0}
+                            className={`w-full bg-slate-900 text-white py-3 rounded-xl font-bold shadow-lg transition-all flex items-center justify-center gap-2 ${
+                              isCreatingBatch || selectedPairs.length === 0
+                                ? 'opacity-60 cursor-not-allowed'
+                                : 'hover:bg-black'
+                            }`}
+                            onClick={async () => {
+                              if (isCreatingBatch) return;
+                              
+                              // ใช้ pairs ที่ถูกเลือกจาก checkbox (selectedTestCaseIds)
+                              // ถ้าไม่มีเลือกเลย ให้ใช้ทั้งหมด
+                              const pairsToUse = selectedTestCaseIds.length > 0
+                                ? selectedPairs.filter(pair => selectedTestCaseIds.includes(pair.id))
+                                : selectedPairs;
+                              
+                              if (pairsToUse.length === 0) {
+                                addToast({ type: 'warning', message: 'Please select at least one test case pair' });
+                                return;
+                              }
+                              if (selectedBoardIds.length === 0) {
+                                setSetupErrors((prev) => ({ ...prev, boards: 'Select at least one board.' }));
+                                return;
+                              }
+
+                              const boardNames = selectableBoards
+                                .filter(b => selectedBoardIds.includes(b.id))
+                                .map(b => b.name);
+
+                              // สร้าง files array จาก pairs ที่เลือก (แต่ละ pair = 1 test case)
+                              // ส่งข้อมูลไฟล์ทั้งหมด: VCD, ERoM (BIN), ULP (LIN)
+                              const filesFromPairs = pairsToUse.map((pair, index) => {
+                                const vcdFile = uploadedFiles.find(f => f.id === pair.vcdId);
+                                const binFile = uploadedFiles.find(f => f.id === pair.binId);
+                                const linFile = pair.linId ? uploadedFiles.find(f => f.id === pair.linId) : null;
+                                
+                                return {
+                                  name: vcdFile?.name || '', // VCD file name (primary)
+                                  order: index + 1,
+                                  try: pair.try || 1,
+                                  vcd: vcdFile?.name || '', // VCD file
+                                  erom: binFile?.name || '', // ERoM (BIN) file
+                                  ulp: linFile?.name || null, // ULP (LIN) file (optional)
+                                };
+                              });
+
+                              // ใช้ firmware จาก pair แรก
+                              const firstPair = pairsToUse[0];
+                              const firmwareFile = uploadedFiles.find(f => f.id === firstPair.binId);
+
+                              // เก็บ pairs data สำหรับ edit batch (เก็บ file IDs, file names และ try count)
+                              const pairsDataForHistory = pairsToUse.map(pair => {
+                                const vcdFile = uploadedFiles.find(f => f.id === pair.vcdId);
+                                const binFile = uploadedFiles.find(f => f.id === pair.binId);
+                                const linFile = pair.linId ? uploadedFiles.find(f => f.id === pair.linId) : null;
+                                
+                                return {
+                                  vcdId: pair.vcdId,
+                                  binId: pair.binId,
+                                  linId: pair.linId || null,
+                                  vcdName: vcdFile?.name || '', // เก็บ file name สำหรับ fallback
+                                  binName: binFile?.name || '', // เก็บ file name สำหรับ fallback
+                                  linName: linFile?.name || null, // เก็บ file name สำหรับ fallback
+                                  try: pair.try || 1,
+                                };
+                              });
+
+                              const jobPayload = {
+                                name: configName || `Batch ${new Date().toISOString()}`,
+                                tag: tag || undefined,
+                                firmware: firmwareFile?.name || '',
+                                boards: boardNames,
+                                files: filesFromPairs.map(f => ({
+                                  name: f.name, // VCD file name (for backward compatibility)
+                                  order: f.order,
+                                  vcd: f.vcd, // VCD file
+                                  erom: f.erom, // ERoM (BIN) file
+                                  ulp: f.ulp, // ULP (LIN) file
+                                  try_count: f.try, // Number of test rounds
+                                })),
+                                configName: configName || undefined,
+                                pairsData: pairsDataForHistory, // เก็บ pairs data สำหรับ edit
+                              };
+
+                              try {
+                                setIsCreatingBatch(true);
+                                const created = await createJob(jobPayload);
+                                if (created) {
+                                  // ถ้าเป็น edit mode ให้ clear edit state
+                                  if (editJobId && onEditComplete) {
+                                    onEditComplete();
+                                  }
+                                  setSelectedIds([]);
+                                  setSelectedPairs([]);
+                                  setSelectedBoardIds([]);
+                                  setSelectedTestCaseIds([]);
+                                  setTag('');
+                                  setConfigName('Default_Setup');
+                                  addToast({ 
+                                    type: 'success', 
+                                    message: editJobId 
+                                      ? 'Batch updated successfully (new batch created).' 
+                                      : 'Batch created successfully.' 
+                                  });
+                                } else {
+                                  addToast({ type: 'error', message: 'Failed to create batch.' });
+                                }
+                              } finally {
+                                setIsCreatingBatch(false);
+                              }
+                            }}
+                          >
+                            {isCreatingBatch ? (
+                              <>
+                                <RefreshCw size={16} className="animate-spin" />
+                                Creating...
+                              </>
+                            ) : (
+                              <>
+                                <Play size={16} />
+                                Create Batch
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
               </>
             ) : (
               <>
@@ -1107,354 +2460,63 @@ const SetupPage = () => {
               </>
             )}
           </div>
-  
-          {/* ส่วน Config Editor */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm h-fit sticky top-28">
-            <h3 className="font-bold mb-6 flex items-center gap-2"><Box className="text-orange-500" /> Config Editor</h3>
-            <div className="space-y-5">
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase">Config Name</label>
-                <input 
-                  type="text" 
-                  value={configName}
-                  onChange={(e) => setConfigName(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" 
-                  placeholder="Enter config name"
-                />
-              </div>
-              
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase flex items-center gap-2">
-                  <Tag size={14} />
-                  Tag / Group
-                </label>
-                <div className="relative">
-                  <input 
-                    type="text" 
-                    value={tag}
-                    onChange={(e) => {
-                      setTag(e.target.value);
-                      setShowTagSuggestions(e.target.value.length > 0 && existingTags.length > 0);
-                    }}
-                    onFocus={() => {
-                      if (existingTags.length > 0) setShowTagSuggestions(true);
-                    }}
-                    onBlur={() => {
-                      // Delay to allow clicking on suggestions
-                      setTimeout(() => setShowTagSuggestions(false), 200);
-                    }}
-                    className="w-full bg-slate-50 border border-slate-200 p-3 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" 
-                    placeholder="e.g., Team A, Project X, etc."
-                  />
-                  
-                  {/* Tag Suggestions */}
-                  {showTagSuggestions && existingTags.length > 0 && (
-                    <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
-                      {existingTags
-                        .filter(t => t.toLowerCase().includes(tag.toLowerCase()))
-                        .map((suggestedTag, idx) => (
-                          <button
-                            key={idx}
-                            type="button"
-                            onClick={() => {
-                              setTag(suggestedTag);
-                              setShowTagSuggestions(false);
-                            }}
-                            className="w-full text-left px-4 py-2 hover:bg-blue-50 text-sm flex items-center gap-2"
-                          >
-                            <Tag size={12} className="text-purple-500" />
-                            <span>{suggestedTag}</span>
-                          </button>
-                        ))}
-            </div>
-                  )}
-                </div>
-                <p className="text-xs text-slate-400 mt-1">
-                  Tag helps identify and group your jobs
-                </p>
-                
-                {/* Show existing tags as quick select */}
-                {existingTags.length > 0 && (
-                  <div className="mt-2">
-                    <p className="text-xs text-slate-400 mb-2">Quick select:</p>
-                    <div className="flex flex-wrap gap-2">
-                      {existingTags.slice(0, 5).map((existingTag, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => setTag(existingTag)}
-                          className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${
-                            tag === existingTag
-                              ? 'bg-purple-600 text-white'
-                              : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
-                          }`}
-                        >
-                          {existingTag}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-              
-              {/* Preview Section */}
-              {(selectedIds.length > 0 || selectedTestCommand) && (
-                <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
-                  <p className="text-xs font-bold text-blue-700 uppercase mb-2">Preview</p>
-                  <div className="space-y-1 text-sm">
-                    {setupMode === 'files' ? (
-                      <>
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">Selected Files:</span>
-                          <span className="font-bold text-slate-800">{selectedIds.length}</span>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="flex justify-between">
-                          <span className="text-slate-600">Test Command:</span>
-                          <span className="font-bold text-slate-800">{selectedTestCommand?.name || 'None'}</span>
-                        </div>
-                      </>
-                    )}
-                    {tag && (
-                      <div className="flex justify-between items-center">
-                        <span className="text-slate-600">Tag:</span>
-                        <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded-full text-xs font-bold">
-                          {tag}
-                        </span>
-                      </div>
-                    )}
-                    {configName && (
-                      <div className="flex justify-between">
-                        <span className="text-slate-600">Config:</span>
-                        <span className="font-bold text-slate-800">{configName}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between">
-                      <span className="text-slate-600">Selected Boards:</span>
-                      <span className="font-bold text-slate-800">{selectedBoardIds.length}</span>
-                    </div>
-                    {selectedTestCommand && (
-                      <div className="mt-2 pt-2 border-t border-blue-200">
-                        <div className="text-xs text-slate-600 mb-1">Command Preview:</div>
-                        <div className="font-mono text-xs bg-white p-2 rounded border border-blue-200">
-                          {getResolvedCommand(selectedTestCommand)}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-400 uppercase">Select Boards (available)</label>
-                <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-xl bg-slate-50 p-3">
-                  {loading?.boards ? (
-                    <div className="text-sm text-slate-500">Loading boards...</div>
-                  ) : errors?.boards ? (
-                    <div className="text-sm text-red-600">Failed to load boards: {errors.boards}</div>
-                  ) : selectableBoards.length === 0 ? (
-                    <div className="text-sm text-slate-500">No available boards (online & idle)</div>
-                  ) : (
-                    <div className="space-y-2">
-                      {selectableBoards.map(b => (
-                        <label key={b.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-white cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={selectedBoardIds.includes(b.id)}
-                            onChange={() => toggleSelectedBoard(b.id)}
-                            className="w-4 h-4 rounded border-slate-300 text-blue-600"
-                          />
-                          <div className="flex-1">
-                            <div className="text-sm font-bold text-slate-800">{b.name}</div>
-                            <div className="text-xs text-slate-500">{b.ip || 'No IP'} • {b.firmware}</div>
-                          </div>
-                          {b.tag && (
-                            <span className="text-[10px] font-bold bg-purple-100 text-purple-700 px-2 py-1 rounded-full">
-                              {b.tag}
-                            </span>
-                          )}
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <p className="text-xs text-slate-400">เลือก board สำหรับ batch นี้ (frontend-only ตอนนี้)</p>
-                {setupErrors.boards && (
-                  <div className="text-sm text-red-600 mt-1">
-                    {setupErrors.boards}
-                  </div>
-                )}
-              </div>
-              
-              <div className="space-y-2 pt-2 border-t border-slate-200">
-                {setupMode === 'files' ? (
-                  <button 
-                    disabled={isCreatingBatch}
-                    className={`w-full bg-slate-900 text-white py-4 rounded-2xl font-bold shadow-xl transition-all ${isCreatingBatch ? 'opacity-60 cursor-not-allowed' : 'hover:bg-black'}`}
-                    onClick={async () => {
-                      if (isCreatingBatch) return;
-                      if (!validateSetup('files')) {
-                        return;
-                      }
-
-                      const selectedFiles = uploadedFiles.filter(f => selectedIds.includes(f.id));
-                      const vcdFiles = selectedFiles.filter(f => f.type === 'vcd');
-                      const firmwareFiles = selectedFiles.filter(f => f.type !== 'vcd');
-                      const boardNames = selectableBoards
-                        .filter(b => selectedBoardIds.includes(b.id))
-                        .map(b => b.name);
-
-                      const jobPayload = {
-                        name: configName || `Batch ${new Date().toISOString()}`,
-                        tag: tag || undefined,
-                        firmware: firmwareFiles[0]?.name || '',
-                        boards: boardNames,
-                        files: vcdFiles.map((file, index) => ({
-                          name: file.name,
-                          order: index + 1,
-                        })),
-                        configName: configName || undefined,
-                      };
-
-                      try {
-                        setIsCreatingBatch(true);
-                        const created = await createJob(jobPayload);
-                        if (created) {
-                          setSelectedIds([]);
-                          setSelectedBoardIds([]);
-                          setTag('');
-                          addToast({ type: 'success', message: 'Batch created successfully.' });
-                        } else {
-                          addToast({ type: 'error', message: 'Failed to create batch.' });
-                        }
-                      } finally {
-                        setIsCreatingBatch(false);
-                      }
-                    }}
-                  >
-                    {isCreatingBatch ? 'Creating...' : 'Create Batch'}
-                  </button>
-                ) : (
-                  <button 
-                    disabled={isRunningCommand}
-                    className={`w-full bg-slate-900 text-white py-4 rounded-2xl font-bold shadow-xl transition-all flex items-center justify-center gap-2 ${isRunningCommand ? 'opacity-60 cursor-not-allowed' : 'hover:bg-black'}`}
-                    onClick={async () => {
-                      if (isRunningCommand) return;
-                      if (!validateSetup('commands')) {
-                        return;
-                      }
-                      const resolvedCmd = getResolvedCommand(selectedTestCommand);
-                      const boardNames = selectableBoards
-                        .filter(b => selectedBoardIds.includes(b.id))
-                        .map(b => b.name);
-                      const payload = {
-                        name: selectedTestCommand.name,
-                        command: resolvedCmd,
-                        tag: tag || undefined,
-                        boards: boardNames,
-                        configName: configName || undefined,
-                      };
-                      try {
-                        setIsRunningCommand(true);
-                        const created = await runTestCommand(payload);
-                        if (created) {
-                          setSelectedBoardIds([]);
-                          addToast({ type: 'success', message: 'Test command queued.' });
-                        } else {
-                          addToast({ type: 'error', message: 'Failed to run test command.' });
-                        }
-                      } finally {
-                        setIsRunningCommand(false);
-                      }
-                    }}
-                  >
-                    <Play size={18} />
-                    {isRunningCommand ? 'Running...' : 'Run Test Command'}
-                  </button>
-                )}
-                <button 
-                  className="w-full bg-slate-100 text-slate-700 py-3 rounded-xl font-bold hover:bg-slate-200 transition-all"
-                  onClick={() => {
-                    const config = {
-                      name: configName,
-                      tag: tag || null,
-                      boards: selectableBoards.filter(b => selectedBoardIds.includes(b.id)).map(b => ({ id: b.id, name: b.name, ip: b.ip, firmware: b.firmware, tag: b.tag })),
-                      files: uploadedFiles.filter(f => selectedIds.includes(f.id)).map(f => ({ id: f.id, name: f.name, originalName: f.originalName, type: f.type, size: f.size })),
-                      createdAt: new Date().toISOString()
-                    };
-                    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = `config_${configName || 'setup'}_${new Date().toISOString().split('T')[0]}.json`;
-                    link.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                >
-                  Export Config JSON
-                </button>
-              </div>
-              
-              {/* Test Commands Manager Modal */}
-              {showCommandManager && (
-                <TestCommandsManagerModal
-                  commands={testCommands}
-                  editingCommand={editingCommand}
-                  commandForm={commandForm}
-                  setCommandForm={setCommandForm}
-                  onClose={() => {
-                    setShowCommandManager(false);
-                    setEditingCommand(null);
-                    setCommandForm({ name: '', command: '', description: '', category: 'testing' });
-                  }}
-                  onSave={(cmd) => {
-                    if (editingCommand) {
-                      updateTestCommand(editingCommand.id, cmd);
-                    } else {
-                      addTestCommand(cmd);
-                    }
-                    setShowCommandManager(false);
-                    setEditingCommand(null);
-                    setCommandForm({ name: '', command: '', description: '', category: 'testing' });
-                  }}
-                  onEdit={(cmd) => {
-                    if (cmd) {
-                      setEditingCommand(cmd);
-                      setCommandForm({
-                        name: cmd.name,
-                        command: cmd.command,
-                        description: cmd.description || '',
-                        category: cmd.category || 'testing'
-                      });
-                    } else {
-                      setEditingCommand(null);
-                      setCommandForm({ name: '', command: '', description: '', category: 'testing' });
-                    }
-                  }}
-                  onDelete={(id) => {
-                    if (window.confirm('Are you sure you want to delete this command?')) {
-                      deleteTestCommand(id);
-                      if (selectedTestCommand?.id === id) {
-                        setSelectedTestCommand(null);
-                      }
-                    }
-                  }}
-                  onDuplicate={(id) => {
-                    duplicateTestCommand(id);
-                  }}
-                />
-              )}
-            </div>
-          </div>
         </div>
+
+        {/* Test Commands Manager Modal */}
+        {showCommandManager && (
+          <TestCommandsManagerModal
+            commands={testCommands}
+            editingCommand={editingCommand}
+            commandForm={commandForm}
+            setCommandForm={setCommandForm}
+            onClose={() => {
+              setShowCommandManager(false);
+              setEditingCommand(null);
+              setCommandForm({ name: '', command: '', description: '', category: 'testing' });
+            }}
+            onSave={(cmd) => {
+              if (editingCommand) {
+                updateTestCommand(editingCommand.id, cmd);
+              } else {
+                addTestCommand(cmd);
+              }
+              setShowCommandManager(false);
+              setEditingCommand(null);
+              setCommandForm({ name: '', command: '', description: '', category: 'testing' });
+            }}
+            onEdit={(cmd) => {
+              if (cmd) {
+                setEditingCommand(cmd);
+                setCommandForm({
+                  name: cmd.name,
+                  command: cmd.command,
+                  description: cmd.description || '',
+                  category: cmd.category || 'testing'
+                });
+              } else {
+                setEditingCommand(null);
+                setCommandForm({ name: '', command: '', description: '', category: 'testing' });
+              }
+            }}
+            onDelete={(id) => {
+              if (window.confirm('Are you sure you want to delete this command?')) {
+                deleteTestCommand(id);
+                if (selectedTestCommand?.id === id) {
+                  setSelectedTestCommand(null);
+                }
+              }
+            }}
+            onDuplicate={(id) => {
+              duplicateTestCommand(id);
+            }}
+          />
+        )}
       </div>
     );
   };
 
 // 3. JOBS PAGE (Enhanced)
-const JobsPage = () => {
+const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
   const { 
     jobs, 
     startPendingJobs,
@@ -1479,6 +2541,9 @@ const JobsPage = () => {
   const [testCasesSearch, setTestCasesSearch] = useState('');
   const [isRunningBatch, setIsRunningBatch] = useState(false);
   const [isStoppingAll, setIsStoppingAll] = useState(false);
+  const [selectedJobIds, setSelectedJobIds] = useState([]); // สำหรับเลือก batch ที่ต้องการ run
+  const [dragStartIndex, setDragStartIndex] = useState(null); // สำหรับ drag selection
+  const [isDragging, setIsDragging] = useState(false); // track ว่ากำลัง drag อยู่หรือไม่
   
   const toggleJobExpanded = (jobId) => {
     setExpandedJobs(prev => 
@@ -1518,6 +2583,106 @@ const JobsPage = () => {
       addToast({ type: 'error', message: 'Failed to start batch.' });
     }
   };
+
+  // Functions สำหรับเลือก batch
+  const toggleJobSelection = (jobId) => {
+    setSelectedJobIds(prev => 
+      prev.includes(jobId) 
+        ? prev.filter(id => id !== jobId)
+        : [...prev, jobId]
+    );
+  };
+
+  const toggleSelectAllJobs = () => {
+    if (selectedJobIds.length === jobs.length) {
+      setSelectedJobIds([]);
+    } else {
+      setSelectedJobIds(jobs.map(j => j.id));
+    }
+  };
+
+  // Functions สำหรับ drag selection
+  const handleMouseDown = (jobIndex) => {
+    setDragStartIndex(jobIndex);
+    setIsDragging(true);
+    // Toggle selection ของ job ที่คลิก
+    const jobId = jobs[jobIndex]?.id;
+    if (jobId) {
+      toggleJobSelection(jobId);
+    }
+  };
+
+  const handleMouseEnter = (jobIndex) => {
+    if (isDragging && dragStartIndex !== null) {
+      // Select range จาก dragStartIndex ถึง jobIndex
+      const start = Math.min(dragStartIndex, jobIndex);
+      const end = Math.max(dragStartIndex, jobIndex);
+      const rangeJobIds = jobs.slice(start, end + 1).map(j => j.id);
+      setSelectedJobIds(prev => {
+        // รวม range ใหม่กับ selection เดิม
+        const newSelection = [...new Set([...prev, ...rangeJobIds])];
+        return newSelection;
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    setDragStartIndex(null);
+    setIsDragging(false);
+  };
+
+  // Add event listeners for mouse up outside
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      if (isDragging) {
+        setDragStartIndex(null);
+        setIsDragging(false);
+      }
+    };
+    
+    if (isDragging) {
+      window.addEventListener('mouseup', handleGlobalMouseUp);
+      return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+    }
+  }, [isDragging]);
+
+  const handleRunSelectedJobs = async () => {
+    if (selectedJobIds.length === 0) {
+      addToast({ type: 'warning', message: 'Please select at least one batch to run.' });
+      return;
+    }
+    
+    const selectedJobs = jobs.filter(j => selectedJobIds.includes(j.id));
+    const pendingSelectedJobs = selectedJobs.filter(j => j.status === 'pending');
+    
+    if (pendingSelectedJobs.length === 0) {
+      addToast({ type: 'info', message: 'No pending jobs in selected batches.' });
+      return;
+    }
+
+    if (isRunningBatch) return;
+    setIsRunningBatch(true);
+
+    try {
+      // Import startJob from api
+      const api = await import('./services/api');
+      
+      // Start all selected pending jobs
+      await Promise.allSettled(pendingSelectedJobs.map((job) => api.startJob(job.id)));
+      
+      // Refresh jobs list
+      const { refreshJobs } = useTestStore.getState();
+      await refreshJobs();
+      
+      addToast({ type: 'success', message: `Started ${pendingSelectedJobs.length} selected batch(es).` });
+      setSelectedJobIds([]); // Clear selection after running
+    } catch (error) {
+      console.error('Failed to start selected jobs', error);
+      addToast({ type: 'error', message: 'Failed to start selected batches.' });
+    } finally {
+      setIsRunningBatch(false);
+    }
+  };
   
   const handleEditTag = (job) => {
     setEditingTag(job.id);
@@ -1548,23 +2713,54 @@ const JobsPage = () => {
       <h1 className="text-3xl font-bold">Job Management</h1>
           <p className="text-slate-500 mt-1">Manage and monitor all test jobs</p>
         </div>
-      <div className="flex gap-3">
+      <div className="flex gap-3 items-center">
+        {/* Select All Checkbox */}
+        {jobs.length > 0 && (
+          <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-lg border border-slate-200">
+            <input
+              type="checkbox"
+              checked={selectedJobIds.length === jobs.length && jobs.length > 0}
+              onChange={toggleSelectAllJobs}
+              className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+              title="Select all batches"
+            />
+            <span className="text-sm font-semibold text-slate-700">
+              {selectedJobIds.length > 0 ? `${selectedJobIds.length} selected` : 'Select All'}
+            </span>
+          </div>
+        )}
+        
+        {/* Run Selected Button */}
+        {selectedJobIds.length > 0 && (
           <button
-            onClick={handleRunBatch}
+            onClick={handleRunSelectedJobs}
             disabled={isRunningBatch}
-            className={`bg-emerald-500 text-white px-6 py-2 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 ${isRunningBatch ? 'opacity-60 cursor-not-allowed' : 'hover:bg-emerald-600'}`}
+            className={`bg-blue-500 text-white px-6 py-2 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 ${isRunningBatch ? 'opacity-60 cursor-not-allowed' : 'hover:bg-blue-600'}`}
           >
-            <PlayCircle size={18} />
-            {isRunningBatch ? 'Starting...' : 'Run Batch'}
+            <Play size={18} />
+            {isRunningBatch ? 'Starting...' : `Run Selected (${selectedJobIds.length})`}
           </button>
-          <button 
-            onClick={handleStopAll}
-            disabled={isStoppingAll}
-            className={`bg-red-500 text-white px-6 py-2 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 ${isStoppingAll ? 'opacity-60 cursor-not-allowed' : 'hover:bg-red-600'}`}
-          >
-            <Square size={18} />
-            {isStoppingAll ? 'Stopping...' : 'Stop All'}
-          </button>
+        )}
+        
+        {/* Run All Pending Button */}
+        <button
+          onClick={handleRunBatch}
+          disabled={isRunningBatch}
+          className={`bg-emerald-500 text-white px-6 py-2 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 ${isRunningBatch ? 'opacity-60 cursor-not-allowed' : 'hover:bg-emerald-600'}`}
+        >
+          <PlayCircle size={18} />
+          {isRunningBatch ? 'Starting...' : 'Run All Pending'}
+        </button>
+        
+        {/* Stop All Button */}
+        <button 
+          onClick={handleStopAll}
+          disabled={isStoppingAll}
+          className={`bg-red-500 text-white px-6 py-2 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 ${isStoppingAll ? 'opacity-60 cursor-not-allowed' : 'hover:bg-red-600'}`}
+        >
+          <Square size={18} />
+          {isStoppingAll ? 'Stopping...' : 'Stop All'}
+        </button>
       </div>
     </div>
       
@@ -1589,12 +2785,30 @@ const JobsPage = () => {
           const runningFiles = sortedFiles.filter(f => f.status === 'running');
           
           return (
-            <div key={job.id} id={`job-${job.id}`} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div 
+              key={job.id} 
+              id={`job-${job.id}`} 
+              className={`bg-white rounded-2xl border shadow-sm overflow-hidden transition-all cursor-pointer ${
+                selectedJobIds.includes(job.id) ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200'
+              }`}
+              onMouseDown={() => handleMouseDown(jobIndex)}
+              onMouseEnter={() => handleMouseEnter(jobIndex)}
+              onMouseUp={handleMouseUp}
+            >
               {/* Job Header */}
               <div className="p-6 border-b border-slate-100">
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
+                      {/* Checkbox for selection */}
+                      <input
+                        type="checkbox"
+                        checked={selectedJobIds.includes(job.id)}
+                        onChange={() => toggleJobSelection(job.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        title="Select this batch"
+                      />
                       <h3 className="text-xl font-bold text-slate-800">Batch #{job.id}</h3>
                       <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${
                         job.status === 'running' ? 'bg-blue-100 text-blue-700' :
@@ -1697,6 +2911,16 @@ const JobsPage = () => {
                       <Eye size={16} />
                       {testCasesView === job.id ? 'Hide Progress' : 'View Progress'}
                     </button>
+                    {onEditJob && (
+                      <button
+                        onClick={() => onEditJob(job.id)}
+                        className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700 transition-all flex items-center gap-2"
+                        title="Edit this batch - Load pairs table for editing"
+                      >
+                        <Pencil size={16} />
+                        Edit Batch
+                      </button>
+                    )}
                   </div>
                 </div>
                 
@@ -2988,8 +4212,15 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
   const filteredFiles = files.filter(file => {
     // Status filter
     if (filter !== 'all' && file.status !== filter) return false;
-    // Search filter
-    if (search && !file.name.toLowerCase().includes(search.toLowerCase())) return false;
+    // Search filter - search in VCD, ERoM, ULP file names
+    if (search) {
+      const searchLower = search.toLowerCase();
+      const vcdMatch = file.vcd?.toLowerCase().includes(searchLower);
+      const eromMatch = file.erom?.toLowerCase().includes(searchLower);
+      const ulpMatch = file.ulp?.toLowerCase().includes(searchLower);
+      const nameMatch = file.name?.toLowerCase().includes(searchLower);
+      if (!vcdMatch && !eromMatch && !ulpMatch && !nameMatch) return false;
+    }
     return true;
   });
   
@@ -3141,9 +4372,37 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                         
                         {/* File Info */}
                         <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <FileCode size={18} className="text-slate-400" />
-                            <span className="font-bold text-slate-800">{file.name}</span>
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            {/* VCD File */}
+                            {file.vcd && (
+                              <div className="flex items-center gap-1">
+                                <FileCode size={18} className="text-blue-500" />
+                                <span className="font-bold text-slate-800 text-sm">{file.vcd}</span>
+                              </div>
+                            )}
+                            {/* ERoM File */}
+                            {file.erom && (
+                              <div className="flex items-center gap-1">
+                                <span className="text-slate-400">+</span>
+                                <FileCode size={16} className="text-orange-500" />
+                                <span className="font-semibold text-slate-700 text-sm">{file.erom}</span>
+                              </div>
+                            )}
+                            {/* ULP File */}
+                            {file.ulp && (
+                              <div className="flex items-center gap-1">
+                                <span className="text-slate-400">+</span>
+                                <FileCode size={16} className="text-purple-500" />
+                                <span className="font-semibold text-slate-700 text-sm">{file.ulp}</span>
+                              </div>
+                            )}
+                            {/* Fallback to file.name if no vcd/erom/ulp */}
+                            {!file.vcd && !file.erom && !file.ulp && (
+                              <>
+                                <FileCode size={18} className="text-slate-400" />
+                                <span className="font-bold text-slate-800">{file.name}</span>
+                              </>
+                            )}
                             {isRunning && (
                               <span className="px-2 py-0.5 bg-blue-500 text-white rounded text-xs font-bold animate-pulse">
                                 RUNNING NOW
@@ -3152,6 +4411,7 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                           </div>
                           <div className="text-xs text-slate-500">
                             Test Case #{file.order || fileIndex + 1} of {files.length}
+                            {file.try_count && file.try_count > 1 && ` • ${file.try_count} rounds`}
                           </div>
                         </div>
                         

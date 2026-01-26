@@ -277,6 +277,12 @@ export const updateJobTag = (id, tag) => {
 export const getJobFiles = (jobId) => apiRequest(API_ENDPOINTS.JOB_FILES(jobId));
 
 /**
+ * Get pairs data (pair table history) for editing batch
+ * Expected Response: { pairsData: [...] }
+ */
+export const getJobPairs = (jobId) => apiRequest(API_ENDPOINTS.JOB_PAIRS(jobId));
+
+/**
  * Stop a specific file in a job
  * Expected Response: { success: true, file: updatedFile }
  */
@@ -440,6 +446,7 @@ export default {
   getJobFiles,
   stopJobFile,
   moveJobFile,
+  getJobPairs,
   
   // Files
   uploadFile,

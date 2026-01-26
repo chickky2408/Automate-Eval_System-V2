@@ -17,6 +17,10 @@ class JobFile:
     status: str
     result: Optional[str]
     order: int
+    vcd: Optional[str] = None  # VCD file name
+    erom: Optional[str] = None  # ERoM (BIN) file name
+    ulp: Optional[str] = None   # ULP (LIN) file name
+    try_count: Optional[int] = None  # Number of test rounds
 
 
 class FEJobStore:
@@ -26,13 +30,17 @@ class FEJobStore:
         self._meta: Dict[str, dict] = {}
         self._file_id = itertools.count(1)
 
-    def _new_file(self, name: str, order: int) -> JobFile:
+    def _new_file(self, name: str, order: int, vcd: Optional[str] = None, erom: Optional[str] = None, ulp: Optional[str] = None, try_count: Optional[int] = None) -> JobFile:
         return JobFile(
             id=next(self._file_id),
             name=name,
             status="pending",
             result=None,
             order=order,
+            vcd=vcd,
+            erom=erom,
+            ulp=ulp,
+            try_count=try_count,
         )
 
     def create_from_payload(
@@ -51,7 +59,14 @@ class FEJobStore:
         job_files: List[JobFile] = []
         for idx, file_info in enumerate(payload_files):
             order = file_info.get("order") or (idx + 1)
-            job_files.append(self._new_file(file_info.get("name", f"file_{order}.vcd"), order))
+            file_name = file_info.get("name", f"file_{order}.vcd")
+            # เก็บข้อมูลไฟล์ทั้งหมด (VCD, ERoM, ULP) ใน JobFile
+            vcd = file_info.get("vcd") if isinstance(file_info, dict) else None
+            erom = file_info.get("erom") if isinstance(file_info, dict) else None
+            ulp = file_info.get("ulp") if isinstance(file_info, dict) else None
+            try_count = file_info.get("try_count") or file_info.get("try", 1) if isinstance(file_info, dict) else None
+            job_file = self._new_file(file_name, order, vcd=vcd, erom=erom, ulp=ulp, try_count=try_count)
+            job_files.append(job_file)
 
         if not job_files:
             fallback_name = default_file_name or f"{job_id}.vcd"
@@ -67,6 +82,21 @@ class FEJobStore:
         }
         self._meta[job_id] = meta
         return meta
+    
+    def save_pairs_data(self, job_id: str, pairs_data: List[dict]) -> bool:
+        """Save pairs data (pair table history) for editing later."""
+        meta = self._meta.get(job_id)
+        if not meta:
+            return False
+        meta["pairsData"] = pairs_data  # เก็บ pairs data สำหรับ edit
+        return True
+    
+    def get_pairs_data(self, job_id: str) -> Optional[List[dict]]:
+        """Get pairs data (pair table history) for editing."""
+        meta = self._meta.get(job_id)
+        if not meta:
+            return None
+        return meta.get("pairsData")
 
     def ensure_meta(
         self,
