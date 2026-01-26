@@ -75,7 +75,7 @@
 - **Location**: Fleet Manager → Board Details Side Panel → Tag & Connections section
 - **Status**: ✅ Implemented
 - **Details**: 
-  - Shows connections/capabilities (MQTT, SSH, etc.)
+  - Shows connections/capabilities (REST API, SSH, etc.)
   - Editable connections field (comma-separated)
   - Displays as badges on board cards
   - Line: `src/App.jsx:2299-2315`

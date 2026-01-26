@@ -55,7 +55,7 @@ const apiRequest = async (endpoint, options = {}) => {
 
 /**
  * Get system health summary
- * Expected Response: { totalBoards, onlineBoards, busyBoards, errorBoards, storageUsage, storageTotal, storageUsed, mqttBrokerStatus }
+ * Expected Response: { totalBoards, onlineBoards, busyBoards, errorBoards, storageUsage, storageTotal, storageUsed, boardApiStatus }
  */
 export const getSystemHealth = () => apiRequest(API_ENDPOINTS.SYSTEM_HEALTH);
 
@@ -66,10 +66,10 @@ export const getSystemHealth = () => apiRequest(API_ENDPOINTS.SYSTEM_HEALTH);
 export const getStorageStatus = () => apiRequest(API_ENDPOINTS.STORAGE_STATUS);
 
 /**
- * Get MQTT broker status
+ * Get board REST API status
  * Expected Response: { status: 'online' | 'offline', lastConnected, messageCount }
  */
-export const getMqttStatus = () => apiRequest(API_ENDPOINTS.MQTT_STATUS);
+export const getBoardApiStatus = () => apiRequest(API_ENDPOINTS.BOARD_API_STATUS);
 
 // ============================================
 // BOARDS/DEVICES APIs
@@ -415,7 +415,7 @@ export default {
   // System
   getSystemHealth,
   getStorageStatus,
-  getMqttStatus,
+  getBoardApiStatus,
   
   // Boards
   getBoards,

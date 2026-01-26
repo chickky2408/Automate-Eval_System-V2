@@ -52,7 +52,7 @@ import api from '../services/api';
 
 See `API_DOCUMENTATION.md` for complete specifications. Key endpoints:
 
-- **System Health**: `/api/system/health`, `/api/system/storage`, `/api/system/mqtt/status`
+- **System Health**: `/api/system/health`, `/api/system/storage`, `/api/system/board-api/status`
 - **Boards**: `/api/boards`, `/api/boards/:id`, `/api/boards/:id/reboot`, etc.
 - **Jobs**: `/api/jobs`, `/api/jobs/:id`, `/api/jobs/:id/start`, etc.
 - **Files**: `/api/files/upload`, `/api/files`, `/api/files/:id`

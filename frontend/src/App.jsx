@@ -114,12 +114,12 @@ const App = () => {
                   Monitoring {systemHealth.totalBoards} boards
                 </span>
                 <div className={`ml-4 flex items-center gap-2 px-2.5 py-1 rounded-full text-[11px] font-semibold ${
-                  systemHealth.mqttBrokerStatus === 'online' 
+                  systemHealth.boardApiStatus === 'online' 
                     ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' 
                     : 'bg-red-50 text-red-600 border border-red-100'
                 }`}>
-                  {systemHealth.mqttBrokerStatus === 'online' ? <Wifi size={13} /> : <WifiOff size={13} />}
-                  <span>MQTT {systemHealth.mqttBrokerStatus === 'online' ? 'Online' : 'Offline'}</span>
+                  {systemHealth.boardApiStatus === 'online' ? <Wifi size={13} /> : <WifiOff size={13} />}
+                  <span>REST API {systemHealth.boardApiStatus === 'online' ? 'Online' : 'Offline'}</span>
           </div>
               </div>
             ) : (
@@ -5175,7 +5175,7 @@ const DeviceDetailsPanel = ({ board, onClose, onSSHClick }) => {
                   disabled={!isEditing}
                   value={connectionsText}
                   onChange={(e) => setConnectionsText(e.target.value)}
-                  placeholder="comma separated (e.g., MQTT, SSH, HTTP)"
+                  placeholder="comma separated (e.g., REST API, SSH, HTTP)"
                   className={`w-full bg-white border border-slate-200 p-3 rounded-xl outline-none ${isEditing ? 'focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500' : 'opacity-80'}`}
                 />
                 <div className="text-xs text-slate-400 mt-1">แสดงว่าบอร์ดนี้ “connect ได้กับอะไร” เพื่อให้ทีมไม่สับสน</div>
@@ -5571,7 +5571,7 @@ const AddBoardModal = ({ onClose }) => {
     firmware: 'v0.0.0',
     model: 'STM32',
     tag: '',
-    connections: 'MQTT, SSH',
+    connections: 'REST API, SSH',
   });
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState('');

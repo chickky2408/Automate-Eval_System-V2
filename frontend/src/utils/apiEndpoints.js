@@ -12,7 +12,7 @@ export const API_ENDPOINTS = {
   // System Health
   SYSTEM_HEALTH: `${API_BASE_URL}/system/health`,
   STORAGE_STATUS: `${API_BASE_URL}/system/storage`,
-  MQTT_STATUS: `${API_BASE_URL}/system/mqtt/status`,
+  BOARD_API_STATUS: `${API_BASE_URL}/system/board-api/status`,
   
   // Boards/Devices Management
   BOARDS: `${API_BASE_URL}/boards`,

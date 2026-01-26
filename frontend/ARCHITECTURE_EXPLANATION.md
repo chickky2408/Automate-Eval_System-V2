@@ -16,8 +16,8 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                    BACKEND API                               │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐                  │
-│  │  REST    │  │  WebSocket│ │  MQTT    │                  │
-│  │  API     │  │  (Real-time)│ │  Broker │                  │
+│  │  REST    │  │  WebSocket│ │ Board REST│                  │
+│  │  API     │  │  (Real-time)│ │   API    │                  │
 │  └──────────┘  └──────────┘  └──────────┘                  │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -100,7 +100,7 @@ src/
 ### 3. **store/useTestStore.js** - Zustand Store (State Management)
 **หน้าที่:**
 - จัดการ Global State ทั้งหมด:
-  - `systemHealth` - สถานะระบบ (boards, storage, MQTT)
+  - `systemHealth` - สถานะระบบ (boards, storage, board REST API)
   - `boards` - ข้อมูล Boards ทั้งหมด
   - `jobs` - ข้อมูล Jobs/Batches
   - `notifications` - การแจ้งเตือน
@@ -131,7 +131,7 @@ src/
 1. **System Health APIs:**
    - `getSystemHealth()` - ดึงสถานะระบบ
    - `getStorageStatus()` - ดึงสถานะ Storage
-   - `getMqttStatus()` - ดึงสถานะ MQTT Broker
+   - `getBoardApiStatus()` - ดึงสถานะ Board REST API
 
 2. **Boards APIs:**
    - `getBoards()` - ดึงรายการ Boards

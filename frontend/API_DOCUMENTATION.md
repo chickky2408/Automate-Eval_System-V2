@@ -33,7 +33,7 @@ Get system health summary.
   "storageUsage": 68,
   "storageTotal": "10TB",
   "storageUsed": "6.8TB",
-  "mqttBrokerStatus": "online"
+  "boardApiStatus": "online"
 }
 ```
 
@@ -50,8 +50,8 @@ Get storage status.
 }
 ```
 
-#### GET `/api/system/mqtt/status`
-Get MQTT broker status.
+#### GET `/api/system/board-api/status`
+Get board REST API status.
 
 **Response:**
 ```json

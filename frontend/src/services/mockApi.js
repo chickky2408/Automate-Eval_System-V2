@@ -46,7 +46,7 @@ export const mockApi = {
       storageUsage: 68,
       storageTotal: '10TB',
       storageUsed: '6.8TB',
-      mqttBrokerStatus: 'online'
+      boardApiStatus: 'online'
     };
   },
   
