@@ -1,4 +1,4 @@
-# API Usage Summary (Frontend <--> Backend <--> ARM)
+# API Usage Summary (Frontend ←→ Backend ←→ ARM)
 
 สรุปจากการตรวจ `backend/routers/*.py` และฝั่ง frontend (`frontend/src/utils/apiEndpoints.js`, `frontend/src/services/api.js`, `frontend/src/store/useTestStore.js`, `frontend/src/App.jsx`)
 
@@ -134,7 +134,7 @@
 
 ## ตารางสรุป
 
-### FE <--> BE
+### FE ←→ BE
 
 | Endpoint | BE | FE | คำอธิบาย |
 | --- | --- | --- | --- |
@@ -189,7 +189,7 @@
 | `/ws/boards` | [x] | [x] | สตรีมสถานะบอร์ดแบบเรียลไทม์ |
 | `/ws/jobs` | [x] | [x] | สตรีมความคืบหน้างานแบบเรียลไทม์ |
 
-### BE --> ARM
+### BE → ARM
 
 | Endpoint (บน ARM board) | วัตถุประสงค์ | หมายเหตุ |
 | --- | --- | --- |
@@ -284,7 +284,7 @@ Response:
 { "success": true }
 ```
 
-### ARM --> BE
+### ARM → BE
 
 | Endpoint (บน BE) | วัตถุประสงค์ | หมายเหตุ |
 | --- | --- | --- |
@@ -393,4 +393,3 @@ Response (ตัวอย่าง):
 ```json
 { "success": true }
 ```
-
