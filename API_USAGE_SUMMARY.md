@@ -1,0 +1,201 @@
+# API Usage Summary (Backend vs Frontend)
+
+สรุปจากการตรวจ `backend/routers/*.py` และฝั่ง frontend (`frontend/src/utils/apiEndpoints.js`, `frontend/src/services/api.js`, `frontend/src/store/useTestStore.js`, `frontend/src/App.jsx`)
+
+## Backend APIs
+
+- System
+  - `GET /api/system/health`
+  - `GET /api/system/storage`
+  - `GET /api/system/mqtt/status`
+  - `GET /api/health`
+- Boards
+  - `GET /api/boards`
+  - `POST /api/boards`
+  - `GET /api/boards/{id}`
+  - `PATCH /api/boards/{id}`
+  - `GET /api/boards/{id}/status`
+  - `GET /api/boards/{id}/telemetry`
+  - `POST /api/boards/{id}/reboot`
+  - `POST /api/boards/{id}/firmware`
+- Jobs
+  - `GET /api/jobs`
+  - `POST /api/jobs`
+  - `GET /api/jobs/{id}`
+  - `POST /api/jobs/{id}/start`
+  - `POST /api/jobs/{id}/stop`
+  - `POST /api/jobs/stop-all`
+  - `GET /api/jobs/{id}/export`
+  - `PATCH /api/jobs/{id}`
+  - `GET /api/jobs/{id}/files`
+  - `GET /api/jobs/{id}/pairs`
+  - `POST /api/jobs/{id}/files/{file_id}/stop`
+  - `POST /api/jobs/{id}/files/{file_id}/move`
+  - `POST /api/jobs/upload`
+  - `DELETE /api/jobs/{id}`
+  - `POST /api/jobs/{id}/reorder`
+  - `POST /api/jobs/run-command`
+  - `POST /api/jobs/start`
+  - `POST /api/jobs/stop`
+  - `GET /api/jobs/status/summary`
+- Results
+  - `GET /api/results`
+  - `GET /api/results/{id}`
+  - `GET /api/results/{id}/waveform`
+  - `GET /api/results/{id}/log`
+  - `DELETE /api/results/{id}`
+- Files
+  - `POST /api/files/upload`
+  - `GET /api/files`
+  - `GET /api/files/{id}`
+  - `DELETE /api/files/{id}`
+- Notifications
+  - `GET /api/notifications`
+  - `POST /api/notifications/{id}/read`
+  - `POST /api/notifications/read-all`
+- WebSocket
+  - `/ws/system`
+  - `/ws/boards`
+  - `/ws/jobs`
+
+## Frontend APIs (ประกาศไว้)
+
+- System
+  - `/system/health`
+  - `/system/storage`
+  - `/system/mqtt/status`
+- Boards
+  - `/boards`
+  - `/boards/{id}`
+  - `/boards/{id}/telemetry`
+  - `/boards/{id}/reboot`
+  - `/boards/{id}/firmware`
+  - `/boards/{id}/self-test`
+  - `/boards/batch`
+  - `/boards/{id}/ssh/connect`
+- Jobs
+  - `/jobs`
+  - `/jobs/{id}`
+  - `/jobs/{id}/start`
+  - `/jobs/{id}/stop`
+  - `/jobs/stop-all`
+  - `/jobs/{id}/export`
+  - `/jobs/{id}/reorder`
+  - `/jobs/run-command`
+  - `/jobs/{id}/files`
+  - `/jobs/{id}/pairs`
+  - `/jobs/{id}/files/{file_id}/stop`
+  - `/jobs/{id}/files/{file_id}/move`
+- Files
+  - `/files/upload`
+  - `/files`
+  - `/files/{id}`
+  - `/files/{id}` (delete)
+- Notifications
+  - `/notifications`
+  - `/notifications/{id}/read`
+  - `/notifications/read-all`
+- WebSocket
+  - `/ws/system`
+  - `/ws/boards`
+  - `/ws/jobs`
+
+## Frontend ใช้งานจริง
+
+- System health: ใช้งานจริง (refresh/silent refresh)
+- Boards: list/create/update/delete + batch actions (selfTest/reboot/delete)
+- Jobs: list/create/run-command/start (บางกรณี)/stop-all/reorder/stop file/move file/update tag/export และ get pairs
+- Files: upload/list/delete
+- Notifications: list/mark read/all
+
+## ช่องว่าง/ไม่ครบถ้วน
+
+- Frontend เรียก แต่ backend ไม่มี (คาดว่าจะ 404)
+  - `DELETE /api/boards/{id}`
+  - `POST /api/boards/batch`
+  - `POST /api/boards/{id}/self-test`
+  - `/api/boards/{id}/ssh/connect`
+- Backend มี แต่ frontend ยังไม่รองรับ
+  - `/api/results/*`
+  - `/api/jobs/upload`
+  - `DELETE /api/jobs/{id}`
+  - `/api/jobs/start`, `/api/jobs/stop`, `/api/jobs/status/summary`
+  - `/api/boards/{id}/status`
+  - `/api/health`
+- ฟังก์ชันใน FE ที่ประกาศไว้ แต่ยังไม่มีจุดเรียกใช้งานชัดเจน
+  - `getStorageStatus`, `getMqttStatus`, `getBoardById`, `getBoardTelemetry`, `rebootBoard` (รายตัว),
+    `updateBoardFirmware` (รายตัว), `runBoardSelfTest` (รายตัว), `getBoardSSHConnection`, `getJobById`,
+    `getJobFiles`, `getFileById`, `createWebSocket`
+
+## ข้อเสนอแนะสั้นๆ
+
+1) ตัดสินใจว่าจะเพิ่ม endpoint ฝั่ง backend ให้ตรงกับ FE (เช่น `/boards/batch`, `/boards/{id}/self-test`, `DELETE /boards/{id}`) หรือปรับ FE ให้ตรง backend
+2) เลือกว่าจะใช้ results/WebSocket จริงไหม แล้วเติมการเรียกใช้งานให้ครบตามที่ต้องการ
+
+## ตารางสรุป
+
+| Endpoint | BE | FE | คำอธิบาย |
+| --- | --- | --- | --- |
+| `GET /api/system/health` | [x] | [x] | สุขภาพระบบรวม (boards/storage/mqtt) |
+| `GET /api/system/storage` | [x] | [x] | สถานะพื้นที่จัดเก็บ |
+| `GET /api/system/mqtt/status` | [x] | [x] | สถานะ MQTT broker |
+| `GET /api/health` | [x] | [ ] | health check แบบย่อ  |
+| `GET /api/boards` | [x] | [x] | รายการบอร์ด/ตัวกรอง |
+| `POST /api/boards` | [x] | [x] | สร้างบอร์ดใหม่ |
+| `GET /api/boards/{id}` | [x] | [x] | รายละเอียดบอร์ด |
+| `PATCH /api/boards/{id}` | [x] | [x] | แก้ไขข้อมูลบอร์ด |
+| `DELETE /api/boards/{id}` | [ ] | [x] | FE คาดหวังการลบ แต่ BE ไม่มี endpoint |
+| `GET /api/boards/{id}/status` | [x] | [ ] | สถานะบอร์ดแบบละเอียด  |
+| `GET /api/boards/{id}/telemetry` | [x] | [x] | Telemetry บอร์ด (voltage/temp/signal) |
+| `POST /api/boards/{id}/reboot` | [x] | [x] | รีบูตบอร์ด |
+| `POST /api/boards/{id}/firmware` | [x] | [x] | อัปเดตเฟิร์มแวร์ |
+| `POST /api/boards/{id}/self-test` | [ ] | [x] | FE คาดหวัง self-test แต่ BE ไม่มี endpoint |
+| `POST /api/boards/batch` | [ ] | [x] | FE คาดหวัง batch action แต่ BE ไม่มี endpoint |
+| `GET /api/boards/{id}/ssh/connect` | [ ] | [x] | FE คาดหวัง SSH connect แต่ BE ไม่มี endpoint |
+| `GET /api/jobs` | [x] | [x] | รายการงานในคิว |
+| `POST /api/jobs` | [x] | [x] | สร้างงานจาก payload |
+| `GET /api/jobs/{id}` | [x] | [x] | รายละเอียดงาน |
+| `POST /api/jobs/{id}/start` | [x] | [x] | เริ่มงาน |
+| `POST /api/jobs/{id}/stop` | [x] | [x] | หยุดงาน |
+| `POST /api/jobs/stop-all` | [x] | [x] | หยุดงานทั้งหมด |
+| `GET /api/jobs/{id}/export` | [x] | [x] | ส่งออกงานเป็น JSON |
+| `PATCH /api/jobs/{id}` | [x] | [x] | อัปเดต tag/metadata งาน |
+| `GET /api/jobs/{id}/files` | [x] | [x] | รายการไฟล์ในงาน |
+| `GET /api/jobs/{id}/pairs` | [x] | [x] | pairs data สำหรับแก้ไข batch |
+| `POST /api/jobs/{id}/files/{file_id}/stop` | [x] | [x] | หยุดไฟล์เฉพาะในงาน |
+| `POST /api/jobs/{id}/files/{file_id}/move` | [x] | [x] | ย้ายลำดับไฟล์ในงาน |
+| `POST /api/jobs/upload` | [x] | [ ] | อัปโหลดไฟล์แล้วสร้างงาน  |
+| `DELETE /api/jobs/{id}` | [x] | [ ] | ลบงาน  |
+| `POST /api/jobs/{id}/reorder` | [x] | [x] | ย้ายตำแหน่งงานในคิว |
+| `POST /api/jobs/run-command` | [x] | [x] | สร้างงานจากคำสั่ง |
+| `POST /api/jobs/start` | [x] | [ ] | เริ่มประมวลผลคิว  |
+| `POST /api/jobs/stop` | [x] | [ ] | หยุดประมวลผลคิว  |
+| `GET /api/jobs/status/summary` | [x] | [ ] | สรุปสถานะคิว  |
+| `GET /api/results` | [x] | [ ] | รายการผลทดสอบ  |
+| `GET /api/results/{id}` | [x] | [ ] | รายละเอียดผลทดสอบ  |
+| `GET /api/results/{id}/waveform` | [x] | [ ] | waveform data  |
+| `GET /api/results/{id}/log` | [x] | [ ] | console log  |
+| `DELETE /api/results/{id}` | [x] | [ ] | ลบผลทดสอบ  |
+| `POST /api/files/upload` | [x] | [x] | อัปโหลดไฟล์ทั่วไป |
+| `GET /api/files` | [x] | [x] | รายการไฟล์ที่อัปโหลด |
+| `GET /api/files/{id}` | [x] | [x] | รายละเอียดไฟล์ |
+| `DELETE /api/files/{id}` | [x] | [x] | ลบไฟล์ |
+| `GET /api/notifications` | [x] | [x] | รายการแจ้งเตือน |
+| `POST /api/notifications/{id}/read` | [x] | [x] | ทำเครื่องหมายอ่านแล้ว |
+| `POST /api/notifications/read-all` | [x] | [x] | ทำเครื่องหมายอ่านทั้งหมด |
+| `/ws/system` | [x] | [x] | สตรีมสถานะระบบแบบเรียลไทม์ |
+| `/ws/boards` | [x] | [x] | สตรีมสถานะบอร์ดแบบเรียลไทม์ |
+| `/ws/jobs` | [x] | [x] | สตรีมความคืบหน้างานแบบเรียลไทม์ |
+
+## API ที่ควรเพิ่ม (ข้อเสนอแนะ)
+
+| Endpoint | วัตถุประสงค์ | หมายเหตุ |
+| --- | --- | --- |
+| `POST /api/jobs/{id}/cancel` | ยกเลิกงาน | แยกจาก stop ที่เป็นชั่วคราว |
+| `POST /api/jobs/{id}/pause` | พักงาน | ควบคุมคิวแบบละเอียด |
+| `POST /api/jobs/{id}/resume` | กลับมารันต่อ | ใช้คู่กับ pause |
+| `GET /api/results/summary` | สรุปผลรวม (pass/fail) | แสดง dashboard/เทรนด์ |
+| `GET /api/results/stats` | สถิติรายช่วงเวลา | ใช้สำหรับกราฟ |
+| `GET /api/files/{id}/download` | ดาวน์โหลดไฟล์ | แยกจาก metadata |
+| `GET /api/results/{id}/log/download` | ดาวน์โหลด log | สำหรับ debug |
+| `GET /api/metrics` | metrics สำหรับ monitoring | ใช้กับ Prometheus |
