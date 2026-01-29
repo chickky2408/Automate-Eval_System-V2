@@ -54,6 +54,12 @@ const apiRequest = async (endpoint, options = {}) => {
 // ============================================
 
 /**
+ * Health check (short)
+ * Expected Response: { status, version }
+ */
+export const getHealth = () => apiRequest(API_ENDPOINTS.HEALTH);
+
+/**
  * Get system health summary
  * Expected Response: { totalBoards, onlineBoards, busyBoards, errorBoards, storageUsage, storageTotal, storageUsed, mqttBrokerStatus }
  */
@@ -64,6 +70,12 @@ export const getSystemHealth = () => apiRequest(API_ENDPOINTS.SYSTEM_HEALTH);
  * Expected Response: { usage, total, used, percentage }
  */
 export const getStorageStatus = () => apiRequest(API_ENDPOINTS.STORAGE_STATUS);
+
+/**
+ * Get Board REST API status
+ * Expected Response: { status, message, timestamp }
+ */
+export const getBoardApiStatus = () => apiRequest(API_ENDPOINTS.BOARD_API_STATUS);
 
 /**
  * Get MQTT broker status
@@ -122,6 +134,12 @@ export const deleteBoard = (id) => {
 };
 
 /**
+ * Get board status (detailed)
+ * Expected Response: Board status object
+ */
+export const getBoardStatus = (id) => apiRequest(API_ENDPOINTS.BOARD_STATUS(id));
+
+/**
  * Get board telemetry data
  * Expected Response: { voltage, signal, temp, timestamp }
  */
@@ -170,10 +188,12 @@ export const batchBoardActions = (boardIds, action, params = {}) => {
 
 /**
  * Connect to board via SSH (WebSocket)
- * Returns WebSocket connection URL
+ * Returns WebSocket connection URL (ws://)
  */
 export const getBoardSSHConnection = (id) => {
-  return `${API_ENDPOINTS.BOARD_SSH_CONNECT(id)}?token=${localStorage.getItem('authToken') || ''}`;
+  const base = API_ENDPOINTS.BOARD_SSH_WS ? API_ENDPOINTS.BOARD_SSH_WS(id) : API_ENDPOINTS.BOARD_SSH_CONNECT(id).replace(/^http/, 'ws');
+  const token = localStorage.getItem('authToken') || '';
+  return token ? `${base}?token=${token}` : base;
 };
 
 // ============================================
@@ -266,6 +286,47 @@ export const updateJobTag = (id, tag) => {
   });
 };
 
+/**
+ * Delete a job/batch
+ * Expected Response: { message: string }
+ */
+export const deleteJob = (id) => {
+  return apiRequest(API_ENDPOINTS.JOB_DELETE(id), {
+    method: 'DELETE',
+  });
+};
+
+/**
+ * Upload files and create job
+ * Body: FormData (files + optional metadata)
+ * Expected Response: { id, ...jobData }
+ */
+export const uploadJob = (formData) => {
+  return apiRequest(API_ENDPOINTS.JOB_UPLOAD, {
+    method: 'POST',
+    headers: {},
+    body: formData,
+  });
+};
+
+/**
+ * Start queue processing
+ * Expected Response: { success, message }
+ */
+export const startJobQueue = () => apiRequest(API_ENDPOINTS.JOB_QUEUE_START, { method: 'POST' });
+
+/**
+ * Stop queue processing
+ * Expected Response: { success, message }
+ */
+export const stopJobQueue = () => apiRequest(API_ENDPOINTS.JOB_QUEUE_STOP, { method: 'POST' });
+
+/**
+ * Get job queue status summary
+ * Expected Response: { running, pending, ... }
+ */
+export const getJobStatusSummary = () => apiRequest(API_ENDPOINTS.JOB_STATUS_SUMMARY);
+
 // ============================================
 // FILES IN JOB APIs
 // ============================================
@@ -346,6 +407,46 @@ export const deleteFile = (id) => {
 };
 
 // ============================================
+// RESULTS APIs
+// ============================================
+
+/**
+ * Get all results
+ * Expected Response: Array of result objects
+ */
+export const getResults = (filters = {}) => {
+  const queryParams = new URLSearchParams(filters).toString();
+  const url = queryParams ? `${API_ENDPOINTS.RESULTS}?${queryParams}` : API_ENDPOINTS.RESULTS;
+  return apiRequest(url);
+};
+
+/**
+ * Get result by ID
+ * Expected Response: Result object
+ */
+export const getResultById = (id) => apiRequest(API_ENDPOINTS.RESULT_BY_ID(id));
+
+/**
+ * Get result waveform data
+ * Expected Response: waveform payload
+ */
+export const getResultWaveform = (id) => apiRequest(API_ENDPOINTS.RESULT_WAVEFORM(id));
+
+/**
+ * Get result log
+ * Expected Response: log text or object
+ */
+export const getResultLog = (id) => apiRequest(API_ENDPOINTS.RESULT_LOG(id));
+
+/**
+ * Delete result
+ * Expected Response: { success, message }
+ */
+export const deleteResult = (id) => {
+  return apiRequest(API_ENDPOINTS.RESULT_DELETE(id), { method: 'DELETE' });
+};
+
+// ============================================
 // NOTIFICATIONS APIs
 // ============================================
 
@@ -413,13 +514,16 @@ export const createWebSocket = (endpoint, onMessage, onError) => {
 
 export default {
   // System
+  getHealth,
   getSystemHealth,
   getStorageStatus,
+  getBoardApiStatus,
   getMqttStatus,
   
   // Boards
   getBoards,
   getBoardById,
+  getBoardStatus,
   createBoard,
   updateBoard,
   deleteBoard,
@@ -441,6 +545,11 @@ export default {
   reorderJob,
   runCommand,
   updateJobTag,
+  deleteJob,
+  uploadJob,
+  startJobQueue,
+  stopJobQueue,
+  getJobStatusSummary,
   
   // Job Files
   getJobFiles,
@@ -453,6 +562,13 @@ export default {
   getFiles,
   getFileById,
   deleteFile,
+  
+  // Results
+  getResults,
+  getResultById,
+  getResultWaveform,
+  getResultLog,
+  deleteResult,
   
   // Notifications
   getNotifications,

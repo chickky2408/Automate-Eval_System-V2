@@ -7,11 +7,17 @@
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000';
+const API_ORIGIN = (() => {
+  const u = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+  return u.replace(/\/api\/?$/, '') || 'http://localhost:8000';
+})();
 
 export const API_ENDPOINTS = {
   // System Health
+  HEALTH: `${API_ORIGIN}/api/health`,
   SYSTEM_HEALTH: `${API_BASE_URL}/system/health`,
   STORAGE_STATUS: `${API_BASE_URL}/system/storage`,
+  BOARD_API_STATUS: `${API_BASE_URL}/system/board-api/status`,
   MQTT_STATUS: `${API_BASE_URL}/system/mqtt/status`,
   
   // Boards/Devices Management
@@ -26,6 +32,9 @@ export const API_ENDPOINTS = {
   BOARD_SELF_TEST: (id) => `${API_BASE_URL}/boards/${id}/self-test`,
   BOARD_BATCH_ACTIONS: `${API_BASE_URL}/boards/batch`,
   BOARD_SSH_CONNECT: (id) => `${API_BASE_URL}/boards/${id}/ssh/connect`,
+  /** WebSocket URL for SSH proxy (use ws://, not http) */
+  BOARD_SSH_WS: (id) => `${WS_BASE_URL}/api/boards/${id}/ssh/connect`,
+  BOARD_STATUS: (id) => `${API_BASE_URL}/boards/${id}/status`,
   
   // Jobs/Batches Management
   JOBS: `${API_BASE_URL}/jobs`,
@@ -36,7 +45,12 @@ export const API_ENDPOINTS = {
   JOB_STOP_ALL: `${API_BASE_URL}/jobs/stop-all`,
   JOB_EXPORT: (id) => `${API_BASE_URL}/jobs/${id}/export`,
   JOB_REORDER: (id) => `${API_BASE_URL}/jobs/${id}/reorder`,
+  JOB_DELETE: (id) => `${API_BASE_URL}/jobs/${id}`,
   JOB_RUN_COMMAND: `${API_BASE_URL}/jobs/run-command`,
+  JOB_UPLOAD: `${API_BASE_URL}/jobs/upload`,
+  JOB_QUEUE_START: `${API_BASE_URL}/jobs/start`,
+  JOB_QUEUE_STOP: `${API_BASE_URL}/jobs/stop`,
+  JOB_STATUS_SUMMARY: `${API_BASE_URL}/jobs/status/summary`,
   
   // Files in Job
   JOB_FILES: (jobId) => `${API_BASE_URL}/jobs/${jobId}/files`,
@@ -54,6 +68,13 @@ export const API_ENDPOINTS = {
   NOTIFICATIONS: `${API_BASE_URL}/notifications`,
   NOTIFICATION_MARK_READ: (id) => `${API_BASE_URL}/notifications/${id}/read`,
   NOTIFICATION_MARK_ALL_READ: `${API_BASE_URL}/notifications/read-all`,
+  
+  // Results
+  RESULTS: `${API_BASE_URL}/results`,
+  RESULT_BY_ID: (id) => `${API_BASE_URL}/results/${id}`,
+  RESULT_WAVEFORM: (id) => `${API_BASE_URL}/results/${id}/waveform`,
+  RESULT_LOG: (id) => `${API_BASE_URL}/results/${id}/log`,
+  RESULT_DELETE: (id) => `${API_BASE_URL}/results/${id}`,
   
   // WebSocket (for real-time updates)
   WS_BASE_URL,

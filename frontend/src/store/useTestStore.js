@@ -589,6 +589,16 @@ export const useTestStore = create((set, get) => ({
       .catch((error) => console.error('Failed to reorder job', error));
     return { jobs };
   }),
+  deleteJob: async (jobId) => {
+    try {
+      await api.deleteJob(jobId);
+      await get().refreshJobs();
+      return true;
+    } catch (error) {
+      console.error('Failed to delete job', error);
+      return false;
+    }
+  },
   stopFile: (jobId, fileId) => {
     set((state) => ({
       jobs: state.jobs.map(job =>

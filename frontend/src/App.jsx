@@ -910,6 +910,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
   const [isDeletingFiles, setIsDeletingFiles] = useState(false);
   const [fileListExpanded, setFileListExpanded] = useState(false);
   const [selectedTestCaseIds, setSelectedTestCaseIds] = useState([]); // สำหรับ checkbox ใน pairs table
+  const [bulkTryCount, setBulkTryCount] = useState(''); // สำหรับ bulk edit try count
   const isAutoPairingRef = useRef(false); // ป้องกัน auto-pair ซ้ำ
   const isLoadingConfigRef = useRef(false); // track ว่าเป็นการ load config หรือไม่
   const [commandForm, setCommandForm] = useState({
@@ -1104,6 +1105,17 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
           const response = await api.getJobPairs(editJobId);
           const pairsData = response.pairsData || [];
           
+          // ถ้าไม่มี pairsData (job เก่าที่สร้างก่อน feature นี้) แสดง warning และให้ user สร้าง pairs ใหม่
+          if (pairsData.length === 0) {
+            addToast({ 
+              type: 'warning', 
+              message: 'No pairs data found for this batch. You can create new pairs manually.' 
+            });
+            setIsLoadingPairs(false);
+            isLoadingConfigRef.current = false;
+            return;
+          }
+          
           // Map file names กลับไปหา file IDs
           const loadedPairs = pairsData.map(pairData => {
             // หา file IDs จาก file names
@@ -1173,16 +1185,27 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
             }
             
             addToast({ type: 'success', message: `Loaded ${loadedPairs.length} pairs from batch.` });
-          } else {
-            addToast({ type: 'warning', message: 'No pairs data found or files not available.' });
-          }
-        } catch (error) {
-          console.error('Failed to load pairs from job', error);
-          addToast({ type: 'error', message: 'Failed to load pairs data from batch.' });
-        } finally {
-          setIsLoadingPairs(false);
-          isLoadingConfigRef.current = false;
-        }
+                        } else {
+                          addToast({ 
+                            type: 'warning', 
+                            message: 'No valid pairs found. Files may have been deleted. You can create new pairs manually.' 
+                          });
+                        }
+                      } catch (error) {
+                        console.error('Failed to load pairs from job', error);
+                        // ถ้าเป็น 404 error แสดง message ที่เหมาะสม
+                        if (error.response?.status === 404 || error.message?.includes('404')) {
+                          addToast({ 
+                            type: 'warning', 
+                            message: 'No pairs data found for this batch. This batch was created before the edit feature was added. You can create new pairs manually.' 
+                          });
+                        } else {
+                          addToast({ type: 'error', message: 'Failed to load pairs data from batch.' });
+                        }
+                      } finally {
+                        setIsLoadingPairs(false);
+                        isLoadingConfigRef.current = false;
+                      }
       };
       
       loadPairsFromJob();
@@ -1331,6 +1354,22 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
     addToast({ type: 'success', message: 'Test case duplicated' });
   };
 
+  // Move pair up/down in the list
+  const movePair = (pairId, direction) => {
+    const currentIndex = selectedPairs.findIndex((p) => p.id === pairId);
+    if (currentIndex === -1) return;
+
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= selectedPairs.length) return;
+
+    setSelectedPairs((prev) => {
+      const newPairs = [...prev];
+      const [movedPair] = newPairs.splice(currentIndex, 1);
+      newPairs.splice(targetIndex, 0, movedPair);
+      return newPairs;
+    });
+  };
+
   const toggleTestCaseSelection = (id) => {
     setSelectedTestCaseIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
@@ -1343,6 +1382,34 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
     } else {
       setSelectedTestCaseIds(selectedPairs.map((p) => p.id));
     }
+  };
+
+  // Bulk Edit: Set try count for selected test cases
+  const handleBulkSetTryCount = () => {
+    if (selectedTestCaseIds.length === 0) {
+      addToast({ type: 'warning', message: 'Please select at least one test case.' });
+      return;
+    }
+
+    const tryCount = parseInt(bulkTryCount);
+    if (isNaN(tryCount) || tryCount < 1) {
+      addToast({ type: 'error', message: 'Please enter a valid number (minimum 1).' });
+      return;
+    }
+
+    setSelectedPairs(prevPairs => 
+      prevPairs.map(pair => 
+        selectedTestCaseIds.includes(pair.id)
+          ? { ...pair, try: tryCount }
+          : pair
+      )
+    );
+
+    addToast({ 
+      type: 'success', 
+      message: `Set try count to ${tryCount} for ${selectedTestCaseIds.length} test case(s).` 
+    });
+    setBulkTryCount(''); // Clear input after applying
   };
 
   const updatePairTry = (pairId, tryCount) => {
@@ -1669,10 +1736,10 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
       }
     };
   
-    // ฟังก์ชันลบไฟล์ที่เลือก
+    // ฟังก์ชันลบไฟล์ที่เลือก (ลบไฟล์จริงๆ)
     const handleDeleteSelected = async () => {
     if (selectedIds.length === 0) return;
-    if (window.confirm(`Are you sure you want to delete ${selectedIds.length} file(s)?`)) {
+    if (window.confirm(`Are you sure you want to delete ${selectedIds.length} file(s)?\n\nThis will permanently delete the files from the server.`)) {
       try {
         setIsDeletingFiles(true);
         await Promise.all(selectedIds.map(id => removeUploadedFile(id)));
@@ -1686,9 +1753,27 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
       }
       }
     };
+
+    // ฟังก์ชันเคลียร์ space (เคลียร์เฉพาะ UI state ไม่ลบไฟล์จริง)
+    const handleClearAll = () => {
+      if (selectedIds.length === 0 && selectedPairs.length === 0) {
+        addToast({ type: 'info', message: 'Nothing to clear.' });
+        return;
+      }
+      
+      if (window.confirm(`Clear all selections and pairs?\n\nThis will only clear the UI. Files will remain in the upload folder.`)) {
+        setSelectedIds([]);
+        setSelectedPairs([]);
+        setSelectedTestCaseIds([]);
+        setSelectedPairVcdId('');
+        setSelectedPairBinId('');
+        setSelectedPairLinId('');
+        addToast({ type: 'success', message: 'Cleared all selections. Files remain in upload folder.' });
+      }
+    };
   
   return (
-  <div className="space-y-8">
+  <div className="w-full max-w-7xl mx-auto px-6 lg:px-8 space-y-8">
     <div className="flex justify-between items-end">
       <div>
     <h1 className="text-3xl font-bold text-slate-800">
@@ -1742,8 +1827,8 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
           </div>
         </div>
   
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-6">
+        <div className="max-w-6xl mx-auto">
+          <div className="space-y-6">
             {/* ส่วนแสดงรายการไฟล์พร้อมระบบเลือก */}
             <div 
               onDragOver={handleDragOver}
@@ -1764,15 +1849,31 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                   </span>
                 </div>
                 
-                {selectedIds.length > 0 && (
-                  <button 
-                    onClick={handleDeleteSelected}
-                    disabled={isDeletingFiles}
-                    className={`flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-bold transition-colors animate-in fade-in zoom-in duration-200 ${isDeletingFiles ? 'opacity-60 cursor-not-allowed' : 'hover:bg-red-100'}`}
-                  >
-                    {isDeletingFiles ? 'Deleting...' : '❌ Delete Selected'}
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {/* Clear All Button - Clear UI only, don't delete files */}
+                  {(selectedIds.length > 0 || selectedPairs.length > 0) && (
+                    <button 
+                      onClick={handleClearAll}
+                      className="flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold transition-colors hover:bg-slate-200"
+                      title="Clear all selections and pairs (files remain in upload folder)"
+                    >
+                      <X size={14} />
+                      Clear All
+                    </button>
+                  )}
+                  
+                  {/* Delete Selected Button - Actually delete files */}
+                  {selectedIds.length > 0 && (
+                    <button 
+                      onClick={handleDeleteSelected}
+                      disabled={isDeletingFiles}
+                      className={`flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-bold transition-colors animate-in fade-in zoom-in duration-200 ${isDeletingFiles ? 'opacity-60 cursor-not-allowed' : 'hover:bg-red-100'}`}
+                      title="Permanently delete selected files from server"
+                    >
+                      {isDeletingFiles ? 'Deleting...' : '❌ Delete Selected'}
+                    </button>
+                  )}
+                </div>
               </div>
   
               {/* Compact add-files (+) */}
@@ -1922,12 +2023,13 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                       </div>
                       <button
                         onClick={async () => {
-                          if (window.confirm(`Delete ${file.name}?`)) {
+                          if (window.confirm(`Delete ${file.name}?\n\nThis will permanently delete the file from the server.`)) {
                             await removeUploadedFile(file.id);
+                            addToast({ type: 'success', message: `File ${file.name} deleted.` });
                           }
                         }}
                         className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-all"
-                        title="Delete file"
+                        title="Permanently delete file from server"
                       >
                         <X size={16} />
                       </button>
@@ -2109,9 +2211,39 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                       {selectedIds.length > 0 ? (
                         <>
                           <div className="px-3 py-2 bg-slate-50 border-b border-slate-200">
-                            <h4 className="text-sm font-bold text-slate-900">Test Case</h4>
+                            <div className="flex items-center justify-between">
+                              <h4 className="text-sm font-bold text-slate-900">Test Case</h4>
+                              {/* Bulk Edit Try Count */}
+                              {selectedTestCaseIds.length > 0 && (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-slate-600 font-semibold">
+                                    {selectedTestCaseIds.length} selected
+                                  </span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={bulkTryCount}
+                                    onChange={(e) => setBulkTryCount(e.target.value)}
+                                    placeholder="Try count"
+                                    className="w-20 px-2 py-1 text-xs border border-slate-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        handleBulkSetTryCount();
+                                      }
+                                    }}
+                                  />
+                                  <button
+                                    onClick={handleBulkSetTryCount}
+                                    className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700 transition-all"
+                                    title="Apply try count to selected test cases"
+                                  >
+                                    Apply
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          <div className="grid bg-slate-50 text-xs font-semibold text-slate-600 border border-slate-300" style={{ gridTemplateColumns: '40px 40px 1fr 1fr 1fr 80px 120px' }}>
+                          <div className="grid bg-slate-50 text-xs font-semibold text-slate-600 border border-slate-300" style={{ gridTemplateColumns: '40px 40px 1fr 1fr 1fr 100px 120px' }}>
                             <div className="px-2 py-2 flex items-center justify-center border-r border-slate-300">
                               <input
                                 type="checkbox"
@@ -2138,42 +2270,37 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                 onDragEnter={(e) => e.preventDefault()}
                                 onDragOver={(e) => handleRowDragOver(e, idx)}
                                 onDrop={(e) => handleRowDrop(e, idx)}
+                                onClick={(e) => {
+                                  // ไม่ toggle selection ถ้าคลิกที่ button, input, select, หรือ draggable element
+                                  if (e.target.closest('button') || 
+                                      e.target.closest('input') || 
+                                      e.target.closest('select') || 
+                                      e.target.closest('[draggable]')) {
+                                    return;
+                                  }
+                                  toggleTestCaseSelection(pair.id);
+                                }}
                                 className={`grid items-center text-sm border border-slate-300 cursor-pointer ${draggingRowIndex === idx ? 'opacity-50' : ''} ${dropTargetRowIndex === idx ? 'ring-1 ring-blue-400 bg-blue-50/50' : ''} ${selectedTestCaseIds.includes(pair.id) ? 'bg-blue-50/30' : 'hover:bg-slate-50'}`}
-                                style={{ gridTemplateColumns: '40px 40px 1fr 1fr 1fr 80px 120px' }}
+                                style={{ gridTemplateColumns: '40px 40px 1fr 1fr 1fr 100px 120px' }}
                               >
                                 <div 
                                   className="px-2 py-2 flex items-center justify-center border-r border-slate-300"
-                                  onClick={(e) => {
-                                    if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT' && !e.target.closest('button') && !e.target.closest('[draggable]')) {
-                                      toggleTestCaseSelection(pair.id);
-                                    }
-                                  }}
                                 >
                                   <input
                                     type="checkbox"
                                     checked={selectedTestCaseIds.includes(pair.id)}
                                     onChange={() => toggleTestCaseSelection(pair.id)}
-                                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                                     onClick={(e) => e.stopPropagation()}
+                                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                                   />
                                 </div>
                                 <div 
                                   className="px-2 py-2 text-slate-500 text-center border-r border-slate-300"
-                                  onClick={(e) => {
-                                    if (!e.target.closest('button') && !e.target.closest('[draggable]') && !e.target.closest('select')) {
-                                      toggleTestCaseSelection(pair.id);
-                                    }
-                                  }}
                                 >
                                   {idx + 1}
                                 </div>
                                 <div 
                                   className="px-3 py-2 border-r border-slate-300"
-                                  onClick={(e) => {
-                                    if (!e.target.closest('select') && !e.target.closest('button') && !e.target.closest('[draggable]')) {
-                                      toggleTestCaseSelection(pair.id);
-                                    }
-                                  }}
                                 >
                                   <select
                                     value={pair.vcdId || ''}
@@ -2189,11 +2316,6 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                 </div>
                                 <div 
                                   className="px-3 py-2 border-r border-slate-300"
-                                  onClick={(e) => {
-                                    if (!e.target.closest('select') && !e.target.closest('button') && !e.target.closest('[draggable]')) {
-                                      toggleTestCaseSelection(pair.id);
-                                    }
-                                  }}
                                 >
                                   <select
                                     value={pair.binId || ''}
@@ -2209,11 +2331,6 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                 </div>
                                 <div 
                                   className="px-3 py-2 border-r border-slate-300"
-                                  onClick={(e) => {
-                                    if (!e.target.closest('select') && !e.target.closest('button') && !e.target.closest('[draggable]')) {
-                                      toggleTestCaseSelection(pair.id);
-                                    }
-                                  }}
                                 >
                                   <select
                                     value={pair.linId || ''}
@@ -2228,18 +2345,14 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                   </select>
                                 </div>
                                 <div 
-                                  className="px-2 py-2 border-r border-slate-300"
-                                  onClick={(e) => {
-                                    if (!e.target.closest('input') && !e.target.closest('button') && !e.target.closest('[draggable]')) {
-                                      toggleTestCaseSelection(pair.id);
-                                    }
-                                  }}
+                                  className="px-2 py-2 border-r border-slate-300 min-w-[100px] flex items-center"
                                 >
                                   <input
                                     type="text"
                                     inputMode="numeric"
                                     value={pair.try === '' || pair.try === null || pair.try === undefined ? '' : pair.try}
                                     onChange={(e) => {
+                                      e.stopPropagation();
                                       const val = e.target.value;
                                       // อนุญาตให้เป็น empty string หรือตัวเลขเท่านั้น
                                       if (val === '' || /^\d+$/.test(val)) {
@@ -2247,42 +2360,62 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                       }
                                     }}
                                     onBlur={(e) => {
+                                      e.stopPropagation();
                                       // เมื่อ blur ถ้าเป็น empty string ให้ตั้งเป็น 1
                                       if (e.target.value === '' || e.target.value === null || e.target.value === undefined) {
                                         updatePairTry(pair.id, '1');
                                       }
                                     }}
                                     onClick={(e) => e.stopPropagation()}
+                                    onMouseDown={(e) => e.stopPropagation()}
                                     onKeyDown={(e) => {
+                                      e.stopPropagation();
                                       // อนุญาตให้พิมพ์ตัวเลข, backspace, delete, arrow keys, tab
                                       if (!/[0-9]/.test(e.key) && !['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Tab', 'Enter'].includes(e.key)) {
                                         e.preventDefault();
                                       }
                                     }}
                                     placeholder="1"
-                                    className="w-full px-1 py-1 text-xs rounded border border-slate-300 bg-white focus:border-blue-400 focus:ring-1 focus:ring-blue-400 text-center"
+                                    className="w-full min-w-0 px-1.5 py-1 text-xs rounded border border-slate-300 bg-white focus:border-blue-400 focus:ring-1 focus:ring-blue-400 text-center"
                                     title="จำนวนรอบในการ test (พิมพ์ได้, default: 1)"
                                   />
                                 </div>
                                 <div className="px-3 py-2 flex items-center justify-end gap-1">
                                   <span
                                     draggable
-                                    onDragStart={(e) => handleRowDragStart(e, idx)}
-                                    onDragEnd={handleRowDragEnd}
+                                    onDragStart={(e) => {
+                                      e.stopPropagation();
+                                      handleRowDragStart(e, idx);
+                                    }}
+                                    onDragEnd={(e) => {
+                                      e.stopPropagation();
+                                      handleRowDragEnd();
+                                    }}
+                                    onMouseDown={(e) => e.stopPropagation()}
                                     className="p-1.5 rounded cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 hover:bg-slate-100"
                                     title="ลากเพื่อเรียง"
                                   >
                                     <GripVertical size={16} />
                                   </span>
                                   <button
-                                    onClick={() => duplicatePair(pair.id)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      e.preventDefault();
+                                      duplicatePair(pair.id);
+                                    }}
+                                    onMouseDown={(e) => e.stopPropagation()}
                                     className="p-1.5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
                                     title="Duplicate"
                                   >
                                     <Copy size={16} />
                                   </button>
                                   <button
-                                    onClick={() => removePair(pair.id)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      e.preventDefault();
+                                      removePair(pair.id);
+                                    }}
+                                    onMouseDown={(e) => e.stopPropagation()}
                                     className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
                                     title="Remove"
                                   >
@@ -2752,6 +2885,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
     moveFileDown, 
     updateJobTag, 
     exportJobToJSON,
+    deleteJob,
     loading,
     errors
   } = useTestStore();
@@ -2768,6 +2902,10 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
   const [selectedJobIds, setSelectedJobIds] = useState([]); // สำหรับเลือก batch ที่ต้องการ run
   const [dragStartIndex, setDragStartIndex] = useState(null); // สำหรับ drag selection
   const [isDragging, setIsDragging] = useState(false); // track ว่ากำลัง drag อยู่หรือไม่
+  const [completedJobsFilter, setCompletedJobsFilter] = useState('all'); // 'today' | 'week' | 'month' | 'all'
+  const [completedJobsSearch, setCompletedJobsSearch] = useState(''); // Search text
+  const [completedJobsTagFilter, setCompletedJobsTagFilter] = useState(''); // Filter by tag
+  const [completedJobsConfigFilter, setCompletedJobsConfigFilter] = useState(''); // Filter by config name
   
   const toggleJobExpanded = (jobId) => {
     setExpandedJobs(prev => 
@@ -2825,50 +2963,19 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
     }
   };
 
-  // Functions สำหรับ drag selection
+  // Functions สำหรับ drag selection (deprecated - ใช้ onClick แทน)
+  // เก็บไว้เพื่อ backward compatibility แต่ไม่ได้ใช้แล้ว
   const handleMouseDown = (jobIndex) => {
-    setDragStartIndex(jobIndex);
-    setIsDragging(true);
-    // Toggle selection ของ job ที่คลิก
-    const jobId = jobs[jobIndex]?.id;
-    if (jobId) {
-      toggleJobSelection(jobId);
-    }
+    // ไม่ทำอะไร - ใช้ onClick แทน
   };
 
   const handleMouseEnter = (jobIndex) => {
-    if (isDragging && dragStartIndex !== null) {
-      // Select range จาก dragStartIndex ถึง jobIndex
-      const start = Math.min(dragStartIndex, jobIndex);
-      const end = Math.max(dragStartIndex, jobIndex);
-      const rangeJobIds = jobs.slice(start, end + 1).map(j => j.id);
-      setSelectedJobIds(prev => {
-        // รวม range ใหม่กับ selection เดิม
-        const newSelection = [...new Set([...prev, ...rangeJobIds])];
-        return newSelection;
-      });
-    }
+    // ไม่ทำอะไร - ใช้ onClick แทน
   };
 
   const handleMouseUp = () => {
-    setDragStartIndex(null);
-    setIsDragging(false);
+    // ไม่ทำอะไร - ใช้ onClick แทน
   };
-
-  // Add event listeners for mouse up outside
-  useEffect(() => {
-    const handleGlobalMouseUp = () => {
-      if (isDragging) {
-        setDragStartIndex(null);
-        setIsDragging(false);
-      }
-    };
-    
-    if (isDragging) {
-      window.addEventListener('mouseup', handleGlobalMouseUp);
-      return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
-    }
-  }, [isDragging]);
 
   const handleRunSelectedJobs = async () => {
     if (selectedJobIds.length === 0) {
@@ -2923,11 +3030,534 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
     setEditingTag(null);
     setTagInput('');
   };
+
+  // delete job function
+
+  const handleDeleteJob = async (jobId, jobName) => {
+    if (!window.confirm(`Are you sure you want to delete batch #${jobId}?\n\nJob: ${jobName || 'N/A'}\n\nThis action cannot be undone.`)) {
+      return;
+    }
+    
+    const success = await deleteJob(jobId);
+    if (success) {
+      addToast({ type: 'success', message: `Batch #${jobId} deleted successfully.` });
+    } else {
+      addToast({ type: 'error', message: `Failed to delete batch #${jobId}.` });
+    }
+  };
+
+  const handleDeleteSelectedJobs = async () => {
+    if (selectedJobIds.length === 0) {
+      addToast({ type: 'warning', message: 'Please select at least one batch to delete.' });
+      return;
+    }
+
+    const selectedJobs = jobs.filter(j => selectedJobIds.includes(j.id));
+    const jobNames = selectedJobs.map(j => `#${j.id} (${j.name || 'N/A'})`).join('\n');
+    
+    if (!window.confirm(`Are you sure you want to delete ${selectedJobIds.length} batch(es)?\n\n${jobNames}\n\nThis action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      const api = await import('./services/api');
+      await Promise.allSettled(selectedJobIds.map((jobId) => api.deleteJob(jobId)));
+      
+      const { refreshJobs } = useTestStore.getState();
+      await refreshJobs();
+      
+      addToast({ type: 'success', message: `Deleted ${selectedJobIds.length} batch(es) successfully.` });
+      setSelectedJobIds([]); // Clear selection after deleting
+    } catch (error) {
+      console.error('Failed to delete selected jobs', error);
+      addToast({ type: 'error', message: 'Failed to delete selected batches.' });
+    }
+  };
   
   // Sort files by order
   const getSortedFiles = (job) => {
     if (!job.files || job.files.length === 0) return [];
     return [...job.files].sort((a, b) => (a.order || 0) - (b.order || 0));
+  };
+
+  // Helper function to get job date for sorting (newest first)
+  const getJobDate = (job) => {
+    // สำหรับ pending/running: ใช้ createdAt หรือ startedAt (ใหม่สุด)
+    // สำหรับ completed: ใช้ completedAt หรือ startedAt
+    if (job.status === 'completed' || job.status === 'stopped') {
+      // Completed jobs: ใช้ completedAt ก่อน
+      if (job.completedAt) return new Date(job.completedAt);
+      if (job.startedAt) return new Date(job.startedAt);
+    } else {
+      // Running/Pending jobs: ใช้ createdAt ก่อน (เวลาที่สร้าง)
+      if (job.createdAt) return new Date(job.createdAt);
+      if (job.startedAt) return new Date(job.startedAt);
+    }
+    // Fallback: ใช้เวลาปัจจุบันสำหรับ pending jobs ที่ไม่มี createdAt
+    return new Date();
+  };
+
+  // Sort all jobs by date (newest first)
+  const sortedAllJobs = [...jobs].sort((a, b) => {
+    const dateA = getJobDate(a);
+    const dateB = getJobDate(b);
+    return dateB - dateA; // newest first
+  });
+
+  // แบ่ง jobs เป็น Running และ Completed (เรียงตาม date แล้ว)
+  const runningJobs = sortedAllJobs
+    .filter(j => j.status === 'running' || j.status === 'pending')
+    .sort((a, b) => {
+      // Sort running jobs by date (newest first)
+      const dateA = getJobDate(a);
+      const dateB = getJobDate(b);
+      return dateB - dateA;
+    });
+  
+  // Filter completed jobs by date, search, tag, and config name
+  const filterCompletedJobs = (jobsList) => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const weekAgo = new Date(today);
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const monthAgo = new Date(today);
+    monthAgo.setMonth(monthAgo.getMonth() - 1);
+
+    let filtered = jobsList.filter(job => {
+      // Filter by date
+      const jobDate = getJobDate(job);
+      let dateMatch = true;
+      switch (completedJobsFilter) {
+        case 'today':
+          dateMatch = jobDate >= today;
+          break;
+        case 'week':
+          dateMatch = jobDate >= weekAgo;
+          break;
+        case 'month':
+          dateMatch = jobDate >= monthAgo;
+          break;
+        case 'all':
+        default:
+          dateMatch = true;
+      }
+      if (!dateMatch) return false;
+
+      // Filter by tag
+      if (completedJobsTagFilter) {
+        const jobTag = (job.tag || '').toLowerCase();
+        const filterTag = completedJobsTagFilter.toLowerCase();
+        if (!jobTag.includes(filterTag)) return false;
+      }
+
+      // Filter by config name
+      if (completedJobsConfigFilter) {
+        const jobConfig = (job.configName || '').toLowerCase();
+        const filterConfig = completedJobsConfigFilter.toLowerCase();
+        if (!jobConfig.includes(filterConfig)) return false;
+      }
+
+      // Search in name, id, firmware, boards
+      if (completedJobsSearch) {
+        const searchLower = completedJobsSearch.toLowerCase();
+        const nameMatch = (job.name || '').toLowerCase().includes(searchLower);
+        const idMatch = (job.id || '').toLowerCase().includes(searchLower);
+        const firmwareMatch = (job.firmware || '').toLowerCase().includes(searchLower);
+        const boardsMatch = (job.boards || []).some(b => b.toLowerCase().includes(searchLower));
+        const tagMatch = (job.tag || '').toLowerCase().includes(searchLower);
+        const configMatch = (job.configName || '').toLowerCase().includes(searchLower);
+        
+        if (!nameMatch && !idMatch && !firmwareMatch && !boardsMatch && !tagMatch && !configMatch) {
+          return false;
+        }
+      }
+
+      return true;
+    }).sort((a, b) => {
+      // Sort by date (newest first)
+      const dateA = getJobDate(a);
+      const dateB = getJobDate(b);
+      return dateB - dateA;
+    });
+
+    return filtered;
+  };
+
+  const allCompletedJobs = sortedAllJobs.filter(j => j.status === 'completed' || j.status === 'stopped');
+  const completedJobs = filterCompletedJobs(allCompletedJobs);
+
+  // Get unique tags and config names for filter dropdowns
+  const uniqueTags = [...new Set(allCompletedJobs.map(j => j.tag).filter(Boolean))].sort();
+  const uniqueConfigNames = [...new Set(allCompletedJobs.map(j => j.configName).filter(Boolean))].sort();
+
+  // Component สำหรับ render job card (ใช้ซ้ำได้)
+  const renderJobCard = (job, jobIndex, allJobs) => {
+    const sortedFiles = getSortedFiles(job);
+    const isExpanded = expandedJobs.includes(job.id);
+    const runningFiles = sortedFiles.filter(f => f.status === 'running');
+    
+    return (
+      <div 
+        key={job.id} 
+        id={`job-${job.id}`} 
+        className={`bg-white rounded-2xl border shadow-sm overflow-hidden transition-all ${
+          selectedJobIds.includes(job.id) ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200'
+        }`}
+        onClick={(e) => {
+          // ไม่ toggle selection ถ้าคลิกที่ button, input, checkbox, หรือ element ที่มี stopPropagation
+          if (e.target.closest('button') || 
+              e.target.closest('input') || 
+              e.target.closest('select') ||
+              e.target.closest('[data-no-select]')) {
+            return;
+          }
+          // Toggle selection เมื่อคลิกที่พื้นที่ว่าง
+          toggleJobSelection(job.id);
+        }}
+      >
+        {/* Job Header */}
+        <div className="p-6 border-b border-slate-100">
+          <div className="flex flex-col gap-4">
+            {/* Top Row: Batch Info */}
+            <div className="flex justify-between items-start gap-4">
+              <div className="flex-1 min-w-0" data-no-select>
+                <div className="flex items-center gap-3 mb-2 flex-wrap" data-no-select>
+                  {/* Checkbox for selection */}
+                  <input
+                    type="checkbox"
+                    checked={selectedJobIds.includes(job.id)}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      toggleJobSelection(job.id);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer shrink-0"
+                    title="Select this batch"
+                  />
+                  <h3 className="text-xl font-bold text-slate-800">Batch #{job.id}</h3>
+                  <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase shrink-0 ${
+                    job.status === 'running' ? 'bg-blue-100 text-blue-700' :
+                    job.status === 'completed' ? 'bg-emerald-100 text-emerald-700' :
+                    job.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                    'bg-slate-100 text-slate-700'
+                  }`}>
+                    {job.status}
+                  </span>
+                  {job.tag && (
+                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-700 flex items-center gap-1 shrink-0">
+                      <Tag size={12} />
+                      {job.tag}
+                    </span>
+                  )}
+                </div>
+                <p className="text-slate-600 mb-3">{job.name}</p>
+                <div className="flex items-center gap-6 text-sm text-slate-500 flex-wrap">
+                  <span>Firmware: <strong className="text-slate-700">{job.firmware}</strong></span>
+                  <span>Boards: <strong className="text-slate-700">{job.boards?.join(', ')}</strong></span>
+                  <span>Progress: <strong className="text-slate-700">{job.progress}%</strong></span>
+                  <span>Files: <strong className="text-slate-700">{job.completedFiles}/{job.totalFiles}</strong></span>
+                  {/* Date Badge */}
+                  {(job.completedAt || job.startedAt) && (
+                    <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs font-semibold">
+                      {(() => {
+                        const date = job.completedAt ? new Date(job.completedAt) : new Date(job.startedAt);
+                        const now = new Date();
+                        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                        const jobDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+                        
+                        if (jobDate.getTime() === today.getTime()) {
+                          return `Today ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+                        } else {
+                          return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+                        }
+                      })()}
+                    </span>
+                  )}
+                </div>
+              </div>
+              
+              {/* Move Buttons */}
+              <div className="flex flex-col gap-1 shrink-0" data-no-select>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    moveJobUp(job.id);
+                  }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  disabled={jobIndex === 0}
+                  className={`p-2 rounded-lg border text-slate-600 ${jobIndex === 0 ? 'opacity-30 cursor-not-allowed border-slate-200' : 'hover:bg-slate-50 border-slate-200'}`}
+                  title="Move batch up"
+                >
+                  <ArrowUp size={16} />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    moveJobDown(job.id);
+                  }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  disabled={jobIndex === allJobs.length - 1}
+                  className={`p-2 rounded-lg border text-slate-600 ${jobIndex === allJobs.length - 1 ? 'opacity-30 cursor-not-allowed border-slate-200' : 'hover:bg-slate-50 border-slate-200'}`}
+                  title="Move batch down"
+                >
+                  <ArrowDown size={16} />
+                </button>
+              </div>
+            </div>
+            
+            {/* Bottom Row: Action Buttons */}
+            <div className="flex items-center gap-2 flex-wrap" data-no-select>
+              {editingTag === job.id ? (
+                <div className="flex items-center gap-2 flex-wrap" data-no-select>
+                  <input
+                    type="text"
+                    value={tagInput}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      setTagInput(e.target.value);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    placeholder="Enter tag/group"
+                    className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === 'Enter') handleSaveTag(job.id);
+                      if (e.key === 'Escape') handleCancelTag();
+                    }}
+                    autoFocus
+                  />
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      handleSaveTag(job.id);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      handleCancelTag();
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="px-3 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-300"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      handleEditTag(job);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-200 transition-all flex items-center gap-1 shrink-0"
+                  >
+                    <Tag size={14} />
+                    {job.tag ? 'Edit Tag' : 'Add Tag'}
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      exportJobToJSON(job.id);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-bold hover:bg-blue-200 transition-all flex items-center gap-1 shrink-0"
+                  >
+                    <FileJson size={14} />
+                    Export JSON
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      toggleJobExpanded(job.id);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-200 transition-all shrink-0"
+                  >
+                    {isExpanded ? 'Hide Files' : 'Show Files'}
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      setTestCasesView(testCasesView === job.id ? null : job.id);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-all flex items-center gap-1.5 shrink-0"
+                  >
+                    <Eye size={14} />
+                    {testCasesView === job.id ? 'Hide Progress' : 'View Progress'}
+                  </button>
+                  {onEditJob && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        onEditJob(job.id);
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700 transition-all flex items-center gap-1.5 shrink-0"
+                      title="Edit this batch - Load pairs table for editing"
+                    >
+                      <Pencil size={14} />
+                      Edit Batch
+                    </button>
+                  )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      handleDeleteJob(job.id, job.name);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700 transition-all flex items-center gap-1.5 shrink-0"
+                    title="Delete this batch"
+                  >
+                    <XCircle size={14} />
+                    Delete
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+          
+          {/* Progress Bar */}
+          <div className="mt-4">
+            <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-blue-600 transition-all duration-1000" 
+                style={{ width: `${job.progress}%` }}
+              ></div>
+            </div>
+          </div>
+        </div>
+        
+        {/* Test Cases Progress View */}
+        {testCasesView === job.id && (
+          <TestCasesProgressView
+            job={job}
+            files={sortedFiles}
+            filter={testCasesFilter}
+            search={testCasesSearch}
+            onFilterChange={setTestCasesFilter}
+            onSearchChange={setTestCasesSearch}
+            onStopFile={(fileId) => stopFile(job.id, fileId)}
+          />
+        )}
+        
+        {/* Files/Test Cases List (Expandable) */}
+        {isExpanded && (
+          <div className="p-6 bg-slate-50">
+            <h4 className="text-sm font-bold text-slate-600 uppercase mb-4">Test Cases in Batch (Sorted by Order)</h4>
+            <p className="text-xs text-slate-500 mb-4">Note: Each file = 1 test case</p>
+            {sortedFiles.length > 0 ? (
+              <>
+                {/* Failed Files Alert */}
+                {sortedFiles.filter(f => f.result === 'fail' || f.status === 'error').length > 0 && (
+                  <div className="mb-4 p-4 bg-red-50 border-2 border-red-200 rounded-xl">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle size={20} className="text-red-600" />
+                        <h5 className="font-bold text-red-800">
+                          Failed Test Cases ({sortedFiles.filter(f => f.result === 'fail' || f.status === 'error').length})
+                        </h5>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          const failedFiles = sortedFiles.filter(f => f.result === 'fail' || f.status === 'error');
+                          const errorReport = `Failed Test Cases Report - Batch #${job.id}
+Generated: ${new Date().toISOString()}
+========================================
+
+Job Information:
+- Job ID: ${job.id}
+- Job Name: ${job.name || 'N/A'}
+- Tag: ${job.tag || 'Untagged'}
+- Firmware: ${job.firmware || 'N/A'}
+- Boards: ${job.boards?.join(', ') || 'N/A'}
+
+Failed Test Cases Summary:
+Total Failed: ${failedFiles.length} out of ${sortedFiles.length} test cases
+
+Failed Test Cases Details:
+${failedFiles.map((file, idx) => `
+[${idx + 1}] ${file.name || 'N/A'}
+    Order: ${file.order || 0}
+    Status: ${file.status || 'unknown'}
+    Result: ${file.result || 'N/A'}
+    Error: ${file.errorMessage || file.error || 'No error message available'}
+    Started: ${file.startedAt || 'N/A'}
+    Completed: ${file.completedAt || 'N/A'}
+`).join('\n')}
+
+Recommendations:
+1. Review error messages for each failed test case
+2. Check hardware connections and firmware compatibility
+3. Verify test case configurations
+4. Download individual error logs for detailed analysis
+`;
+                          const blob = new Blob([errorReport], { type: 'text/plain;charset=utf-8;' });
+                          const url = URL.createObjectURL(blob);
+                          const link = document.createElement('a');
+                          link.href = url;
+                          link.download = `failed_tests_report_batch_${job.id}_${new Date().toISOString().split('T')[0]}.txt`;
+                          link.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 transition-all flex items-center gap-1"
+                      >
+                        <Download size={14} />
+                        Download All Error Logs
+                      </button>
+                    </div>
+                    <p className="text-sm text-red-700">
+                      The following test cases failed or encountered errors. Click "Error Log" on each failed test case to download detailed error information.
+                    </p>
+                  </div>
+                )}
+                
+                <div className="space-y-2">
+                  {sortedFiles.map((file, index) => (
+                    <FileRow
+                      key={file.id}
+                      file={file}
+                      jobId={job.id}
+                      job={job}
+                      index={index}
+                      totalFiles={sortedFiles.length}
+                      onStop={() => stopFile(job.id, file.id)}
+                      onMoveUp={() => moveFileUp(job.id, file.id)}
+                      onMoveDown={() => moveFileDown(job.id, file.id)}
+                    />
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-8 text-slate-400">
+                <p>No files in this batch</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
   };
   
   return (
@@ -2985,6 +3615,18 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
           <Square size={18} />
           {isStoppingAll ? 'Stopping...' : 'Stop All'}
         </button>
+
+        {/* Delete Selected Button */}
+        {selectedJobIds.length > 0 && (
+          <button
+            onClick={handleDeleteSelectedJobs}
+            className="bg-red-600 text-white px-6 py-2 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 hover:bg-red-700"
+            title={`Delete ${selectedJobIds.length} selected batch(es)`}
+          >
+            <XCircle size={18} />
+            Delete Selected ({selectedJobIds.length})
+          </button>
+        )}
       </div>
     </div>
       
@@ -3002,273 +3644,127 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
         </div>
       )}
 
-      <div className="space-y-4">
-        {jobs.map((job, jobIndex) => {
-          const sortedFiles = getSortedFiles(job);
-          const isExpanded = expandedJobs.includes(job.id);
-          const runningFiles = sortedFiles.filter(f => f.status === 'running');
+      {/* 2 Columns Layout: Running (Left) | Completed (Right) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Left Column: Running Jobs */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
+              <h2 className="text-xl font-bold text-slate-800">Running</h2>
+              <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-bold">
+                {runningJobs.length}
+              </span>
+            </div>
+          </div>
           
-          return (
-            <div 
-              key={job.id} 
-              id={`job-${job.id}`} 
-              className={`bg-white rounded-2xl border shadow-sm overflow-hidden transition-all cursor-pointer ${
-                selectedJobIds.includes(job.id) ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200'
-              }`}
-              onMouseDown={() => handleMouseDown(jobIndex)}
-              onMouseEnter={() => handleMouseEnter(jobIndex)}
-              onMouseUp={handleMouseUp}
-            >
-              {/* Job Header */}
-              <div className="p-6 border-b border-slate-100">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-2">
-                      {/* Checkbox for selection */}
-                      <input
-                        type="checkbox"
-                        checked={selectedJobIds.includes(job.id)}
-                        onChange={() => toggleJobSelection(job.id)}
-                        onClick={(e) => e.stopPropagation()}
-                        className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                        title="Select this batch"
-                      />
-                      <h3 className="text-xl font-bold text-slate-800">Batch #{job.id}</h3>
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${
-                        job.status === 'running' ? 'bg-blue-100 text-blue-700' :
-                        job.status === 'completed' ? 'bg-emerald-100 text-emerald-700' :
-                        job.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                        'bg-slate-100 text-slate-700'
-                      }`}>
-                        {job.status}
-                      </span>
-                      {job.tag && (
-                        <span className="px-3 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-700 flex items-center gap-1">
-                          <Tag size={12} />
-                          {job.tag}
-                        </span>
-                      )}
-    </div>
-                    <p className="text-slate-600 mb-3">{job.name}</p>
-                    <div className="flex items-center gap-6 text-sm text-slate-500">
-                      <span>Firmware: <strong className="text-slate-700">{job.firmware}</strong></span>
-                      <span>Boards: <strong className="text-slate-700">{job.boards?.join(', ')}</strong></span>
-                      <span>Progress: <strong className="text-slate-700">{job.progress}%</strong></span>
-                      <span>Files: <strong className="text-slate-700">{job.completedFiles}/{job.totalFiles}</strong></span>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    <div className="flex flex-col gap-1">
-                      <button
-                        onClick={() => moveJobUp(job.id)}
-                        disabled={jobIndex === 0}
-                        className={`p-2 rounded-lg border text-slate-600 ${jobIndex === 0 ? 'opacity-30 cursor-not-allowed border-slate-200' : 'hover:bg-slate-50 border-slate-200'}`}
-                        title="Move batch up"
-                      >
-                        <ArrowUp size={16} />
-                      </button>
-                      <button
-                        onClick={() => moveJobDown(job.id)}
-                        disabled={jobIndex === jobs.length - 1}
-                        className={`p-2 rounded-lg border text-slate-600 ${jobIndex === jobs.length - 1 ? 'opacity-30 cursor-not-allowed border-slate-200' : 'hover:bg-slate-50 border-slate-200'}`}
-                        title="Move batch down"
-                      >
-                        <ArrowDown size={16} />
-                      </button>
-                    </div>
-                    {editingTag === job.id ? (
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={tagInput}
-                          onChange={(e) => setTagInput(e.target.value)}
-                          placeholder="Enter tag/group"
-                          className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleSaveTag(job.id);
-                            if (e.key === 'Escape') handleCancelTag();
-                          }}
-                          autoFocus
-                        />
-                        <button
-                          onClick={() => handleSaveTag(job.id)}
-                          className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={handleCancelTag}
-                          className="px-3 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-300"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => handleEditTag(job)}
-                          className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-200 transition-all flex items-center gap-1"
-                        >
-                          <Tag size={14} />
-                          {job.tag ? 'Edit Tag' : 'Add Tag'}
-                        </button>
-                        <button
-                          onClick={() => exportJobToJSON(job.id)}
-                          className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-bold hover:bg-blue-200 transition-all flex items-center gap-1"
-                        >
-                          <FileJson size={14} />
-                          Export JSON
-                        </button>
-                      </>
-                    )}
-                    <button
-                      onClick={() => toggleJobExpanded(job.id)}
-                      className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-200 transition-all"
-                    >
-                      {isExpanded ? 'Hide Files' : 'Show Files'}
-                    </button>
-                    <button
-                      onClick={() => setTestCasesView(testCasesView === job.id ? null : job.id)}
-                      className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-all flex items-center gap-2"
-                    >
-                      <Eye size={16} />
-                      {testCasesView === job.id ? 'Hide Progress' : 'View Progress'}
-                    </button>
-                    {onEditJob && (
-                      <button
-                        onClick={() => onEditJob(job.id)}
-                        className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700 transition-all flex items-center gap-2"
-                        title="Edit this batch - Load pairs table for editing"
-                      >
-                        <Pencil size={16} />
-                        Edit Batch
-                      </button>
-                    )}
-                  </div>
-                </div>
-                
-                {/* Progress Bar */}
-                <div className="mt-4">
-                  <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-blue-600 transition-all duration-1000" 
-                      style={{ width: `${job.progress}%` }}
-                    ></div>
-                  </div>
-                </div>
+          <div className="space-y-4 max-h-[calc(100vh-300px)] overflow-y-auto pr-2">
+            {runningJobs.length === 0 ? (
+              <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-slate-400">
+                <p>No running jobs</p>
               </div>
-              
-              {/* Test Cases Progress View */}
-              {testCasesView === job.id && (
-                <TestCasesProgressView
-                  job={job}
-                  files={sortedFiles}
-                  filter={testCasesFilter}
-                  search={testCasesSearch}
-                  onFilterChange={setTestCasesFilter}
-                  onSearchChange={setTestCasesSearch}
-                  onStopFile={(fileId) => stopFile(job.id, fileId)}
-                />
+            ) : (
+              runningJobs.map((job, index) => {
+                const originalIndex = jobs.findIndex(j => j.id === job.id);
+                return renderJobCard(job, originalIndex, runningJobs);
+              })
+            )}
+          </div>
+        </div>
+
+        {/* Right Column: Completed Jobs */}
+        <div className="space-y-4">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 bg-emerald-500 rounded-full"></div>
+                <h2 className="text-xl font-bold text-slate-800">Completed</h2>
+                <span className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm font-bold">
+                  {completedJobs.length}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={completedJobsFilter}
+                  onChange={(e) => setCompletedJobsFilter(e.target.value)}
+                  className="px-3 py-1.5 border border-emerald-300 rounded-lg text-sm font-semibold bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                  title="Filter completed jobs by date"
+                >
+                  <option value="today">Today</option>
+                  <option value="week">This Week</option>
+                  <option value="month">This Month</option>
+                  <option value="all">All Time</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Search */}
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={completedJobsSearch}
+                onChange={(e) => setCompletedJobsSearch(e.target.value)}
+                placeholder="Search by name, ID, firmware, boards..."
+                className="w-full pl-10 pr-4 py-2 border border-emerald-300 rounded-lg text-sm bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+
+            {/* Filters: Tag and Config Name */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                value={completedJobsTagFilter}
+                onChange={(e) => setCompletedJobsTagFilter(e.target.value)}
+                className="flex-1 min-w-[150px] px-3 py-2 border border-emerald-300 rounded-lg text-sm font-semibold bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                title="Filter by tag"
+              >
+                <option value="">All Tags</option>
+                {uniqueTags.map(tag => (
+                  <option key={tag} value={tag}>{tag}</option>
+                ))}
+              </select>
+              <select
+                value={completedJobsConfigFilter}
+                onChange={(e) => setCompletedJobsConfigFilter(e.target.value)}
+                className="flex-1 min-w-[150px] px-3 py-2 border border-emerald-300 rounded-lg text-sm font-semibold bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                title="Filter by config name"
+              >
+                <option value="">All Configs</option>
+                {uniqueConfigNames.map(config => (
+                  <option key={config} value={config}>{config}</option>
+                ))}
+              </select>
+              {(completedJobsSearch || completedJobsTagFilter || completedJobsConfigFilter) && (
+                <button
+                  onClick={() => {
+                    setCompletedJobsSearch('');
+                    setCompletedJobsTagFilter('');
+                    setCompletedJobsConfigFilter('');
+                  }}
+                  className="px-3 py-2 bg-slate-200 text-slate-700 rounded-lg text-sm font-semibold hover:bg-slate-300 transition-all flex items-center gap-1"
+                  title="Clear all filters"
+                >
+                  <X size={14} />
+                  Clear
+                </button>
               )}
-              
-              {/* Files/Test Cases List (Expandable) */}
-              {isExpanded && (
-                <div className="p-6 bg-slate-50">
-                  <h4 className="text-sm font-bold text-slate-600 uppercase mb-4">Test Cases in Batch (Sorted by Order)</h4>
-                  <p className="text-xs text-slate-500 mb-4">Note: Each file = 1 test case</p>
-                  {sortedFiles.length > 0 ? (
-                    <>
-                      {/* Failed Files Alert */}
-                      {sortedFiles.filter(f => f.result === 'fail' || f.status === 'error').length > 0 && (
-                        <div className="mb-4 p-4 bg-red-50 border-2 border-red-200 rounded-xl">
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                              <AlertCircle size={20} className="text-red-600" />
-                              <h5 className="font-bold text-red-800">
-                                Failed Test Cases ({sortedFiles.filter(f => f.result === 'fail' || f.status === 'error').length})
-                              </h5>
-                            </div>
-                            <button
-                              onClick={() => {
-                                const failedFiles = sortedFiles.filter(f => f.result === 'fail' || f.status === 'error');
-                                const errorReport = `Failed Test Cases Report - Batch #${job.id}
-Generated: ${new Date().toISOString()}
-========================================
-
-Job Information:
-- Job ID: ${job.id}
-- Job Name: ${job.name || 'N/A'}
-- Tag: ${job.tag || 'Untagged'}
-- Firmware: ${job.firmware || 'N/A'}
-- Boards: ${job.boards?.join(', ') || 'N/A'}
-
-Failed Test Cases Summary:
-Total Failed: ${failedFiles.length} out of ${sortedFiles.length} test cases
-
-Failed Test Cases Details:
-${failedFiles.map((file, idx) => `
-[${idx + 1}] ${file.name || 'N/A'}
-    Order: ${file.order || 0}
-    Status: ${file.status || 'unknown'}
-    Result: ${file.result || 'N/A'}
-    Error: ${file.errorMessage || file.error || 'No error message available'}
-    Started: ${file.startedAt || 'N/A'}
-    Completed: ${file.completedAt || 'N/A'}
-`).join('\n')}
-
-Recommendations:
-1. Review error messages for each failed test case
-2. Check hardware connections and firmware compatibility
-3. Verify test case configurations
-4. Download individual error logs for detailed analysis
-`;
-                                const blob = new Blob([errorReport], { type: 'text/plain;charset=utf-8;' });
-                                const url = URL.createObjectURL(blob);
-                                const link = document.createElement('a');
-                                link.href = url;
-                                link.download = `failed_tests_report_batch_${job.id}_${new Date().toISOString().split('T')[0]}.txt`;
-                                link.click();
-                                URL.revokeObjectURL(url);
-                              }}
-                              className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 transition-all flex items-center gap-1"
-                            >
-                              <Download size={14} />
-                              Download All Error Logs
-                            </button>
-                          </div>
-                          <p className="text-sm text-red-700">
-                            The following test cases failed or encountered errors. Click "Error Log" on each failed test case to download detailed error information.
-                          </p>
-                        </div>
-                      )}
-                      
-                      <div className="space-y-2">
-                        {sortedFiles.map((file, index) => (
-                          <FileRow
-                            key={file.id}
-                            file={file}
-                            jobId={job.id}
-                            job={job}
-                            index={index}
-                            totalFiles={sortedFiles.length}
-                            onStop={() => stopFile(job.id, file.id)}
-                            onMoveUp={() => moveFileUp(job.id, file.id)}
-                            onMoveDown={() => moveFileDown(job.id, file.id)}
-                          />
-                        ))}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-center py-8 text-slate-400">
-                      <p>No files in this batch</p>
-                    </div>
-                  )}
-                </div>
-              )}
-  </div>
-);
-        })}
+            </div>
+          </div>
+          
+          <div className="space-y-4 max-h-[calc(100vh-300px)] overflow-y-auto pr-2">
+            {completedJobs.length === 0 ? (
+              <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-slate-400">
+                <p>No completed jobs</p>
+              </div>
+            ) : (
+              completedJobs.map((job, index) => {
+                const originalIndex = jobs.findIndex(j => j.id === job.id);
+                return renderJobCard(job, originalIndex, completedJobs);
+              })
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -4431,6 +4927,7 @@ const NotificationItem = ({ notification, onClick }) => {
 // Test Cases Progress View Component
 const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onSearchChange, onStopFile }) => {
   const runningFileRef = useRef(null);
+  const [selectedFileIds, setSelectedFileIds] = useState([]);
   
   // Filter and search files
   const filteredFiles = files.filter(file => {
@@ -4531,7 +5028,7 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
           </div>
           
           {/* Search and Filter */}
-          <div className="flex gap-3">
+          <div className="flex gap-3 items-center">
             <div className="flex-1 relative">
               <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
@@ -4553,11 +5050,58 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
               <option value="pending">Pending</option>
               <option value="stopped">Stopped</option>
             </select>
+            {/* Stop Selected Button */}
+            {selectedFileIds.length > 0 && (
+              <button
+                onClick={async () => {
+                  const runningSelected = filteredFiles.filter(f => 
+                    selectedFileIds.includes(f.id) && (f.status === 'running' || f.status === 'pending')
+                  );
+                  if (runningSelected.length === 0) {
+                    return;
+                  }
+                  if (window.confirm(`Stop ${runningSelected.length} selected test case(s)?`)) {
+                    await Promise.all(runningSelected.map(file => onStopFile(file.id)));
+                    setSelectedFileIds([]);
+                  }
+                }}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700 transition-all flex items-center gap-2"
+                title={`Stop ${selectedFileIds.length} selected test case(s)`}
+              >
+                <StopCircle size={16} />
+                Stop Selected ({selectedFileIds.length})
+              </button>
+            )}
           </div>
         </div>
         
         {/* Test Cases List */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
+          {/* Select All Header (if there are files) */}
+          {filteredFiles.length > 0 && (
+            <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={selectedFileIds.length === filteredFiles.length && filteredFiles.length > 0}
+                  onChange={() => {
+                    if (selectedFileIds.length === filteredFiles.length) {
+                      setSelectedFileIds([]);
+                    } else {
+                      setSelectedFileIds(filteredFiles.map(f => f.id));
+                    }
+                  }}
+                  className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                  title="Select all test cases"
+                />
+                <span className="text-xs font-semibold text-slate-600">
+                  {selectedFileIds.length > 0 
+                    ? `${selectedFileIds.length} of ${filteredFiles.length} selected`
+                    : `Select All (${filteredFiles.length} test cases)`}
+                </span>
+              </div>
+            </div>
+          )}
           <div className="max-h-[600px] overflow-y-auto">
             {filteredFiles.length === 0 ? (
               <div className="p-12 text-center text-slate-400">
@@ -4577,10 +5121,28 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                       className={`p-4 transition-all ${
                         isRunning 
                           ? 'bg-blue-50 border-l-4 border-blue-500' 
+                          : selectedFileIds.includes(file.id)
+                          ? 'bg-blue-50/50 border-l-2 border-blue-300'
                           : 'hover:bg-slate-50'
                       }`}
                     >
                       <div className="flex items-center gap-4">
+                        {/* Checkbox for selection */}
+                        <input
+                          type="checkbox"
+                          checked={selectedFileIds.includes(file.id)}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            setSelectedFileIds(prev => 
+                              prev.includes(file.id)
+                                ? prev.filter(id => id !== file.id)
+                                : [...prev, file.id]
+                            );
+                          }}
+                          className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          title="Select this test case"
+                        />
+                        
                         {/* Order Number */}
                         <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-sm font-bold ${
                           isRunning 
