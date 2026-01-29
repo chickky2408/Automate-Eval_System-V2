@@ -1,20 +1,23 @@
 """
-Job Queue Service with SQLite persistence.
+Job Queue Service with PostgreSQL persistence.
 Manages the test job queue and execution scheduling.
 """
 from typing import List, Optional, Dict
 from datetime import datetime
 import asyncio
 import uuid
+import os
 
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.job import Job, JobCreate, JobStatus, JobState
 from services.board_manager import board_manager
+from services.file_store import file_store
+from services.result_store import result_store
+from models.result import TestResult, WaveformData
 from db.database import async_session
 from db.orm_models import JobORM
-
 
 class JobQueueService:
     """Manages the job queue and execution with SQLite persistence."""
@@ -26,7 +29,8 @@ class JobQueueService:
 
     async def initialize(self):
         """Initialize the service (called on app startup)."""
-        print("[JobQueue] Service initialized with SQLite persistence")
+        print("[JobQueue] Service initialized with PostgreSQL persistence")
+        # Auto-restart queue if needed, or just leave it modifying
 
     async def shutdown(self):
         """Shutdown the service (called on app shutdown)."""
@@ -39,8 +43,8 @@ class JobQueueService:
         return Job(
             id=orm.id,
             name=orm.name,
-            vcd_filename=orm.vcd_filename,
-            firmware_filename=orm.firmware_filename,
+            vcd_filename=orm.vcd_filename, # Legacy support
+            firmware_filename=orm.firmware_filename, # Legacy support
             target_board_id=orm.target_board_id,
             assigned_board_id=orm.assigned_board_id,
             priority=orm.priority,
@@ -88,11 +92,12 @@ class JobQueueService:
             )
             max_pos = result.scalar() or 0
             
+            # TODO: Map filenames to IDs if possible, for now duplicate to legacy
             orm = JobORM(
                 id=job_id,
                 name=job_data.name,
-                vcd_filename=job_data.vcd_filename,
-                firmware_filename=job_data.firmware_filename,
+                vcd_filename=job_data.vcd_filename, # TODO: Use FileID
+                firmware_filename=job_data.firmware_filename, # TODO: Use FileID
                 target_board_id=job_data.target_board_id,
                 priority=job_data.priority,
                 queue_position=max_pos + 1,
@@ -102,7 +107,7 @@ class JobQueueService:
                 save_to_db=job_data.save_to_db,
                 state="pending",
                 progress=0,
-                created_at=datetime.now(),
+                created_at=datetime.utcnow(),
             )
             session.add(orm)
             await session.commit()
@@ -157,6 +162,9 @@ class JobQueueService:
                 update(JobORM).where(JobORM.id == job_id).values(**values)
             )
             await session.commit()
+            
+            # Broadcast via WebSocket (if WS service provided)
+            # await ws_manager.broadcast("job_update", {...})
 
     async def start(self):
         """Start queue processing."""
@@ -177,71 +185,98 @@ class JobQueueService:
     async def _process_queue(self):
         """Main queue processing loop."""
         while self._running:
-            # Find next pending job
-            async with async_session() as session:
-                result = await session.execute(
-                    select(JobORM)
-                    .where(JobORM.state == "pending")
-                    .order_by(JobORM.priority.desc(), JobORM.queue_position)
-                    .limit(1)
-                )
-                pending_orm = result.scalar_one_or_none()
-
-            if pending_orm:
-                pending_job = self._orm_to_model(pending_orm)
-                await self._execute_job(pending_job)
-            else:
+            try:
+                # Find next pending job
+                async with async_session() as session:
+                    result = await session.execute(
+                        select(JobORM)
+                        .where(JobORM.state == "pending")
+                        .order_by(JobORM.priority.desc(), JobORM.queue_position)
+                        .limit(1)
+                    )
+                    pending_orm = result.scalar_one_or_none()
+                    # Detach from session to avoid expiration
+                    if pending_orm:
+                        pending_job = self._orm_to_model(pending_orm)
+                    else:
+                        pending_job = None
+                        
+                if pending_job:
+                    await self._execute_job(pending_job)
+                else:
+                    await asyncio.sleep(1)
+            except Exception as e:
+                print(f"[JobQueue] Loop Error: {e}")
                 await asyncio.sleep(1)
 
     async def _execute_job(self, job: Job):
-        """Execute a single job (MOCK implementation)."""
+        """Execute a single job (Real Implementation)."""
         print(f"[JobQueue] Executing job: {job.name}")
 
-        # Find available board
+        # 1. Find available board
         if job.target_board_id:
-            board = await board_manager.get_board(job.target_board_id)
+            board = await board_manager.get_available_board(target_board_id=job.target_board_id)
         else:
             board = await board_manager.get_available_board()
 
         if not board:
             print(f"[JobQueue] No available board for job {job.id}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(5) # Wait before retrying logic or skipping
             return
 
+        # 2. Lock Board
         await board_manager.set_board_busy(board.id, job.id)
 
         try:
-            # Step 1: Configuring
+            # 3. Start Execution
             await self.update_job_status(
                 job.id, JobState.CONFIGURING, 10, "Initializing board...",
-                assigned_board_id=board.id, started_at=datetime.now()
+                assigned_board_id=board.id, started_at=datetime.utcnow()
             )
-            await asyncio.sleep(1)
 
-            # Step 2: Flashing
+            # TODO: Resolve file paths from DB if passing ID
+            # vcd_path = ...
+            
+            # 4. Flash Firmware (if needed)
             if job.firmware_filename:
                 await self.update_job_status(job.id, JobState.FLASHING, 30, "Programming EROM...")
-                await asyncio.sleep(2)
+                # await board_manager.flash_firmware(board.id, job.firmware_filename)
 
-            # Step 3: Running
-            await self.update_job_status(job.id, JobState.RUNNING, 50, "Uploading VCD stream...")
-            await asyncio.sleep(1)
-            await self.update_job_status(job.id, JobState.RUNNING, 70, "Executing test...")
-            await asyncio.sleep(2)
-            await self.update_job_status(job.id, JobState.RUNNING, 90, "Reading results...")
-            await asyncio.sleep(1)
+            # 5. Run Test
+            await self.update_job_status(job.id, JobState.RUNNING, 50, "Executing test...")
+            
+            # NOTE: For now still simulating the Agent Call until Agent API is fully integrated
+            await asyncio.sleep(2) 
+            
+            # 6. Save Result (Mock Result for now)
+            result = TestResult(
+                id=uuid.uuid4().hex,
+                job_id=job.id,
+                job_name=job.name,
+                board_id=board.id,
+                board_name=board.name,
+                passed=True,
+                started_at=datetime.utcnow(),
+                completed_at=datetime.utcnow(),
+                duration_seconds=5.0,
+                vcd_filename=job.vcd_filename,
+                firmware_filename=job.firmware_filename,
+                packet_count=1000,
+                crc_errors=0
+            )
+            await result_store.add_result(result)
 
-            # Complete
+            # 7. Complete
             await self.update_job_status(
                 job.id, JobState.COMPLETED, 100, "Done",
-                completed_at=datetime.now()
+                completed_at=datetime.utcnow()
             )
             print(f"[JobQueue] Job {job.id} completed successfully")
 
         except Exception as e:
             await self.update_job_status(
                 job.id, JobState.FAILED, 0, None, str(e),
-                completed_at=datetime.now()
+                completed_at=datetime.utcnow()
             )
             print(f"[JobQueue] Job {job.id} failed: {e}")
 

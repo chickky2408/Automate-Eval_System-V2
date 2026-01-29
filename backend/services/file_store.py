@@ -1,97 +1,141 @@
 """
-In-memory file metadata store for uploaded files.
+File Store Service with PostgreSQL and Disk persistence.
 """
 from __future__ import annotations
-
-from typing import Dict, List, Optional
+from typing import List, Optional
 from datetime import datetime
 import os
 import uuid
+import hashlib
+import aiofiles
+from sqlalchemy import select, delete
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.database import async_session
+from db.orm_models import FileORM, FileType
 
 class FileStore:
-    def __init__(self) -> None:
-        self._files: Dict[str, dict] = {}
-        self._files_by_path: Dict[str, str] = {}
+    def __init__(self, base_path: str = "uploads") -> None:
+        self.base_path = base_path
+        os.makedirs(self.base_path, exist_ok=True)
 
-    def add_file(self, name: str, size: int, file_type: str, path: str) -> dict:
-        existing_id = self._files_by_path.get(path)
-        upload_date = datetime.utcnow().isoformat() + "Z"
-        if existing_id:
-            record = self._files[existing_id]
-            record.update(
-                name=name,
-                size=size,
-                type=file_type,
-                uploadDate=upload_date,
-                path=path,
-            )
-            return record
+    def _get_storage_path(self, file_type: str, filename: str, file_uuid: str) -> str:
+        """Generate a structured path: uploads/TYPE/YYYY/MM/uid_filename"""
+        now = datetime.utcnow()
+        type_dir = file_type.upper()
+        year_dir = now.strftime("%Y")
+        month_dir = now.strftime("%m")
+        
+        directory = os.path.join(self.base_path, type_dir, year_dir, month_dir)
+        os.makedirs(directory, exist_ok=True)
+        
+        safe_filename = "".join(c for c in filename if c.isalnum() or c in "._-")
+        return os.path.join(directory, f"{file_uuid}_{safe_filename}")
 
-        file_id = uuid.uuid4().hex
-        record = {
-            "id": file_id,
-            "name": name,
-            "size": size,
-            "type": file_type,
-            "uploadDate": upload_date,
-            "path": path,
-        }
-        self._files[file_id] = record
-        self._files_by_path[path] = file_id
-        return record
+    async def calculate_checksum(self, file_path: str) -> str:
+        """Calculate SHA256 checksum of a file asynchronously."""
+        sha256 = hashlib.sha256()
+        async with aiofiles.open(file_path, "rb") as f:
+            while chunk := await f.read(8192):
+                sha256.update(chunk)
+        return sha256.hexdigest()
 
-    def list_files(self) -> List[dict]:
-        return list(self._files.values())
-
-    def get_file(self, file_id: str) -> Optional[dict]:
-        return self._files.get(file_id)
-
-    def delete_file(self, file_id: str) -> Optional[dict]:
-        record = self._files.pop(file_id, None)
-        if record:
-            self._files_by_path.pop(record.get("path", ""), None)
-        return record
-
-    def sync_with_dir(self, upload_dir: str) -> None:
-        existing_paths = set()
+    async def add_file(self, name: str, file_type: str, content: bytes) -> dict:
+        """Save file to disk and DB."""
+        file_uuid = str(uuid.uuid4())
+        
+        # Determine paths
         try:
-            for entry in os.scandir(upload_dir):
-                if not entry.is_file():
-                    continue
-                path = entry.path
-                existing_paths.add(path)
-                file_id = self._files_by_path.get(path)
-                stat = entry.stat()
-                upload_date = datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z"
-                file_type = (os.path.splitext(entry.name)[1] or "").lstrip(".") or "bin"
-                if file_id and file_id in self._files:
-                    self._files[file_id].update(
-                        name=entry.name,
-                        size=stat.st_size,
-                        type=file_type,
-                        uploadDate=upload_date,
-                        path=path,
-                    )
-                    continue
-                record_id = uuid.uuid4().hex
-                self._files[record_id] = {
-                    "id": record_id,
-                    "name": entry.name,
-                    "size": stat.st_size,
-                    "type": file_type,
-                    "uploadDate": upload_date,
-                    "path": path,
+            ftype = FileType(file_type.upper())
+        except ValueError:
+            ftype = FileType.OTHER
+            
+        storage_path = self._get_storage_path(ftype.value, name, file_uuid)
+        
+        # Write to disk
+        async with aiofiles.open(storage_path, "wb") as f:
+            await f.write(content)
+            
+        # Calculate Checksum
+        checksum = await self.calculate_checksum(storage_path)
+        size = len(content)
+        
+        # Save to DB
+        async with async_session() as session:
+            orm = FileORM(
+                id=file_uuid,
+                filename=name,
+                file_type=ftype,
+                storage_path=storage_path,
+                checksum_sha256=checksum,
+                size_bytes=size,
+                uploaded_at=datetime.utcnow()
+            )
+            session.add(orm)
+            await session.commit()
+            await session.refresh(orm)
+            
+            return {
+                "id": orm.id,
+                "name": orm.filename,
+                "size": orm.size_bytes,
+                "type": orm.file_type.value,
+                "uploadDate": orm.uploaded_at.isoformat() + "Z",
+                "checksum": orm.checksum_sha256
+            }
+
+    async def list_files(self) -> List[dict]:
+        """List all files from DB."""
+        async with async_session() as session:
+            result = await session.execute(select(FileORM).order_by(FileORM.uploaded_at.desc()))
+            files = result.scalars().all()
+            return [
+                {
+                    "id": f.id,
+                    "name": f.filename,
+                    "size": f.size_bytes,
+                    "type": f.file_type.value,
+                    "uploadDate": f.uploaded_at.isoformat() + "Z",
+                    "checksum": f.checksum_sha256
                 }
-                self._files_by_path[path] = record_id
-        except FileNotFoundError:
-            return
+                for f in files
+            ]
 
-        stale_paths = [path for path in self._files_by_path if path not in existing_paths]
-        for path in stale_paths:
-            record_id = self._files_by_path.pop(path, None)
-            if record_id:
-                self._files.pop(record_id, None)
+    async def get_file(self, file_id: str) -> Optional[dict]:
+        """Get file metadata by ID."""
+        async with async_session() as session:
+            result = await session.execute(select(FileORM).where(FileORM.id == file_id))
+            f = result.scalar_one_or_none()
+            if not f:
+                return None
+            return {
+                "id": f.id,
+                "name": f.filename,
+                "size": f.size_bytes,
+                "type": f.file_type.value,
+                "uploadDate": f.uploaded_at.isoformat() + "Z",
+                "path": f.storage_path, # Internal use only
+                "checksum": f.checksum_sha256
+            }
 
+    async def delete_file(self, file_id: str) -> bool:
+        """Delete file from DB and Disk."""
+        async with async_session() as session:
+            result = await session.execute(select(FileORM).where(FileORM.id == file_id))
+            f = result.scalar_one_or_none()
+            if not f:
+                return False
+                
+            storage_path = f.storage_path
+            await session.delete(f)
+            await session.commit()
+            
+            # Remove from disk
+            if os.path.exists(storage_path):
+                try:
+                    os.remove(storage_path)
+                except OSError:
+                    pass # Log warning
+            return True
 
 file_store = FileStore()

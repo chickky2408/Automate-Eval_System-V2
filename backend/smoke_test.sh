@@ -67,7 +67,7 @@ log "Using API base: ${API_BASE}"
 log "== System =="
 request GET "${API_BASE}/system/health" >/dev/null
 request GET "${API_BASE}/system/storage" >/dev/null
-request GET "${API_BASE}/system/mqtt/status" >/dev/null
+request GET "${API_BASE}/system/board-api/status" >/dev/null
 
 log "== Boards =="
 boards_json=$(request GET "${API_BASE}/boards")

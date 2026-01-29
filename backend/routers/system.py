@@ -50,7 +50,7 @@ async def get_system_health():
         "storageUsage": storage["percentage"],
         "storageTotal": storage["total"],
         "storageUsed": storage["used"],
-        "mqttBrokerStatus": "online",
+        "boardApiStatus": "online",
     }
 
 
@@ -59,8 +59,8 @@ async def get_storage_status():
     return await _get_storage_summary()
 
 
-@router.get("/mqtt/status")
-async def get_mqtt_status():
+@router.get("/board-api/status")
+async def get_board_api_status():
     return {
         "status": "online",
         "lastConnected": datetime.utcnow().isoformat() + "Z",

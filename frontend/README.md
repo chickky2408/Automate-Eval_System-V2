@@ -113,7 +113,7 @@ VITE_WS_BASE_URL=ws://localhost:3000
 - System health monitoring
 - Active job tracking with "My Jobs" filter
 - Notification center
-- MQTT broker status
+- Board REST API status
 
 ### 2. Test Case Setup
 - Drag & drop file upload

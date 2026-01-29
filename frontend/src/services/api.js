@@ -61,7 +61,7 @@ export const getHealth = () => apiRequest(API_ENDPOINTS.HEALTH);
 
 /**
  * Get system health summary
- * Expected Response: { totalBoards, onlineBoards, busyBoards, errorBoards, storageUsage, storageTotal, storageUsed, mqttBrokerStatus }
+ * Expected Response: { totalBoards, onlineBoards, busyBoards, errorBoards, storageUsage, storageTotal, storageUsed, boardApiStatus }
  */
 export const getSystemHealth = () => apiRequest(API_ENDPOINTS.SYSTEM_HEALTH);
 

@@ -19,8 +19,15 @@ import db.orm_models  # noqa: F401,E402
 config = context.config
 fileConfig(config.config_file_name)
 
-db_path = os.path.join(BASE_DIR, "eval_system.db")
-config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+# Database configuration for Alembic (Sync Driver)
+DB_USER = os.getenv("DB_USER", "eval_admin")
+DB_PASS = os.getenv("DB_PASS", "secure_pass")
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_NAME = os.getenv("DB_NAME", "eval_system")
+
+# Use 'postgresql' driver (psycopg2) for migrations, NOT +asyncpg
+url = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}"
+config.set_main_option("sqlalchemy.url", url)
 
 target_metadata = Base.metadata
 

@@ -77,7 +77,7 @@ export const useTestStore = create((set, get) => ({
     storageUsage: 0, // percentage
     storageTotal: '0B',
     storageUsed: '0B',
-    mqttBrokerStatus: 'offline' // 'online' | 'offline'
+    boardApiStatus: 'offline' // 'online' | 'offline'
   },
   
   // Boards/Devices
