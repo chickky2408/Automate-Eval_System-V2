@@ -143,6 +143,14 @@ class ResultStore:
                 
             return self._read_waveform_from_hdf5(path)
 
+    async def get_waveform_path(self, result_id: str) -> Optional[str]:
+        """Get the filesystem path to the HDF5 waveform file."""
+        async with async_session() as session:
+            result = await session.execute(
+                select(ResultORM.waveform_hdf5_path).where(ResultORM.id == result_id)
+            )
+            return result.scalar_one_or_none()
+
     async def add_result(
         self, 
         result: TestResult, 

@@ -1,5 +1,6 @@
 """Test results API endpoints."""
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
 from typing import List, Optional
 from datetime import datetime
 
@@ -41,6 +42,25 @@ async def get_waveform(result_id: str):
     if not waveform:
         raise HTTPException(status_code=404, detail="Waveform data not available")
     return waveform
+
+
+@router.get("/{result_id}/download")
+async def download_result_file(result_id: str):
+    """Download the HDF5 waveform file."""
+    path = await result_store.get_waveform_path(result_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="Waveform file not found")
+    
+    # Optional: Check if file physically exists
+    import os
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Waveform file missing from disk")
+        
+    return FileResponse(
+        path=path, 
+        media_type="application/x-hdf5", 
+        filename=f"result_{result_id}.h5"
+    )
 
 
 @router.get("/{result_id}/log")
