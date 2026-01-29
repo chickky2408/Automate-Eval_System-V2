@@ -10,21 +10,15 @@ from services.file_store import file_store
 
 router = APIRouter()
 
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...), metadata: Optional[str] = Form(None)):
     content = await file.read()
     filename = file.filename or "upload.bin"
-    path = os.path.join(UPLOAD_DIR, filename)
-    with open(path, "wb") as f:
-        f.write(content)
-
     file_type = (os.path.splitext(filename)[1] or "").lstrip(".") or (file.content_type or "bin")
-    record = file_store.add_file(name=filename, size=len(content), file_type=file_type, path=path)
-    record["uploadDate"] = datetime.utcnow().isoformat() + "Z"
+    
+    # New logic: Pass content directly to service
+    record = await file_store.add_file(name=filename, file_type=file_type, content=content)
+    
     return {
         "id": record["id"],
         "name": record["name"],
@@ -36,7 +30,8 @@ async def upload_file(file: UploadFile = File(...), metadata: Optional[str] = Fo
 
 @router.get("")
 async def list_files():
-    file_store.sync_with_dir(UPLOAD_DIR)
+    # No need to sync_with_dir anymore, effectively handled by DB
+    files = await file_store.list_files()
     return [
         {
             "id": f["id"],
@@ -45,13 +40,13 @@ async def list_files():
             "type": f["type"],
             "uploadDate": f["uploadDate"],
         }
-        for f in file_store.list_files()
+        for f in files
     ]
 
 
 @router.get("/{file_id}")
 async def get_file(file_id: str):
-    record = file_store.get_file(file_id)
+    record = await file_store.get_file(file_id)
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
     return {
@@ -65,12 +60,7 @@ async def get_file(file_id: str):
 
 @router.delete("/{file_id}")
 async def delete_file(file_id: str):
-    record = file_store.delete_file(file_id)
-    if not record:
+    success = await file_store.delete_file(file_id)
+    if not success:
         raise HTTPException(status_code=404, detail="File not found")
-    try:
-        if os.path.exists(record["path"]):
-            os.remove(record["path"])
-    except OSError:
-        pass
     return {"success": True}

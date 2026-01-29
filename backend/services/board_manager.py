@@ -1,23 +1,26 @@
 """
 Board Manager Service
 Handles discovery, status tracking, and control of boards.
-Loads board inventory from SQLite.
+Communicates with Zybo Agent via HTTP.
 """
 from typing import List, Optional
 import asyncio
+import httpx
+from datetime import datetime
 
 from sqlalchemy import select, update, delete
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.board import BoardInfo, BoardStatus, BoardState
 from db.database import async_session
 from db.orm_models import BoardORM
 
-
 class BoardManager:
     """Manages the fleet of Zybo boards."""
 
     def __init__(self):
-        pass
+        self.agent_port = 8000
+        self.http_client = httpx.AsyncClient(timeout=5.0)
 
     def _orm_to_model(self, orm: BoardORM) -> BoardInfo:
         """Convert ORM object to BoardInfo."""
@@ -73,6 +76,18 @@ class BoardManager:
         state: BoardState,
     ) -> BoardInfo:
         async with async_session() as session:
+            # Check if exists
+            existing = await session.execute(select(BoardORM).where(BoardORM.id == board_id))
+            if existing.scalar_one_or_none():
+                # Update existing
+                await self.update_board(board_id, {
+                    "ip_address": ip_address,
+                    "mac_address": mac_address,
+                    "state": state.value,
+                    "last_heartbeat": datetime.utcnow()
+                })
+                return await self.get_board(board_id)
+
             orm = BoardORM(
                 id=board_id,
                 name=name,
@@ -83,10 +98,10 @@ class BoardManager:
                 tag=tag,
                 connections=connections or [],
                 state=state.value,
+                last_heartbeat=datetime.utcnow()
             )
             session.add(orm)
             await session.commit()
-            await session.refresh(orm)
             return self._orm_to_model(orm)
 
     async def update_board(self, board_id: str, updates: dict) -> Optional[BoardInfo]:
@@ -107,72 +122,74 @@ class BoardManager:
             await session.commit()
             return result.rowcount > 0
 
-    async def get_available_board(self) -> Optional[BoardInfo]:
-        """Get the first available (online, not busy) board."""
+    async def get_available_board(self, target_board_id: Optional[str] = None) -> Optional[BoardInfo]:
+        """Get a free board. If target_board_id is specified, check if it's free."""
         async with async_session() as session:
-            result = await session.execute(
-                select(BoardORM).where(BoardORM.state == BoardState.ONLINE.value).limit(1)
-            )
+            query = select(BoardORM).where(BoardORM.state == BoardState.ONLINE.value)
+            
+            if target_board_id:
+                query = query.where(BoardORM.id == target_board_id)
+            
+            result = await session.execute(query.limit(1))
             board = result.scalar_one_or_none()
             return self._orm_to_model(board) if board else None
 
-    async def update_board_status(self, board_id: str, status: BoardStatus) -> bool:
-        """Update a board's status."""
+    async def update_heartbeat(self, board_id: str, ip: str, temp: float) -> bool:
+        """Process heartbeat from board."""
         async with async_session() as session:
             result = await session.execute(
                 update(BoardORM)
                 .where(BoardORM.id == board_id)
                 .values(
-                    state=status.state.value,
-                    cpu_temp=status.cpu_temp,
-                    cpu_load=status.cpu_load,
-                    ram_usage=status.ram_usage,
-                    current_job_id=status.current_job_id,
-                    last_heartbeat=status.last_heartbeat,
+                    ip_address=ip,
+                    cpu_temp=temp,
+                    last_heartbeat=datetime.utcnow(),
+                    # If it was offline, bring it back online (unless it's BUSY)
+                    state=BoardState.ONLINE.value 
                 )
             )
             await session.commit()
             return result.rowcount > 0
 
     async def set_board_busy(self, board_id: str, job_id: str) -> bool:
-        """Mark a board as busy with a job."""
-        async with async_session() as session:
-            result = await session.execute(
-                update(BoardORM)
-                .where(BoardORM.id == board_id)
-                .values(state=BoardState.BUSY.value, current_job_id=job_id)
-            )
-            await session.commit()
-            return result.rowcount > 0
+        """Mark a board as busy."""
+        return await self.update_board(board_id, {
+            "state": BoardState.BUSY.value,
+            "current_job_id": job_id
+        }) is not None
 
     async def set_board_idle(self, board_id: str) -> bool:
-        """Mark a board as idle (online)."""
-        async with async_session() as session:
-            result = await session.execute(
-                update(BoardORM)
-                .where(BoardORM.id == board_id)
-                .values(state=BoardState.ONLINE.value, current_job_id=None)
-            )
-            await session.commit()
-            return result.rowcount > 0
+        """Mark a board as idle."""
+        return await self.update_board(board_id, {
+            "state": BoardState.ONLINE.value,
+            "current_job_id": None
+        }) is not None
 
     async def reboot_board(self, board_id: str) -> bool:
-        """Send reboot command to a board (MOCK)."""
+        """Send reboot command to Agent via HTTP."""
         board = await self.get_board(board_id)
-        if not board:
+        if not board or not board.ip_address:
             return False
-        print(f"[MOCK] Rebooting board {board_id}...")
-        # In real implementation: SSH to board and execute reboot
-        await asyncio.sleep(0.5)  # Simulate network delay
-        return True
+            
+        url = f"http://{board.ip_address}:{self.agent_port}/system/reboot"
+        try:
+            resp = await self.http_client.post(url)
+            return resp.status_code == 200
+        except httpx.RequestError as e:
+            print(f"Failed to reboot {board_id}: {e}")
+            return False
 
     async def ping_board(self, board_id: str) -> bool:
-        """Check if a board is reachable (MOCK)."""
+        """Check direct connectivity to Agent."""
         board = await self.get_board(board_id)
-        if not board:
+        if not board or not board.ip_address:
             return False
-        return board.status.state != BoardState.OFFLINE
+            
+        url = f"http://{board.ip_address}:{self.agent_port}/health"
+        try:
+            resp = await self.http_client.get(url)
+            return resp.status_code == 200
+        except httpx.RequestError:
+            return False
 
-
-# Singleton instance
 board_manager = BoardManager()

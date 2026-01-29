@@ -1,16 +1,18 @@
 """
 Database configuration and session management.
-Uses SQLAlchemy with aiosqlite for async SQLite access.
+Uses SQLAlchemy with asyncpg for async PostgreSQL access.
 """
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, Text, Enum
-from datetime import datetime
 import os
 
-# Database file location
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "eval_system.db")
-DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
+# Database configuration
+DB_USER = os.getenv("DB_USER", "eval_admin")
+DB_PASS = os.getenv("DB_PASS", "secure_pass")
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_NAME = os.getenv("DB_NAME", "eval_system")
+
+DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}"
 
 # Create async engine
 engine = create_async_engine(
@@ -34,9 +36,14 @@ class Base(DeclarativeBase):
 
 async def init_db():
     """Initialize database tables."""
-    async with engine.begin():
-        pass
-    print(f"[DB] Database connection ready at {DB_PATH}")
+    # In production, use Alembic for migrations.
+    # checking connection only
+    try:
+        async with engine.begin() as conn:
+            pass
+        print(f"[DB] Database connection ready at {DB_HOST}/{DB_NAME}")
+    except Exception as e:
+        print(f"[DB] Connection failed: {e}")
 
 
 async def get_session() -> AsyncSession:

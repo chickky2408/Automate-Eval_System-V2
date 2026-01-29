@@ -11,6 +11,9 @@ aiosqlite = "*"
 python-multipart = "*"
 sqlalchemy = {extras = ["asyncio"], version = "*"}
 alembic = "*"
+asyncpg = "*"
+psycopg2-binary = "*"
+h5py = "*"
 
 [dev-packages]
 pytest = "*"

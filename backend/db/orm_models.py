@@ -1,9 +1,29 @@
 """
 SQLAlchemy ORM Models for database tables.
 """
-from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, Text, JSON
+from sqlalchemy import Column, String, Integer, Float, Boolean, DateTime, Text, JSON, Enum as SAEnum, ForeignKey, BigInteger
 from datetime import datetime
 from db.database import Base
+import enum
+import uuid
+
+class FileType(str, enum.Enum):
+    VCD = "VCD"
+    FIRMWARE = "FIRMWARE"
+    SCRIPT = "SCRIPT"
+    OTHER = "OTHER"
+
+class FileORM(Base):
+    """File registry table."""
+    __tablename__ = "files"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    filename = Column(String(255), nullable=False)
+    file_type = Column(SAEnum(FileType), nullable=False)
+    storage_path = Column(String(512), nullable=False)
+    checksum_sha256 = Column(String(64), nullable=True)
+    size_bytes = Column(BigInteger, default=0)
+    uploaded_at = Column(DateTime, default=datetime.utcnow)
 
 
 class JobORM(Base):
@@ -12,8 +32,15 @@ class JobORM(Base):
 
     id = Column(String(32), primary_key=True)
     name = Column(String(255), nullable=False)
-    vcd_filename = Column(String(255), nullable=False)
+    
+    # Linked Files
+    vcd_file_id = Column(String(36), ForeignKey("files.id"), nullable=True) # Needs to be optional for "Run Command" jobs
+    firmware_file_id = Column(String(36), ForeignKey("files.id"), nullable=True)
+    
+    # Legacy fields (kept for compatibility or simple display)
+    vcd_filename = Column(String(255), nullable=True)
     firmware_filename = Column(String(255), nullable=True)
+
     target_board_id = Column(String(32), nullable=True)
     assigned_board_id = Column(String(32), nullable=True)
     priority = Column(Integer, default=0)
@@ -59,8 +86,9 @@ class ResultORM(Base):
     crc_errors = Column(Integer, default=0)
     console_log = Column(Text, nullable=True)
     
-    # Waveform data (stored as JSON)
-    waveform_data = Column(JSON, nullable=True)
+    # Hybrid Storage: HDF5 Path instead of JSON blob
+    waveform_hdf5_path = Column(String(512), nullable=True) 
+    metrics = Column(JSON, nullable=True)
 
 
 class BoardORM(Base):
