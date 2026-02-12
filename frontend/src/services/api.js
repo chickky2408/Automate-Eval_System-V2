@@ -230,6 +230,17 @@ export const createJob = (jobData) => {
 };
 
 /**
+ * Update an existing job/batch (pending only). Same body shape as createJob.
+ * Expected Response: { id, ...jobData }
+ */
+export const updateJob = (jobId, jobData) => {
+  return apiRequest(API_ENDPOINTS.JOB_BY_ID(jobId), {
+    method: 'PUT',
+    body: JSON.stringify(jobData),
+  });
+};
+
+/**
  * Start a job
  * Expected Response: { success: true, message: string }
  */
@@ -349,6 +360,14 @@ export const getJobPairs = (jobId) => apiRequest(API_ENDPOINTS.JOB_PAIRS(jobId))
  */
 export const stopJobFile = (jobId, fileId) => {
   return apiRequest(API_ENDPOINTS.JOB_FILE_STOP(jobId, fileId), { method: 'POST' });
+};
+
+/**
+ * Re-run a stopped file (set back to pending).
+ * Expected Response: { success: true, file: { id, status } }
+ */
+export const rerunJobFile = (jobId, fileId) => {
+  return apiRequest(API_ENDPOINTS.JOB_FILE_RERUN(jobId, fileId), { method: 'POST' });
 };
 
 /**
@@ -538,6 +557,7 @@ export default {
   getJobs,
   getJobById,
   createJob,
+  updateJob,
   startJob,
   stopJob,
   stopAllJobs,
@@ -554,6 +574,7 @@ export default {
   // Job Files
   getJobFiles,
   stopJobFile,
+  rerunJobFile,
   moveJobFile,
   getJobPairs,
   

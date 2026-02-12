@@ -86,9 +86,11 @@ export const useTestStore = create((set, get) => ({
   // Jobs/Batches
   jobs: [],
   
-  // Notifications
+  // Notifications (from API)
   notifications: [],
-  
+  // Local notifications (e.g. job completed - frontend only)
+  localNotifications: [],
+
   // Common Commands (normally use)
   commonCommands: [],
   
@@ -107,6 +109,15 @@ export const useTestStore = create((set, get) => ({
   firmwareFiles: [],
   
   // UI State
+  theme: (() => {
+    if (typeof window === 'undefined') return 'light';
+    try {
+      const saved = localStorage.getItem('appTheme');
+      return saved === 'dark' || saved === 'light' ? saved : 'light';
+    } catch {
+      return 'light';
+    }
+  })(),
   fleetViewMode: 'grid', // 'grid' | 'list'
   fleetFilters: {
     status: null,
@@ -148,6 +159,26 @@ export const useTestStore = create((set, get) => ({
     return id;
   },
   removeToast: (id) => set((state) => ({ toasts: state.toasts.filter(t => t.id !== id) })),
+  setTheme: (theme) => {
+    const next = theme === 'dark' ? 'dark' : 'light';
+    set({ theme: next });
+    try {
+      localStorage.setItem('appTheme', next);
+    } catch (e) {
+      console.error('Failed to persist theme', e);
+    }
+  },
+  toggleTheme: () => {
+    set((state) => {
+      const next = state.theme === 'dark' ? 'light' : 'dark';
+      try {
+        localStorage.setItem('appTheme', next);
+      } catch (e) {
+        console.error('Failed to persist theme', e);
+      }
+      return { theme: next };
+    });
+  },
   
   // Actions
   addVcd: (file) => set((state) => ({ vcdFiles: [...state.vcdFiles, file] })),
@@ -303,6 +334,12 @@ export const useTestStore = create((set, get) => ({
   clearBoardSelection: () => set({ selectedBoards: [] }),
   setJobFilter: (filter) => set({ selectedJobFilter: filter }),
   markNotificationRead: (id) => {
+    if (typeof id === 'string' && id.startsWith('local-')) {
+      set((state) => ({
+        localNotifications: state.localNotifications.map(n => n.id === id ? { ...n, read: true } : n)
+      }));
+      return;
+    }
     set((state) => ({
       notifications: state.notifications.map(n => n.id === id ? { ...n, read: true } : n)
     }));
@@ -312,7 +349,8 @@ export const useTestStore = create((set, get) => ({
   },
   markAllNotificationsRead: () => {
     set((state) => ({
-      notifications: state.notifications.map(n => ({ ...n, read: true }))
+      notifications: state.notifications.map(n => ({ ...n, read: true })),
+      localNotifications: state.localNotifications.map(n => ({ ...n, read: true }))
     }));
     void api.markAllNotificationsRead()
       .then(() => get().refreshNotifications())
@@ -389,7 +427,25 @@ export const useTestStore = create((set, get) => ({
         errors: { ...state.errors, jobs: null },
       }));
       const data = await api.getJobs();
-      set({ jobs: data });
+      set((state) => {
+        const prevJobs = state.jobs || [];
+        const justFinished = (data || []).filter((j) => {
+          const prev = prevJobs.find((p) => p.id === j.id);
+          const wasRunning = prev?.status === 'running';
+          const nowDone = j.status === 'completed' || j.status === 'stopped';
+          return wasRunning && nowDone;
+        });
+        const newLocal = justFinished.map((j) => ({
+          id: `local-${j.id}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          title: j.status === 'completed' ? 'Batch completed' : 'Batch stopped',
+          message: `Batch #${j.id} (${j.name || 'Unnamed'}) ${j.status === 'completed' ? 'finished successfully.' : 'was stopped.'}`,
+          type: j.status === 'completed' ? 'success' : 'info',
+          read: false,
+          createdAt: new Date().toISOString(),
+        }));
+        const localNotifications = [...newLocal, ...(state.localNotifications || [])];
+        return { jobs: data, localNotifications };
+      });
       return data;
     } catch (error) {
       console.error('Failed to refresh jobs', error);
@@ -404,7 +460,25 @@ export const useTestStore = create((set, get) => ({
   silentRefreshJobs: async () => {
     try {
       const data = await api.getJobs();
-      set({ jobs: data });
+      set((state) => {
+        const prevJobs = state.jobs || [];
+        const justFinished = (data || []).filter((j) => {
+          const prev = prevJobs.find((p) => p.id === j.id);
+          const wasRunning = prev?.status === 'running';
+          const nowDone = j.status === 'completed' || j.status === 'stopped';
+          return wasRunning && nowDone;
+        });
+        const newLocal = justFinished.map((j) => ({
+          id: `local-${j.id}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          title: j.status === 'completed' ? 'Batch completed' : 'Batch stopped',
+          message: `Batch #${j.id} (${j.name || 'Unnamed'}) ${j.status === 'completed' ? 'finished successfully.' : 'was stopped.'}`,
+          type: j.status === 'completed' ? 'success' : 'info',
+          read: false,
+          createdAt: new Date().toISOString(),
+        }));
+        const localNotifications = [...newLocal, ...(state.localNotifications || [])];
+        return { jobs: data, localNotifications };
+      });
       return data;
     } catch (error) {
       console.error('Failed to silent refresh jobs', error);
@@ -522,6 +596,18 @@ export const useTestStore = create((set, get) => ({
       return null;
     }
   },
+  updateJob: async (jobId, jobPayload) => {
+    try {
+      const clientId = getClientId();
+      const payload = { ...jobPayload, clientId };
+      const updated = await api.updateJob(jobId, payload);
+      await get().refreshJobs();
+      return updated;
+    } catch (error) {
+      console.error('Failed to update job', error);
+      return null;
+    }
+  },
   runTestCommand: async (commandPayload) => {
     try {
       const clientId = getClientId();
@@ -552,6 +638,16 @@ export const useTestStore = create((set, get) => ({
       return true;
     } catch (error) {
       console.error('Failed to stop all jobs', error);
+      return false;
+    }
+  },
+  stopJob: async (jobId) => {
+    try {
+      await api.stopJob(jobId);
+      await get().refreshJobs();
+      return true;
+    } catch (error) {
+      console.error('Failed to stop job', jobId, error);
       return false;
     }
   },
@@ -617,6 +713,26 @@ export const useTestStore = create((set, get) => ({
     void api.stopJobFile(jobId, fileId)
       .then(() => get().refreshJobs())
       .catch((error) => console.error('Failed to stop job file', error));
+  },
+
+  rerunFile: (jobId, fileId) => {
+    set((state) => ({
+      jobs: state.jobs.map(job =>
+        job.id === jobId
+          ? {
+              ...job,
+              files: job.files.map(file =>
+                file.id === fileId && file.status === 'stopped'
+                  ? { ...file, status: 'pending', result: null }
+                  : file
+              )
+            }
+          : job
+      )
+    }));
+    void api.rerunJobFile(jobId, fileId)
+      .then(() => get().refreshJobs())
+      .catch((error) => console.error('Failed to re-run job file', error));
   },
   
   moveFileUp: (jobId, fileId) => {

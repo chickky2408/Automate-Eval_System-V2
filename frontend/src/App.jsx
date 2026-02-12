@@ -6,19 +6,21 @@ import {
   Grid3x3, List, Filter, Terminal, Wifi, WifiOff, HardDrive,
   RefreshCw, Download, Activity, XCircle, Eye, MoreVertical,
   ArrowUp, ArrowDown, Square, Tag, FileJson, StopCircle, Plus,
-  Command, Copy, Play, Layers, Monitor, ChevronDown, ChevronUp, GripVertical, ChevronLeft, CheckSquare, Pencil
+  Command, Copy, Play, Layers, Monitor, ChevronDown, ChevronUp, GripVertical, ChevronLeft, CheckSquare, Pencil,
+  Pause, ZoomIn, ZoomOut, Trash2, Gauge
 } from 'lucide-react';
 import { useTestStore } from './store/useTestStore';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import API_ENDPOINTS from './utils/apiEndpoints';
 
 // --- MAIN APPLICATION COMPONENT ---
 const App = () => {
   const [activePage, setActivePage] = useState('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [expandJobId, setExpandJobId] = useState(null); // สำหรับ expand job จาก history
-  const { systemHealth, boards } = useTestStore();
+  const { systemHealth, boards, theme, toggleTheme } = useTestStore();
   const refreshSystemHealth = useTestStore((state) => state.refreshSystemHealth);
   const refreshBoards = useTestStore((state) => state.refreshBoards);
   const refreshJobs = useTestStore((state) => state.refreshJobs);
@@ -31,6 +33,12 @@ const App = () => {
   const silentRefreshFiles = useTestStore((state) => state.silentRefreshFiles);
   const availableBoards = boards.filter(b => b.status === 'online' && !b.currentJob).length;
   const queuedBoardsLeft = availableBoards;
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+    }
+  }, [theme]);
 
   useEffect(() => {
     // รอบแรก: ใช้ refresh ปกติ (มี loading state ให้ user เห็นชัด)
@@ -73,17 +81,21 @@ const App = () => {
   ]);
 
   return (
-    <div className="flex min-h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden">
+    <div
+      className={`flex min-h-screen font-sans overflow-hidden transition-colors duration-300 ${
+        theme === 'dark' ? 'bg-slate-950 text-slate-50' : 'bg-slate-50 text-slate-900'
+      }`}
+    >
       
-      {/* 1. SIDEBAR (Collapsible) */}
+      {/* 1. SIDEBAR (Collapsible; on mobile: overlay when open, narrow strip when closed) */}
       <aside className={`fixed left-0 top-0 h-screen bg-slate-900 text-slate-300 z-50 transition-all duration-300 ease-in-out ${
-        isSidebarOpen ? 'w-64' : 'w-20'
+        isSidebarOpen ? 'w-64' : 'w-14 sm:w-16 md:w-20'
       }`}>
         <div className="flex items-center justify-between px-6 h-20 border-b border-slate-800">
           {isSidebarOpen && (
             <div className="animate-in fade-in duration-300">
               <h2 className="text-xl font-bold text-white tracking-tight">BOARD TEST</h2>
-              <p className="text-[10px] text-blue-500 font-bold tracking-widest uppercase">Enterprise v1.0</p>
+              <p className="text-[10px] text-blue-500 font-bold tracking-widest uppercase">Enterprise v2.0</p>
             </div>
           )}
           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 hover:bg-slate-800 rounded-lg transition-colors mx-auto">
@@ -98,15 +110,24 @@ const App = () => {
           <NavItem icon={<PlayCircle size={20}/>} label="Jobs Manager" active={activePage === 'jobs'} isOpen={isSidebarOpen} onClick={() => setActivePage('jobs')} />
           <NavItem icon={<Cpu size={20}/>} label="Board Status" active={activePage === 'boards'} isOpen={isSidebarOpen} onClick={() => setActivePage('boards')} />
           <NavItem icon={<History size={20}/>} label="Test History" active={activePage === 'history'} isOpen={isSidebarOpen} onClick={() => setActivePage('history')} />
+          <NavItem icon={<Activity size={20}/>} label="Realtime Waveform" active={activePage === 'waveform'} isOpen={isSidebarOpen} onClick={() => setActivePage('waveform')} />
         </nav>
       </aside>
 
-      {/* 2. MAIN CONTENT AREA */}
-      <main className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${isSidebarOpen ? 'ml-64' : 'ml-20'}`}>
+      {/* 2. MAIN CONTENT AREA (narrow margin when sidebar closed; overlay when open on small screens) */}
+      <main
+        className={`flex-1 flex flex-col min-h-screen min-w-0 transition-all duration-300 ${
+          isSidebarOpen ? 'ml-0 md:ml-64' : 'ml-14 sm:ml-16 md:ml-20'
+        }`}
+      >
         
         {/* TOP HEADER BAR (simple, no summary row) */}
-        <header className="bg-white border-b border-slate-200 sticky top-0 z-40">
-          <div className="h-14 flex items-center justify-between px-8">
+        <header
+          className={`sticky top-0 z-40 border-b transition-colors ${
+            theme === 'dark' ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
+          }`}
+        >
+          <div className="h-14 flex items-center justify-between px-4 sm:px-6 lg:px-8 gap-2 min-w-0">
             {activePage === 'dashboard' ? (
               <div className="flex items-center gap-3">
                 <h2 className="text-base font-semibold text-slate-900">System Dashboard</h2>
@@ -125,18 +146,33 @@ const App = () => {
             ) : (
               <div />
             )}
-            <NotificationBell />
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className={`inline-flex items-center justify-center w-8 h-8 rounded-full border text-xs font-semibold transition-colors ${
+                  theme === 'dark'
+                    ? 'bg-slate-800 border-slate-700 text-amber-300 hover:bg-slate-700'
+                    : 'bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200'
+                }`}
+                title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              >
+                {theme === 'dark' ? '☀' : '🌙'}
+              </button>
+              <NotificationBell />
+            </div>
           </div>
         </header>
 
         {/* CONTENT PAGES */}
-        <div className="p-8 overflow-y-auto">
+        <div className="p-4 sm:p-6 lg:p-8 overflow-x-hidden overflow-y-auto min-w-0">
           {activePage === 'dashboard' && <DashboardPage />}
           {activePage === 'overview' && <BoardOverviewPage />}
           {activePage === 'setup' && <SetupPage editJobId={expandJobId} onEditComplete={() => setExpandJobId(null)} />}
           {activePage === 'jobs' && <JobsPage expandJobId={expandJobId} onExpandComplete={() => setExpandJobId(null)} onEditJob={(jobId) => { setExpandJobId(jobId); setActivePage('setup'); }} />}
           {activePage === 'boards' && <BoardsPage />}
           {activePage === 'history' && <HistoryPage onViewJob={(jobId) => { setExpandJobId(jobId); setActivePage('jobs'); }} />}
+          {activePage === 'waveform' && <WaveformPage />}
         </div>
       </main>
       <ToastContainer />
@@ -147,11 +183,11 @@ const App = () => {
 // --- COMPONENTS ---
 
 const NavItem = ({ icon, label, active, isOpen, onClick }) => (
-  <button onClick={onClick} className={`w-full flex items-center gap-4 p-3 rounded-xl text-sm font-medium transition-all ${
+  <button onClick={onClick} className={`w-full flex items-center gap-3 p-2.5 sm:p-3 rounded-xl text-sm font-medium transition-all min-w-0 ${
     active ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30' : 'hover:bg-slate-800 text-slate-400'
   }`}>
-    <div className={!isOpen ? 'mx-auto' : ''}>{icon}</div>
-    {isOpen && <span className="animate-in fade-in slide-in-from-left-2 duration-300">{label}</span>}
+    <div className={`flex-shrink-0 ${!isOpen ? 'mx-auto' : ''}`}>{icon}</div>
+    {isOpen && <span className="animate-in fade-in slide-in-from-left-2 duration-300 truncate">{label}</span>}
   </button>
 );
 
@@ -376,8 +412,8 @@ const ConfigBuilderPage = () => {
             </button>
           </div>
 
-          <div className="border border-slate-200 rounded-xl overflow-hidden">
-            <div className="grid grid-cols-4 bg-slate-50 text-xs font-semibold text-slate-600">
+          <div className="border border-slate-200 rounded-xl overflow-x-auto overflow-y-hidden">
+            <div className="grid grid-cols-4 min-w-[320px] bg-slate-50 text-xs font-semibold text-slate-600">
               <div className="px-3 py-2">#</div>
               <div className="px-3 py-2">VCD</div>
               <div className="px-3 py-2">BIN</div>
@@ -387,7 +423,7 @@ const ConfigBuilderPage = () => {
               <div className="p-4 text-sm text-slate-400">ยังไม่ได้เลือกไฟล์</div>
             ) : (
               pairs.map((pair, idx) => (
-                <div key={pair.id} className="grid grid-cols-4 items-center text-sm border-t border-slate-100">
+                <div key={pair.id} className="grid grid-cols-4 min-w-[320px] items-center text-sm border-t border-slate-100">
                   <div className="px-3 py-2 text-slate-500">{idx + 1}</div>
                   <div className="px-3 py-2">{getFileLabel(pair.vcdId, vcdFiles)}</div>
                   <div className="px-3 py-2">{getFileLabel(pair.binId, firmwareFiles)}</div>
@@ -470,7 +506,7 @@ const DashboardPage = () => {
   const isDashboardLoading = loading?.systemHealth || loading?.boards || loading?.jobs;
 
   return (
-    <div className="space-y-2.5">
+    <div className="space-y-2.5 min-w-0">
       {(hasDashboardError || isDashboardLoading) && (
         <div className={`rounded-xl border px-4 py-3 text-sm ${
           hasDashboardError
@@ -582,10 +618,10 @@ const DashboardPage = () => {
 
       <div className="w-full">
         {/* Active Campaigns Widget */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-          <div className="flex justify-between items-center mb-6">
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm min-w-0">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
             <h2 className="text-xl font-bold">Active</h2>
-            <div className="flex gap-2 bg-slate-100 rounded-lg p-1">
+            <div className="flex flex-wrap gap-2 bg-slate-100 rounded-lg p-1">
               <button
                 onClick={() => setDashTab('campaigns')}
                 className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${dashTab === 'campaigns' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
@@ -598,13 +634,7 @@ const DashboardPage = () => {
               >
                 Device Progress
               </button>
-              <button
-                onClick={() => setDashTab('commands')}
-                className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${dashTab === 'commands' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
-              >
-                Common Commands
-              </button>
-      </div>
+            </div>
           </div>
           
           {dashTab === 'campaigns' ? (
@@ -626,7 +656,7 @@ const DashboardPage = () => {
                 ))
               )}
       </div>
-          ) : dashTab === 'devices' ? (
+          ) : (
             <div className="space-y-3">
               {deviceProgressRows.length === 0 ? (
                 <div className="p-6 text-center text-slate-500 bg-slate-50 rounded-2xl border border-slate-100">
@@ -646,40 +676,6 @@ const DashboardPage = () => {
                     </div>
                     <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
                       <div className="h-full bg-blue-600 transition-all" style={{ width: `${board.currentJob ? progress : 0}%` }}></div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-sm text-slate-600 mb-4">Commonly used commands - Click to copy</p>
-              {commonCommands.length === 0 ? (
-                <div className="p-6 text-center text-slate-500 bg-slate-50 rounded-2xl border border-slate-100">
-                  No commands configured
-                </div>
-              ) : (
-                commonCommands.map((cmd) => (
-                  <div key={cmd.id} className="p-4 bg-slate-50 rounded-xl border border-slate-200 hover:border-blue-300 transition-all">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1">
-                        <div className="font-bold text-slate-800 text-sm mb-1">{cmd.name}</div>
-                        <div className="font-mono text-xs text-slate-600 bg-white p-2 rounded border border-slate-200">
-                          {cmd.command}
-                        </div>
-                        <div className="text-xs text-slate-400 mt-1">Category: {cmd.category}</div>
-                      </div>
-                      <button
-                        onClick={() => handleCopyCommand(cmd.command)}
-                        className="p-2 hover:bg-blue-100 rounded-lg transition-all"
-                        title="Copy command"
-                      >
-                        {copiedCommand === cmd.command ? (
-                          <CheckCircle2 size={18} className="text-green-600" />
-                        ) : (
-                          <Copy size={18} className="text-blue-600" />
-                        )}
-                      </button>
                     </div>
                   </div>
                 ))
@@ -806,6 +802,1166 @@ const BoardOverviewPage = () => {
 );
 };
 
+// 1.6. REALTIME WAVEFORM PAGE (Node จำลอง Sine 125kHz @ fs=1MHz → Backend → UXUI)
+const MAX_WAVEFORM_SAMPLES = 3000;   // เก็บใน buffer
+const DISPLAY_WAVEFORM_SAMPLES = 800; // แสดงแค่ช่วงล่าสุด เพื่อไม่ให้เส้นทับกันจนเป็นสีทึบ
+const WAVEFORM_CANVAS_WIDTH = 800;
+const WAVEFORM_CANVAS_HEIGHT = 320;
+
+const WaveformPage = () => {
+  const boards = useTestStore((state) => state.boards || []);
+  const canvasRef = useRef(null);
+  const containerRef = useRef(null);
+  const bufferRef = useRef({ CH1: [], CH2: [], CH3: [], CH4: [] });
+  const rafRef = useRef(null);
+  const wsRef = useRef(null);
+  const connectedRef = useRef(false);
+  const fsRef = useRef(4000);
+  const showWaveformRef = useRef(true);
+  const showPlayheadRef = useRef(true);
+  const showGridRef = useRef(true);
+  const visibleSignalsRef = useRef({ ch1: true, ch2: true, ch3: true, ch4: true });
+  const [connected, setConnected] = useState(false);
+  const [meta, setMeta] = useState({ freq_hz: 125000, fs: 4000 });
+  const [lastChunkAt, setLastChunkAt] = useState(null);
+  const [sampleCount, setSampleCount] = useState(0);
+  const [runProgress, setRunProgress] = useState(0);
+  const [showWaveform, setShowWaveform] = useState(true);
+  const [showPlayhead, setShowPlayhead] = useState(true);
+  const [showGrid, setShowGrid] = useState(true);
+  const [showStats, setShowStats] = useState(true);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const zoomLevelRef = useRef(1);
+  const [containerWidth, setContainerWidth] = useState(800);
+  const [scaleMode, setScaleMode] = useState('manual');
+  const [yMinManual, setYMinManual] = useState(-1);
+  const [yMaxManual, setYMaxManual] = useState(1);
+  const scaleModeRef = useRef(scaleMode);
+  const yMinManualRef = useRef(yMinManual);
+  const yMaxManualRef = useRef(yMaxManual);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  const [scrollOffset, setScrollOffset] = useState(0); // samples offset from the end (only meaningful when paused)
+  const scrollOffsetRef = useRef(0);
+  const [viewPanelOpen, setViewPanelOpen] = useState(false);
+  const viewButtonRef = useRef(null);
+  const viewPopoverRef = useRef(null);
+  const [viewPopoverPos, setViewPopoverPos] = useState({ top: 0, left: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const panRef = useRef({ active: false, startX: 0, startOffset: 0 });
+  const [visibleSignals, setVisibleSignals] = useState({ ch1: true, ch2: true, ch3: true, ch4: true });
+  const [showCursor, setShowCursor] = useState(true);
+  const [cursorFrac, setCursorFrac] = useState(0.35);
+  const [cursor2Frac, setCursor2Frac] = useState(0.65);
+  const [showCursor2, setShowCursor2] = useState(true);
+  const [cursorChannel, setCursorChannel] = useState('ch1');
+  const [selectedBoardId, setSelectedBoardId] = useState('');
+  const showCursorRef = useRef(true);
+  const cursorFracRef = useRef(0.35);
+  const cursor2FracRef = useRef(0.65);
+  const showCursor2Ref = useRef(true);
+  const cursorChannelRef = useRef('ch1');
+  const isDraggingCursorRef = useRef(false);
+  const activeCursorRef = useRef(1); // 1 or 2
+  const plotGeometryRef = useRef(null);
+  const [, setTick] = useState(0);
+  const onlineBoards = boards.filter((b) => b.status === 'online');
+  connectedRef.current = connected;
+  fsRef.current = meta.fs || 4000;
+  showWaveformRef.current = showWaveform;
+  showPlayheadRef.current = showPlayhead;
+  showGridRef.current = showGrid;
+  zoomLevelRef.current = zoomLevel;
+  scaleModeRef.current = scaleMode;
+  yMinManualRef.current = yMinManual;
+  yMaxManualRef.current = yMaxManual;
+  pausedRef.current = paused;
+  scrollOffsetRef.current = scrollOffset;
+  visibleSignalsRef.current = visibleSignals;
+  showCursorRef.current = showCursor;
+  cursorFracRef.current = cursorFrac;
+  cursor2FracRef.current = cursor2Frac;
+  showCursor2Ref.current = showCursor2;
+  cursorChannelRef.current = cursorChannel;
+
+  // Auto-select first online board when available (frontend only – backend can choose how to use boardId)
+  useEffect(() => {
+    if (!selectedBoardId && onlineBoards.length > 0) {
+      setSelectedBoardId(onlineBoards[0].id);
+    }
+  }, [onlineBoards, selectedBoardId]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setContainerWidth(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // When resuming live mode, snap view back to the latest samples.
+  useEffect(() => {
+    if (!paused) {
+      setScrollOffset(0);
+      setViewPanelOpen(false);
+    }
+  }, [paused]);
+
+  // Close View popover on outside click + keep it positioned.
+  useEffect(() => {
+    if (!viewPanelOpen) return;
+
+    const POPOVER_W = 224; // w-56
+    const MARGIN = 8;
+
+    const position = () => {
+      const btn = viewButtonRef.current;
+      if (!btn) return;
+      const rect = btn.getBoundingClientRect();
+      const left = Math.max(
+        MARGIN,
+        Math.min(window.innerWidth - POPOVER_W - MARGIN, rect.right - POPOVER_W)
+      );
+      const top = rect.bottom + 8;
+      setViewPopoverPos({ top, left });
+    };
+
+    const onDown = (e) => {
+      const pop = viewPopoverRef.current;
+      const btn = viewButtonRef.current;
+      if (pop?.contains(e.target) || btn?.contains(e.target)) return;
+      setViewPanelOpen(false);
+    };
+
+    position();
+    window.addEventListener('resize', position);
+    window.addEventListener('scroll', position, true);
+    document.addEventListener('mousedown', onDown);
+    return () => {
+      window.removeEventListener('resize', position);
+      window.removeEventListener('scroll', position, true);
+      document.removeEventListener('mousedown', onDown);
+    };
+  }, [viewPanelOpen]);
+
+  // Clamp scroll offset whenever the window size changes (pause mode only).
+  useEffect(() => {
+    if (!paused) return;
+    const displayCountUI = Math.max(
+      2,
+      Math.min(sampleCount || 0, Math.round(DISPLAY_WAVEFORM_SAMPLES / (zoomLevel || 1)))
+    );
+    const maxOffset = Math.max(0, (sampleCount || 0) - displayCountUI);
+    setScrollOffset((o) => Math.max(0, Math.min(maxOffset, o)));
+  }, [paused, zoomLevel, sampleCount]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setRunProgress((p) => (p >= 100 ? 0 : p + 1));
+    }, 20);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (!connected) return;
+    const id = setInterval(() => setTick((t) => t + 1), 300);
+    return () => clearInterval(id);
+  }, [connected]);
+
+  const RECONNECT_MS = 3000;
+
+  useEffect(() => {
+    const baseUrl = API_ENDPOINTS.WS_WAVEFORM || 'ws://localhost:8000/ws/waveform';
+    const url = selectedBoardId
+      ? `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}boardId=${encodeURIComponent(selectedBoardId)}`
+      : baseUrl;
+    let cancelled = false;
+    let reconnectTimeoutId = null;
+
+    const connect = () => {
+      if (cancelled) return;
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
+
+      ws.onopen = () => setConnected(true);
+      ws.onclose = () => {
+        setConnected(false);
+        bufferRef.current = { CH1: [], CH2: [], CH3: [], CH4: [] };
+        setSampleCount(0);
+        setLastChunkAt(null);
+        if (!cancelled) {
+          reconnectTimeoutId = setTimeout(connect, RECONNECT_MS);
+        }
+      };
+      ws.onerror = () => setConnected(false);
+
+      ws.onmessage = (event) => {
+        if (pausedRef.current) return;
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'waveform') {
+            const buffers = bufferRef.current;
+            let ch1Count = 0;
+
+            if (Array.isArray(msg.data?.channels)) {
+              msg.data.channels.forEach((ch, idx) => {
+                const id = ch?.id || `CH${idx + 1}`;
+                if (!Array.isArray(ch?.samples)) return;
+                if (!buffers[id]) buffers[id] = [];
+                const arr = buffers[id];
+                ch.samples.forEach((s) => {
+                  arr.push(Number(s));
+                  if (arr.length > MAX_WAVEFORM_SAMPLES) arr.shift();
+                });
+              });
+              ch1Count = buffers.CH1 ? buffers.CH1.length : 0;
+            } else if (Array.isArray(msg.data?.samples)) {
+              // backward compatibility: map samples -> CH1
+              if (!buffers.CH1) buffers.CH1 = [];
+              const arr = buffers.CH1;
+              msg.data.samples.forEach((s) => {
+                arr.push(Number(s));
+                if (arr.length > MAX_WAVEFORM_SAMPLES) arr.shift();
+              });
+              ch1Count = arr.length;
+            }
+
+            if (ch1Count > 0) {
+              setLastChunkAt(Date.now());
+              setSampleCount(ch1Count);
+            }
+            if (msg.data?.freq_hz != null) {
+              setMeta((m) => ({
+                ...m,
+                freq_hz: msg.data.freq_hz,
+                fs: msg.data.fs ?? m.fs,
+              }));
+            }
+          }
+        } catch (_) {}
+      };
+    };
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimeoutId) clearTimeout(reconnectTimeoutId);
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.max(320, containerWidth);
+    const h = WAVEFORM_CANVAS_HEIGHT;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+
+    let stopped = false;
+    const draw = () => {
+      if (stopped) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.scale(dpr, dpr);
+      const buffers = bufferRef.current;
+      const buf = buffers.CH1 || [];
+      const cw = w;
+      const ch = h;
+
+      ctx.fillStyle = '#f1f5f9';
+      ctx.fillRect(0, 0, cw, ch);
+
+      const padding = { left: 40, right: 20, top: 20, bottom: 30 };
+      const plotLeft = padding.left;
+      const plotRight = cw - padding.right;
+      const plotTop = padding.top;
+      const plotBottom = ch - padding.bottom;
+      const plotW = plotRight - plotLeft;
+      const plotH = plotBottom - plotTop;
+      const midY = plotTop + plotH / 2;
+
+      // จำนวนจุดที่ใช้คำนวณ scale เวลา
+      const bufHasData = buf.length >= 2;
+      const zoom = zoomLevelRef.current;
+      const displayCount = Math.max(2, Math.min(buf.length, Math.round(DISPLAY_WAVEFORM_SAMPLES / zoom)));
+      const endIndex = Math.max(0, Math.min(buf.length, buf.length - (pausedRef.current ? (scrollOffsetRef.current || 0) : 0)));
+      const startIndex = Math.max(0, endIndex - displayCount);
+      const toDraw = bufHasData ? buf.slice(startIndex, endIndex) : null;
+      const n = toDraw ? toDraw.length : displayCount;
+
+      // Y scale: Auto (จาก min/max ของ toDraw) หรือ Manual (จาก user)
+      let yMin = yMinManualRef.current;
+      let yMax = yMaxManualRef.current;
+      if (scaleModeRef.current === 'manual') {
+        if (yMin > yMax) {
+          const t = yMin;
+          yMin = yMax;
+          yMax = t;
+        }
+      }
+      if (scaleModeRef.current === 'auto' && toDraw && toDraw.length >= 2) {
+        let minV = toDraw[0];
+        let maxV = toDraw[0];
+        for (let i = 1; i < toDraw.length; i++) {
+          const v = Number(toDraw[i]);
+          if (v < minV) minV = v;
+          if (v > maxV) maxV = v;
+        }
+        let range = maxV - minV;
+        if (range < 1e-6) range = 1;
+        const padding = Math.max(range * 0.05, 0.05);
+        range += padding * 2;
+        const midVal = (minV + maxV) / 2;
+        yMin = midVal - range / 2;
+        yMax = midVal + range / 2;
+      }
+      const yRange = Math.max(yMax - yMin, 1e-6);
+      const scaleY = plotH / yRange;
+      const midVal = (yMin + yMax) / 2;
+
+      // --- แสดงแกน Y (Amplitude) ---
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(plotLeft, plotTop);
+      ctx.lineTo(plotLeft, plotBottom);
+      ctx.stroke();
+
+      if (showGridRef.current) {
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 1;
+        for (let i = 0; i <= 5; i++) {
+          const y = plotTop + (plotH * i) / 5;
+          ctx.beginPath();
+          ctx.moveTo(plotLeft, y);
+          ctx.lineTo(plotRight, y);
+          ctx.stroke();
+        }
+      }
+      ctx.beginPath();
+      ctx.moveTo(plotLeft, midY);
+      ctx.lineTo(plotRight, midY);
+      ctx.strokeStyle = '#94a3b8';
+      ctx.stroke();
+
+      // Tick + label แกน Y ตาม yMin, yMax
+      ctx.fillStyle = '#64748b';
+      ctx.font = '10px system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      const yTicks = [yMax, midVal, yMin];
+      const yTickPositions = [plotTop, midY, plotBottom];
+      for (let i = 0; i < 3; i++) {
+        const y = yTickPositions[i];
+        const v = yTicks[i];
+        ctx.beginPath();
+        ctx.moveTo(plotLeft - 4, y);
+        ctx.lineTo(plotLeft, y);
+        ctx.strokeStyle = '#94a3b8';
+        ctx.stroke();
+        const label = Math.abs(v) >= 10 || (v !== 0 && Math.abs(v) < 0.01) ? v.toExponential(1) : v.toFixed(2);
+        ctx.fillText(label, plotLeft - 6, y);
+      }
+      const fs = fsRef.current || 4000;
+      const totalSec = n / fs;
+
+      // --- แกน X (Time) ---
+      ctx.strokeStyle = '#94a3b8';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(plotLeft, plotBottom);
+      ctx.lineTo(plotRight, plotBottom);
+      ctx.stroke();
+
+      // Tick + label เวลา: 0, T/2, T (ms)
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      const formatMs = (sec) => `${Math.round(sec * 1000)} ms`;
+      const xTicks = [
+        { x: plotLeft, t: 0 },
+        { x: plotLeft + plotW / 2, t: totalSec / 2 },
+        { x: plotRight, t: totalSec },
+      ];
+      xTicks.forEach(({ x, t }) => {
+        ctx.beginPath();
+        ctx.moveTo(x, plotBottom);
+        ctx.lineTo(x, plotBottom + 4);
+        ctx.strokeStyle = '#94a3b8';
+        ctx.stroke();
+        ctx.fillText(formatMs(t), x, plotBottom + 6);
+      });
+
+      // --- วาดเส้น waveform ต่อ channel (CH1–CH4) ---
+      if (showWaveformRef.current && connectedRef.current && bufHasData && toDraw) {
+        const step = plotW / (n - 1);
+
+        const drawChannel = (arr, color, width = 2) => {
+          if (!arr || arr.length < 2) return;
+          const seg = arr.slice(startIndex, endIndex);
+          if (seg.length < 2) return;
+          ctx.strokeStyle = color;
+          ctx.lineWidth = width;
+          ctx.lineJoin = 'round';
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          for (let i = 0; i < n; i++) {
+            const x = plotLeft + i * step;
+            const v = Number(seg[i]);
+            const y = midY - (v - midVal) * scaleY;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+        };
+
+        // CH1–CH4 colors
+        const ch1 = buffers.CH1;
+        const ch2 = buffers.CH2;
+        const ch3 = buffers.CH3;
+        const ch4 = buffers.CH4;
+
+        if (visibleSignalsRef.current.ch1) drawChannel(ch1, '#0369a1', 2.2); // blue
+        if (visibleSignalsRef.current.ch2) drawChannel(ch2, '#ea580c', 1.6); // orange
+        if (visibleSignalsRef.current.ch3) drawChannel(ch3, '#16a34a', 1.6); // green
+        if (visibleSignalsRef.current.ch4) drawChannel(ch4, '#7c3aed', 1.6); // purple
+      }
+
+      if (showPlayheadRef.current) {
+        const playheadX = pausedRef.current
+          ? plotRight
+          : plotLeft + ((Date.now() % 2000) / 2000) * plotW;
+        ctx.strokeStyle = 'rgba(220, 38, 38, 0.9)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(playheadX, plotTop);
+        ctx.lineTo(playheadX, plotBottom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // --- Cursor 1 & 2 แนวตั้ง + marker + T/V และ ΔT/ΔV ---
+      if (showCursorRef.current && bufHasData && toDraw && n >= 2) {
+        const fs = fsRef.current || 4000;
+        const chMap = { ch1: 'CH1', ch2: 'CH2', ch3: 'CH3', ch4: 'CH4' };
+        const chKey = cursorChannelRef.current;
+        const arr = buffers[chMap[chKey]];
+        const seg = arr && arr.length >= 2 ? arr.slice(startIndex, endIndex) : null;
+
+        const getTVAtFrac = (f) => {
+          if (!seg) return { tMs: 0, v: 0 };
+          const idx = f * (n - 1);
+          const i0 = Math.min(Math.floor(idx), n - 2);
+          const i1 = i0 + 1;
+          const t = Math.max(0, Math.min(1, idx - i0));
+          const v0 = Number(seg[i0]);
+          const v1 = Number(seg[i1]);
+          const v = v0 * (1 - t) + v1 * t;
+          const tMs = (startIndex + idx) / fs * 1000;
+          return { tMs, v };
+        };
+
+        const drawOneCursor = (frac, isSecond) => {
+          const cursorX = plotLeft + frac * plotW;
+          const lineColor = isSecond ? 'rgba(59, 130, 246, 0.9)' : 'rgba(15, 23, 42, 0.9)';
+          ctx.strokeStyle = lineColor;
+          ctx.lineWidth = 2;
+          ctx.setLineDash([6, 4]);
+          ctx.beginPath();
+          ctx.moveTo(cursorX, plotTop);
+          ctx.lineTo(cursorX, plotBottom);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          if (seg) {
+            const { tMs, v } = getTVAtFrac(frac);
+            const y = midY - (v - midVal) * scaleY;
+            ctx.fillStyle = isSecond ? 'rgba(59, 130, 246, 0.95)' : 'rgba(15, 23, 42, 0.95)';
+            ctx.strokeStyle = '#0f172a';
+            ctx.lineWidth = 1.5;
+            const sq = 6;
+            ctx.fillRect(cursorX - sq / 2, y - sq / 2, sq, sq);
+            ctx.strokeRect(cursorX - sq / 2, y - sq / 2, sq, sq);
+            const label = `T: ${tMs.toFixed(2)} ms   V: ${v.toFixed(2)} V`;
+            ctx.font = '11px system-ui, sans-serif';
+            ctx.fillStyle = '#0f172a';
+            ctx.textAlign = isSecond ? 'right' : 'left';
+            ctx.textBaseline = 'middle';
+            const tx = isSecond ? cursorX - 8 : cursorX + 8;
+            const ty = Math.max(plotTop + 10, Math.min(plotBottom - 10, y));
+            ctx.fillText(label, tx, ty);
+          }
+          return seg ? getTVAtFrac(frac) : null;
+        };
+
+        const data1 = drawOneCursor(Math.max(0, Math.min(1, cursorFracRef.current)), false);
+
+        if (showCursor2Ref.current) {
+          const data2 = drawOneCursor(Math.max(0, Math.min(1, cursor2FracRef.current)), true);
+          if (data1 && data2) {
+            const deltaT = data2.tMs - data1.tMs;
+            const deltaV = data2.v - data1.v;
+            ctx.font = '12px system-ui, sans-serif';
+            ctx.fillStyle = '#0f172a';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            const midX = plotLeft + plotW / 2;
+            ctx.fillText(`ΔT: ${deltaT.toFixed(2)} ms   ΔV: ${deltaV.toFixed(2)} V`, midX, plotTop + 4);
+          }
+        }
+      }
+
+      if (buf.length < 2 || !connectedRef.current) {
+        ctx.fillStyle = '#64748b';
+        ctx.font = '14px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        const msg = !connectedRef.current ? 'Lost of signal /  Backend Disconnected' : 'Waiting for samples…';
+        ctx.fillText(msg, cw / 2, ch / 2);
+      } else if (!showWaveformRef.current) {
+        ctx.fillStyle = '#64748b';
+        ctx.font = '14px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Waveform display paused', cw / 2, ch / 2);
+      } else if (pausedRef.current) {
+        ctx.fillStyle = '#64748b';
+        ctx.font = '12px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Acquisition paused', cw / 2, plotTop + 14);
+      }
+
+      rafRef.current = requestAnimationFrame(draw);
+    };
+    rafRef.current = requestAnimationFrame(draw);
+    return () => {
+      stopped = true;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, [connected, showWaveform, zoomLevel, containerWidth, paused]);
+
+  const isLive = connected && lastChunkAt != null && Date.now() - lastChunkAt < 500;
+  const LIVE_PULSE = 'animate-pulse';
+  const displayCountUI = Math.max(
+    2,
+    Math.min(sampleCount || 0, Math.round(DISPLAY_WAVEFORM_SAMPLES / (zoomLevel || 1)))
+  );
+  const maxScrollOffset = Math.max(0, (sampleCount || 0) - displayCountUI);
+  const scrollStep = Math.max(20, Math.round(displayCountUI * 0.2));
+  const scrollWindowMs = Math.round((displayCountUI / (meta.fs || 4000)) * 1000);
+  const plotWUi = Math.max(1, (containerWidth || 800) - 40 - 20);
+  const samplesPerPx = displayCountUI / plotWUi;
+
+  // Real-time measurements จาก visible window (channel วัด = cursorChannel)
+  const measureChannelMap = { ch1: 'CH1', ch2: 'CH2', ch3: 'CH3', ch4: 'CH4' };
+  const measureBuf = bufferRef.current[measureChannelMap[cursorChannel]] || [];
+  const measureEndIndex = Math.max(0, Math.min(measureBuf.length, measureBuf.length - (paused ? scrollOffset : 0)));
+  const measureStartIndex = Math.max(0, measureEndIndex - displayCountUI);
+  const measureSegment = measureBuf.length >= 2 ? measureBuf.slice(measureStartIndex, measureEndIndex) : [];
+  const fs = meta.fs || 4000;
+
+  let vpp = null;
+  let freqHz = null;
+  let dutyCycle = null;
+  if (measureSegment.length >= 2) {
+    let minV = measureSegment[0];
+    let maxV = measureSegment[0];
+    for (let i = 1; i < measureSegment.length; i++) {
+      const v = Number(measureSegment[i]);
+      if (v < minV) minV = v;
+      if (v > maxV) maxV = v;
+    }
+    vpp = maxV - minV;
+    const mid = (minV + maxV) / 2;
+    let crossings = 0;
+    for (let i = 0; i < measureSegment.length - 1; i++) {
+      const a = Number(measureSegment[i]) - mid;
+      const b = Number(measureSegment[i + 1]) - mid;
+      if (a * b < 0) crossings++;
+    }
+    if (crossings >= 2) freqHz = (crossings / 2) * fs / measureSegment.length;
+    let above = 0;
+    for (let i = 0; i < measureSegment.length; i++) {
+      if (Number(measureSegment[i]) > mid) above++;
+    }
+    dutyCycle = (above / measureSegment.length) * 100;
+  }
+
+  return (
+    <div className="w-full min-w-0 space-y-6">
+      {/* Toolbar card */}
+      <div className="bg-gradient-to-r from-slate-50 to-white rounded-2xl border border-slate-200/80 shadow-sm overflow-visible">
+        <div className="p-3 sm:p-4 flex flex-col gap-3 sm:gap-4">
+          {/* Title + board + status */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 sm:p-2 rounded-xl bg-sky-100 text-sky-600">
+                  <Activity size={20} className="sm:hidden" strokeWidth={2} />
+                  <Activity size={22} className="hidden sm:block" strokeWidth={2} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm sm:text-base font-bold text-slate-900 truncate">
+                    Realtime Waveform
+                  </div>
+                  <div className="text-xs text-slate-500 truncate">
+                    {selectedBoardId
+                      ? `Streaming from ${onlineBoards.find(b => b.id === selectedBoardId)?.name || selectedBoardId}`
+                      : 'Streaming from simulated node'}
+                  </div>
+                </div>
+              </div>
+              {connected ? (
+                isLive ? (
+                  <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-500/15 text-emerald-700 border border-emerald-300/60 ${LIVE_PULSE}`}>
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50" />
+                    Live
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-500/15 text-amber-700 border border-amber-300/60">
+                    <span className="w-2 h-2 rounded-full bg-amber-500" />
+                    Waiting for data…
+                  </span>
+                )
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-200/80 text-slate-600 border border-slate-300/60">
+                  <span className="w-2 h-2 rounded-full bg-slate-400" />
+                  Disconnected
+                </span>
+              )}
+            </div>
+
+            {/* Streaming source: board selector */}
+            <div className="shrink-0 flex items-center gap-2">
+              <span className="text-xs font-medium text-slate-500">Streaming from</span>
+              <select
+                value={selectedBoardId || ''}
+                onChange={(e) => setSelectedBoardId(e.target.value)}
+                className="px-2.5 py-1 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Simulated Node</option>
+                {onlineBoards.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name || b.id}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Right controls: View / Zoom / Scale */}
+          <div className="flex items-center gap-2 sm:gap-3 flex-nowrap overflow-x-auto overflow-y-visible max-w-full pr-1 pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {/* View options */}
+            <div className="shrink-0">
+              <button
+                type="button"
+                ref={viewButtonRef}
+                onClick={() => {
+                  const next = !viewPanelOpen;
+                  setViewPanelOpen(next);
+                }}
+                className="flex items-center gap-2 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-cyan-50 border border-cyan-200/60 text-cyan-900 text-sm font-semibold hover:bg-cyan-100 transition-colors"
+                title="View & overlay options"
+              >
+                <Eye size={16} />
+                View
+              </button>
+              {viewPanelOpen && (
+                <div
+                  ref={viewPopoverRef}
+                  className="fixed w-56 bg-white border border-slate-200 rounded-xl shadow-xl p-3 z-[999]"
+                  style={{ top: viewPopoverPos.top, left: viewPopoverPos.left }}
+                >
+                  <div className="text-xs font-bold text-slate-500 mb-2">Show on chart</div>
+                  <div className="space-y-1">
+                    <label className="flex items-center gap-2 py-1.5 text-sm text-slate-700 select-none">
+                      <input
+                        type="checkbox"
+                        checked={showWaveform}
+                        onChange={(e) => setShowWaveform(e.target.checked)}
+                        className="w-4 h-4 shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                      />
+                      Trace
+                    </label>
+                    <label className="flex items-center gap-2 py-1.5 text-sm text-slate-700 select-none">
+                      <input
+                        type="checkbox"
+                        checked={showPlayhead}
+
+
+
+
+
+                        onChange={(e) => setShowPlayhead(e.target.checked)}
+                        className="w-4 h-4 shrink-0 rounded border-slate-300 text-rose-600 focus:ring-rose-500"
+                      />
+                      Playhead
+                    </label>
+                    <label className="flex items-center gap-2 py-1.5 text-sm text-slate-700 select-none">
+                      <input
+                        type="checkbox"
+                        checked={showGrid}
+                        onChange={(e) => setShowGrid(e.target.checked)}
+                        className="w-4 h-4 shrink-0 rounded border-slate-300 text-slate-600 focus:ring-slate-500"
+                      />
+                      Grid
+                    </label>
+                    <label className="flex items-center gap-2 py-1.5 text-sm text-slate-700 select-none">
+                      <input
+                        type="checkbox"
+                        checked={showStats}
+                        onChange={(e) => setShowStats(e.target.checked)}
+                        className="w-4 h-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      Stats
+                    </label>
+                    <label className="flex items-center gap-2 py-1.5 text-sm text-slate-700 select-none">
+                      <input
+                        type="checkbox"
+                        checked={showCursor}
+                        onChange={(e) => setShowCursor(e.target.checked)}
+                        className="w-4 h-4 shrink-0 rounded border-slate-300 text-slate-600"
+                      />
+                      Cursor (T / V)
+                    </label>
+                    {showCursor && (
+                      <>
+                        <label className="flex items-center gap-2 py-1 pl-6 text-sm text-slate-600 select-none">
+                          <input
+                            type="checkbox"
+                            checked={showCursor2}
+                            onChange={(e) => setShowCursor2(e.target.checked)}
+                            className="w-4 h-4 rounded border-slate-300"
+                          />
+                          Cursor 2 (ΔT / ΔV)
+                        </label>
+                        <div className="flex items-center gap-2 py-1 pl-6">
+                          <span className="text-xs text-slate-500">Measure:</span>
+                          <select
+                            value={cursorChannel}
+                            onChange={(e) => setCursorChannel(e.target.value)}
+                            className="text-xs border border-slate-200 rounded px-2 py-1 bg-white"
+                          >
+                            <option value="ch1">CH1</option>
+                            <option value="ch2">CH2</option>
+                            <option value="ch3">CH3</option>
+                            <option value="ch4">CH4</option>
+                          </select>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <div className="mt-3 pt-2 border-t border-slate-100">
+                    <div className="text-xs font-bold text-slate-500 mb-1">Signals (analog)</div>
+                    <div className="space-y-1">
+                      <label className="flex items-center gap-2 py-1.5 text-sm text-slate-700 select-none">
+                        <input
+                          type="checkbox"
+                          checked={visibleSignals.ch1}
+                          onChange={(e) =>
+                            setVisibleSignals((prev) => ({ ...prev, ch1: e.target.checked }))
+                          }
+                          className="w-4 h-4 shrink-0 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+                        />
+                        CH1
+                      </label>
+                      <label className="flex items-center gap-2 py-1.5 text-sm text-slate-700 select-none">
+                        <input
+                          type="checkbox"
+                          checked={visibleSignals.ch2}
+                          onChange={(e) =>
+                            setVisibleSignals((prev) => ({ ...prev, ch2: e.target.checked }))
+                          }
+                          className="w-4 h-4 shrink-0 rounded border-slate-300 text-orange-500 focus:ring-orange-500"
+                        />
+                        CH2
+                      </label>
+                      <label className="flex items-center gap-2 py-1.5 text-sm text-slate-700 select-none">
+                        <input
+                          type="checkbox"
+                          checked={visibleSignals.ch3}
+                          onChange={(e) =>
+                            setVisibleSignals((prev) => ({ ...prev, ch3: e.target.checked }))
+                          }
+                          className="w-4 h-4 shrink-0 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                        />
+                        CH3
+                      </label>
+                      <label className="flex items-center gap-2 py-1.5 text-sm text-slate-700 select-none">
+                        <input
+                          type="checkbox"
+                          checked={visibleSignals.ch4}
+                          onChange={(e) =>
+                            setVisibleSignals((prev) => ({ ...prev, ch4: e.target.checked }))
+                          }
+                          className="w-4 h-4 shrink-0 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
+                        />
+                        CH4
+                      </label>
+                    </div>
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-slate-100 flex justify-end">
+                    <button
+                      type="button"
+                      className="text-xs font-semibold text-slate-600 hover:text-slate-900"
+                      onClick={() => setViewPanelOpen(false)}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Acquisition: Pause / Clear */}
+            <div className="flex items-center gap-1 shrink-0 rounded-xl overflow-hidden border border-slate-200 bg-slate-100/80 p-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setPaused((p) => !p);
+                  // when pausing/resuming, snap view to latest
+                  setScrollOffset(0);
+                }}
+                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 text-sm font-semibold rounded-lg transition-all ${paused ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:bg-amber-100 hover:text-amber-700'}`}
+                title={paused ? 'Resume' : 'Pause'}
+              >
+                {paused ? <Play size={16} /> : <Pause size={16} />}
+                {paused ? 'Resume' : 'Pause'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { bufferRef.current = { CH1: [], CH2: [], CH3: [], CH4: [] }; setSampleCount(0); setLastChunkAt(null); }}
+                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 text-sm font-semibold text-slate-600 hover:bg-rose-100 hover:text-rose-700 rounded-lg transition-all"
+                title="Clear buffer"
+              >
+                <Trash2 size={16} />
+                Clear
+              </button>
+            </div>
+
+            {/* Scroll (only when paused) */}
+            {paused && maxScrollOffset > 0 && (
+              <div className="flex items-center gap-2 shrink-0 px-2 py-1 sm:py-1.5 rounded-xl border border-slate-200 bg-white/70">
+                <span className="text-xs font-bold text-slate-500">Scroll</span>
+                <button
+                  type="button"
+                  onClick={() => setScrollOffset((o) => Math.min(maxScrollOffset, o + scrollStep))}
+                  className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-200 transition-colors"
+                  title="Scroll left (older)"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={maxScrollOffset}
+                  step={1}
+                  value={scrollOffset}
+                  onChange={(e) => setScrollOffset(Number(e.target.value))}
+                  className="w-24 accent-slate-600"
+                  title="Scroll offset"
+                />
+                <button
+                  type="button"
+                  onClick={() => setScrollOffset((o) => Math.max(0, o - scrollStep))}
+                  className="p-1.5 rounded-lg text-slate-600 hover:bg-slate-200 transition-colors"
+                  title="Scroll right (newer)"
+                >
+                  <ChevronRight size={16} />
+                </button>
+                <span className="text-[11px] font-semibold text-slate-500 tabular-nums">
+                  {Math.round((scrollOffset / (meta.fs || 4000)) * 1000)} ms
+                </span>
+              </div>
+            )}
+
+            {/* Zoom */}
+            <div className="flex items-center gap-0.5 shrink-0 rounded-xl overflow-hidden border border-violet-200/80 bg-violet-50/50 p-0.5">
+              <button
+                type="button"
+                onClick={() => setZoomLevel((z) => Math.min(32, z * 1.5))}
+                className="p-2 text-violet-600 hover:bg-violet-200/80 rounded-lg transition-colors"
+                title="Zoom in"
+              >
+                <ZoomIn size={18} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setZoomLevel((z) => Math.max(0.25, z / 1.5))}
+                className="p-2 text-violet-600 hover:bg-violet-200/80 rounded-lg transition-colors"
+                title="Zoom out"
+              >
+                <ZoomOut size={18} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setZoomLevel(1)}
+                className="px-2.5 py-1.5 text-xs font-bold text-violet-700 bg-violet-200/60 hover:bg-violet-300/80 rounded-lg transition-colors"
+                title="Reset zoom"
+              >
+                1×
+              </button>
+            </div>
+
+            {/* Y scale */}
+            <div className="flex items-center gap-2 shrink-0 px-2 py-1 sm:py-1.5 rounded-xl border border-indigo-200/80 bg-indigo-50/50">
+              <Gauge size={16} className="text-indigo-600 shrink-0" />
+              <div className="flex rounded-lg overflow-hidden border border-indigo-200/60 bg-white">
+                <button
+                  type="button"
+                  onClick={() => setScaleMode('auto')}
+                  className={`px-2.5 py-1 text-xs font-semibold transition-all ${scaleMode === 'auto' ? 'bg-indigo-600 text-white' : 'text-indigo-600 hover:bg-indigo-100'}`}
+                >
+                  Auto
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScaleMode('manual')}
+                  className={`px-2.5 py-1 text-xs font-semibold transition-all ${scaleMode === 'manual' ? 'bg-indigo-600 text-white' : 'text-indigo-600 hover:bg-indigo-100'}`}
+                >
+                  Manual
+                </button>
+              </div>
+              {scaleMode === 'manual' && (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={yMinManual}
+                    onChange={(e) => setYMinManual(parseFloat(e.target.value) || 0)}
+                    className="w-12 sm:w-14 px-2 py-1 text-xs font-medium border border-indigo-200 rounded-md bg-white focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400"
+                    placeholder="Min"
+                  />
+                  <span className="text-indigo-400 font-bold">→</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={yMaxManual}
+                    onChange={(e) => setYMaxManual(parseFloat(e.target.value) || 0)}
+                    className="w-12 sm:w-14 px-2 py-1 text-xs font-medium border border-indigo-200 rounded-md bg-white focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400"
+                    placeholder="Max"
+                  />
+                </div>
+              )}
+            </div>
+
+            {showStats && sampleCount > 0 && (
+              <span className="px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-200/80 text-slate-700 border border-slate-300/60">
+                {sampleCount.toLocaleString()} samples
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+      <p className="text-xs sm:text-sm text-slate-500">
+
+      </p>
+
+      {/* Legend */}
+      <div className="flex items-center justify-between gap-4 flex-wrap text-sm">
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-8 h-0.5 rounded bg-[#0369a1]" aria-hidden />
+            <span className="text-slate-600">CH1</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-8 h-0.5 rounded bg-[#ea580c]" aria-hidden />
+            <span className="text-slate-600">CH2</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-8 h-0.5 rounded bg-[#16a34a]" aria-hidden />
+            <span className="text-slate-600">CH3</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-8 h-0.5 rounded bg-[#7c3aed]" aria-hidden />
+            <span className="text-slate-600">CH4</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="inline-block w-8 h-0.5 rounded border-t-2 border-dashed border-red-500" aria-hidden />
+          <span className="text-slate-600 text-xs sm:text-sm">Playhead</span>
+        </div>
+        {showCursor && (
+          <>
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-8 h-0.5 rounded border-t-2 border-dashed border-slate-800" aria-hidden />
+              <span className="text-slate-600 text-xs sm:text-sm">Cursor 1</span>
+            </div>
+            {showCursor2 && (
+              <div className="flex items-center gap-2">
+                <span className="inline-block w-8 h-0.5 rounded border-t-2 border-dashed border-blue-500" aria-hidden />
+                <span className="text-slate-600 text-xs sm:text-sm">Cursor 2</span>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      
+      <div
+        ref={containerRef}
+        className={`w-full bg-white rounded-2xl border border-slate-200 shadow-card overflow-hidden touch-none ${
+          paused ? (isPanning ? 'cursor-grabbing' : 'cursor-grab') : ''
+        }`}
+        onWheel={(e) => {
+          if (!paused) return;
+          if (maxScrollOffset <= 0) return;
+          e.preventDefault();
+          const raw = e.deltaX !== 0 ? -e.deltaX : e.deltaY;
+          const dir = raw > 0 ? 1 : -1; // positive => older (left)
+          setScrollOffset((o) => Math.max(0, Math.min(maxScrollOffset, o + dir * scrollStep)));
+        }}
+        onPointerDown={(e) => {
+          if (e.pointerType === 'mouse' && e.button !== 0) return;
+          const el = containerRef.current;
+          if (!el) return;
+          const rect = el.getBoundingClientRect();
+          const plotLeft = 40;
+          const plotW = Math.max(1, rect.width - 60);
+          const localX = e.clientX - rect.left;
+          const frac = Math.max(0, Math.min(1, (localX - plotLeft) / plotW));
+
+          if (showCursorRef.current && localX >= plotLeft && localX <= plotLeft + plotW) {
+            if (!showCursor2Ref.current) {
+              activeCursorRef.current = 1;
+              setCursorFrac(frac);
+            } else {
+              const f1 = cursorFracRef.current;
+              const f2 = cursor2FracRef.current;
+              const dist1 = Math.abs(frac - f1);
+              const dist2 = Math.abs(frac - f2);
+              if (dist1 <= dist2) {
+                activeCursorRef.current = 1;
+                setCursorFrac(frac);
+              } else {
+                activeCursorRef.current = 2;
+                setCursor2Frac(frac);
+              }
+            }
+            isDraggingCursorRef.current = true;
+            e.currentTarget.setPointerCapture?.(e.pointerId);
+            return;
+          }
+          if (!paused) return;
+          if (maxScrollOffset <= 0) return;
+          e.currentTarget.setPointerCapture?.(e.pointerId);
+          panRef.current = { active: true, startX: e.clientX, startOffset: scrollOffsetRef.current || 0 };
+          setIsPanning(true);
+        }}
+        onPointerMove={(e) => {
+          if (isDraggingCursorRef.current) {
+            const el = containerRef.current;
+            if (!el) return;
+            const rect = el.getBoundingClientRect();
+            const plotLeft = 40;
+            const plotW = Math.max(1, rect.width - 60);
+            const localX = e.clientX - rect.left;
+            const frac = Math.max(0, Math.min(1, (localX - plotLeft) / plotW));
+            if (activeCursorRef.current === 1) setCursorFrac(frac);
+            else setCursor2Frac(frac);
+            return;
+          }
+          if (!panRef.current.active) return;
+          if (!paused) return;
+          if (maxScrollOffset <= 0) return;
+          e.preventDefault();
+          const dx = e.clientX - panRef.current.startX;
+          const deltaSamples = Math.round(dx * samplesPerPx);
+          const next = panRef.current.startOffset + deltaSamples;
+          setScrollOffset(Math.max(0, Math.min(maxScrollOffset, next)));
+        }}
+        onPointerUp={(e) => {
+          if (isDraggingCursorRef.current) {
+            isDraggingCursorRef.current = false;
+            e.currentTarget.releasePointerCapture?.(e.pointerId);
+            return;
+          }
+          if (!panRef.current.active) return;
+          e.currentTarget.releasePointerCapture?.(e.pointerId);
+          panRef.current.active = false;
+          setIsPanning(false);
+        }}
+        onPointerCancel={(e) => {
+          if (isDraggingCursorRef.current) {
+            isDraggingCursorRef.current = false;
+            e.currentTarget.releasePointerCapture?.(e.pointerId);
+            return;
+          }
+          if (!panRef.current.active) return;
+          e.currentTarget.releasePointerCapture?.(e.pointerId);
+          panRef.current.active = false;
+          setIsPanning(false);
+        }}
+      >
+        <canvas
+          ref={canvasRef}
+          className="block w-full max-w-full border-0"
+          style={{ background: '#f1f5f9' }}
+        />
+      </div>
+      <div className="space-y-1">
+        {/* Running Graph + progress bar ซ่อนไว้ เพราะมี status ด้านบนแล้ว */}
+        <div className="hidden">
+          <div className="flex justify-between text-xs text-slate-500">
+            <span>Running Graph</span>
+            {isLive ? (
+              <span className="text-emerald-600 font-medium">Receiving data from Node</span>
+            ) : connected ? (
+              <span className="text-amber-600">รอ Node ส่ง chunk</span>
+            ) : (
+              <span className="text-slate-400">Lost of Signal / Backend Disconnected</span>
+            )}
+          </div>
+          <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all duration-75 ease-linear ${isLive ? 'bg-emerald-500' : 'bg-slate-400'}`}
+              style={{ width: `${runProgress}%` }}
+            />
+          </div>
+        </div>
+        {/* Real-time measurements (จาก channel ที่เลือกใน View → Measure) */}
+        <div className="mt-3 pt-3 border-t border-slate-200">
+          <div className="text-xs font-bold text-slate-500 mb-2">Real-time measurements ({cursorChannel.toUpperCase()})</div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-200/80">
+              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Vpp</div>
+              <div className="text-sm font-bold text-slate-800 tabular-nums">
+                {vpp != null ? `${vpp.toFixed(2)} V` : '—'}
+              </div>
+            </div>
+            <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-200/80">
+              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Freq</div>
+              <div className="text-sm font-bold text-slate-800 tabular-nums">
+                {freqHz != null ? (freqHz >= 1000 ? `${(freqHz / 1000).toFixed(2)} kHz` : `${freqHz.toFixed(1)} Hz`) : '—'}
+              </div>
+            </div>
+            <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-200/80">
+              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Duty cycle</div>
+              <div className="text-sm font-bold text-slate-800 tabular-nums">
+                {dutyCycle != null ? `${dutyCycle.toFixed(1)} %` : '—'}
+              </div>
+            </div>
+            <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-200/80">
+              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Sampling rate</div>
+              <div className="text-sm font-bold text-slate-800 tabular-nums">
+                {fs >= 1000000 ? `${(fs / 1000000).toFixed(1)} MHz` : fs >= 1000 ? `${(fs / 1000).toFixed(1)} kHz` : `${fs} Hz`}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // 2. SETUP PAGE
 // const SetupPage = () => (
 //   <div className="animate-in slide-in-from-bottom-4 duration-500 space-y-8">
@@ -867,6 +2023,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
     addUploadedFile, 
     removeUploadedFile, 
     createJob,
+    updateJob,
     runTestCommand,
     jobs, 
     boards, 
@@ -913,6 +2070,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
   const [bulkTryCount, setBulkTryCount] = useState(''); // สำหรับ bulk edit try count
   const isAutoPairingRef = useRef(false); // ป้องกัน auto-pair ซ้ำ
   const isLoadingConfigRef = useRef(false); // track ว่าเป็นการ load config หรือไม่
+  const prevUploadedCountRef = useRef(0); // ใช้เช็คว่าเพิ่ง upload ชุดแรกหรือเปล่า
   const [commandForm, setCommandForm] = useState({
     name: '',
     command: '',
@@ -969,7 +2127,8 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
   const getFileKind = (file) => {
     const ext = String(file?.name || '').split('.').pop()?.toLowerCase();
     if (ext === 'vcd') return 'vcd';
-    if (['bin', 'hex', 'elf'].includes(ext)) return 'bin';
+    if (['bin', 'hex', 'elf', 'erom'].includes(ext)) return 'bin';
+    if (['lin', 'txt', 'ulp'].includes(ext)) return 'lin';
     return 'other';
   };
 
@@ -981,7 +2140,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
   const binFilesList = selectedFiles.filter((f) => getFileKind(f) === 'bin');
   const linFilesList = selectedFiles.filter((f) => {
     const ext = String(f?.name || '').split('.').pop()?.toLowerCase();
-    return ext === 'lin' || ext === 'txt'; // lin files อาจเป็น .lin หรือ .txt
+    return ext === 'lin' || ext === 'txt' || ext === 'ulp'; // ULP/LIN files
   });
 
   // Auto-pair แบบ Smart: pair อัตโนมัติเมื่อ select files (แต่ไม่ pair เมื่อ load config)
@@ -1016,7 +2175,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
       const orderedBins = orderedFiles.filter(f => getFileKind(f) === 'bin');
       const orderedLins = orderedFiles.filter(f => {
         const ext = String(f?.name || '').split('.').pop()?.toLowerCase();
-        return ext === 'lin' || ext === 'txt';
+        return ext === 'lin' || ext === 'txt' || ext === 'ulp';
       });
 
       // Pair ตามลำดับที่เรียงไว้: VCD กับ BIN ที่อยู่ใกล้กันที่สุด
@@ -1183,8 +2342,6 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                 setSelectedBoardIds(boardIds);
               }
             }
-            
-            addToast({ type: 'success', message: `Loaded ${loadedPairs.length} pairs from batch.` });
                         } else {
                           addToast({ 
                             type: 'warning', 
@@ -1250,7 +2407,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
     const orderedBins = orderedFiles.filter(f => getFileKind(f) === 'bin');
     const orderedLins = orderedFiles.filter(f => {
       const ext = String(f?.name || '').split('.').pop()?.toLowerCase();
-      return ext === 'lin' || ext === 'txt';
+      return ext === 'lin' || ext === 'txt' || ext === 'ulp';
     });
 
     // Pair ตามลำดับที่เรียงไว้: VCD กับ BIN ที่อยู่ใกล้กันที่สุด
@@ -1634,10 +2791,10 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
     for (const file of Array.from(selectedFiles)) {
       // Validate file type
       const extension = file.name.split('.').pop().toLowerCase();
-      const validExtensions = ['vcd', 'bin', 'hex', 'elf'];
+      const validExtensions = ['vcd', 'bin', 'hex', 'elf', 'erom', 'ulp'];
       
       if (!validExtensions.includes(extension)) {
-        pushFileError(`File type .${extension} is not supported. Please upload .vcd, .bin, .hex, or .elf files.`);
+        pushFileError(`File type .${extension} is not supported. Please upload .vcd, .bin, .hex, .elf, .erom, or .ulp files.`);
         continue;
       }
       
@@ -1717,6 +2874,19 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
       command: setupMode === 'commands' ? prev.command : ''
     }));
   }, [setupMode]);
+
+  // Auto-select ไฟล์ทั้งหมดทุกครั้งที่มีการเพิ่มไฟล์ใหม่ (drop / browse)
+  // เมื่อจำนวนไฟล์เพิ่ม → เลือกครบทุกไฟล์; หลังจากนั้นผู้ใช้ยัง check / uncheck เองได้
+  useEffect(() => {
+    const prevCount = prevUploadedCountRef.current;
+    const currCount = uploadedFiles.length;
+
+    if (currCount > prevCount && !isLoadingConfigRef.current) {
+      setSelectedIds(uploadedFiles.map((f) => f.id));
+    }
+
+    prevUploadedCountRef.current = currCount;
+  }, [uploadedFiles, selectedIds.length]);
   
     // ฟังก์ชันเลือก/ไม่เลือก ทั้งหมด
     const handleSelectAll = () => {
@@ -1771,20 +2941,46 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
         addToast({ type: 'success', message: 'Cleared all selections. Files remain in upload folder.' });
       }
     };
-  
+
+    // Start fresh  ลบไฟล์ทั้งหมดจาก server + เคลียร์ UI
+    const handleStartFresh = async () => {
+      if (uploadedFiles.length === 0) {
+        addToast({ type: 'info', message: 'No files to clear. Already fresh.' });
+        return;
+      }
+      if (!window.confirm(`Delete all ${uploadedFiles.length} file(s) from the server and clear the list?\n\nUse this to start a clean demo.`)) return;
+      try {
+        setIsDeletingFiles(true);
+        await Promise.all(uploadedFiles.map((f) => removeUploadedFile(f.id)));
+        setSelectedIds([]);
+        setSelectedPairs([]);
+        setSelectedTestCaseIds([]);
+        setSelectedPairVcdId('');
+        setSelectedPairBinId('');
+        setSelectedPairLinId('');
+        addToast({ type: 'success', message: 'All files cleared. Ready for a fresh demo.' });
+      } catch (error) {
+        console.error('Failed to clear all files', error);
+        addToast({ type: 'error', message: 'Failed to clear some files.' });
+      } finally {
+        setIsDeletingFiles(false);
+      }
+    };
+
   return (
-  <div className="w-full max-w-7xl mx-auto px-6 lg:px-8 space-y-8">
-    <div className="flex justify-between items-end">
-      <div>
-    <h1 className="text-3xl font-bold text-slate-800">
+  <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6 sm:space-y-8">
+    <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-end gap-4">
+      <div className="min-w-0">
+    <h1 className="text-2xl sm:text-3xl font-bold text-slate-800">
       {editJobId ? `Edit Batch #${editJobId}` : 'Test Case Setup'}
     </h1>
-        <p className="text-slate-500 mt-1">
+        <p className="text-slate-500 mt-1 text-sm sm:text-base">
           {editJobId 
             ? 'Edit pairs and configuration for this batch' 
             : 'Configure and manage your test files or use pre-written test commands.'}
         </p>
       </div>
+      <div className="flex flex-wrap items-center gap-2">
       {editJobId && (
         <button
           onClick={() => {
@@ -1806,7 +3002,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
           <div className="flex gap-2 bg-slate-100 rounded-lg p-1">
             <button
               onClick={() => setSetupMode('files')}
-              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              className={`px-3 sm:px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                 setupMode === 'files' 
                   ? 'bg-white text-blue-600 shadow-sm' 
                   : 'text-slate-600 hover:text-slate-900'
@@ -1814,20 +3010,11 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
             >
               File Upload
             </button>
-            <button
-              onClick={() => setSetupMode('commands')}
-              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
-                setupMode === 'commands' 
-                  ? 'bg-white text-blue-600 shadow-sm' 
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Test Commands
-          </button>
           </div>
+      </div>
         </div>
   
-        <div className="max-w-6xl mx-auto">
+        <div className="max-w-6xl mx-auto min-w-0">
           <div className="space-y-6">
             {/* ส่วนแสดงรายการไฟล์พร้อมระบบเลือก */}
             <div 
@@ -1836,8 +3023,8 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
               onDrop={handleDrop}
               className="bg-white rounded-3xl border-2 border-slate-200 shadow-sm overflow-hidden transition-all"
             >
-              <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-                <div className="flex items-center gap-3">
+              <div className="p-3 sm:p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-2">
+                <div className="flex items-center gap-3 min-w-0">
                   <input 
                     type="checkbox" 
                     className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
@@ -1873,6 +3060,18 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                       {isDeletingFiles ? 'Deleting...' : '❌ Delete Selected'}
                     </button>
                   )}
+
+                  {/* Start fresh - ลบไฟล์ทั้งหมด สำหรับเริ่มเดโม่ใหม่ */}
+                  {uploadedFiles.length > 0 && (
+                    <button 
+                      onClick={handleStartFresh}
+                      disabled={isDeletingFiles}
+                      className={`flex items-center gap-2 px-4 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg text-xs font-bold transition-colors ${isDeletingFiles ? 'opacity-60 cursor-not-allowed' : 'hover:bg-amber-100'}`}
+                      title="Delete all files and clear list (for a fresh demo)"
+                    >
+                      {isDeletingFiles ? 'Clearing...' : 'Start fresh'}
+                    </button>
+                  )}
                 </div>
               </div>
   
@@ -1881,18 +3080,19 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".vcd,.bin,.hex,.elf"
+                accept=".vcd,.bin,.hex,.elf,.erom,.ulp"
                 onChange={handleFileInputChange}
                 className="hidden"
               />
   
-              {/* Filter: All/VCD/Binary + Time, File Name, Tag */}
+              {/* Filter: All/VCD/ERoM/ULP + Time, File Name, Tag */}
               <div className="px-4 py-3 flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white">
                 <div className="flex items-center gap-2">
                   {[
                     { key: 'all', label: 'All' },
                     { key: 'vcd', label: 'VCD' },
-                    { key: 'bin', label: 'Binary' },
+                    { key: 'bin', label: 'ERoM' },
+                    { key: 'lin', label: 'ULP' },
                   ].map((opt) => (
                     <button
                       key={opt.key}
@@ -1926,7 +3126,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                   <select
                     value={fileSort}
                     onChange={(e) => setFileSort(e.target.value)}
-                    className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:border-blue-300 focus:ring-0"
+                    className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-slate-50 text-slate-700 shadow-sm focus:border-blue-400 focus:ring-2 focus:ring-blue-100 appearance-none"
                   >
                     <option value="time">Time</option>
                     {/* <option value="file-name">File Name</option> */}
@@ -1951,7 +3151,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                 ) : uploadedFiles.length > 0 ? (
                   [...uploadedFiles]
                     .filter((file) => {
-                      // Filter by file type (All/VCD/Binary)
+                      // Filter by file type (All/VCD/ERoM/ULP)
                       const kind = getFileKind(file);
                       if (fileFilter === 'all') {
                         // pass all
@@ -1959,6 +3159,8 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                         if (kind !== 'vcd') return false;
                       } else if (fileFilter === 'bin') {
                         if (kind !== 'bin') return false;
+                      } else if (fileFilter === 'lin') {
+                        if (kind !== 'lin') return false;
                       }
                       
                       // Filter by search
@@ -2111,15 +3313,15 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                               </span>
                             )}
                           </div>
-                          <p className="text-xs text-slate-500">
-                            {editJobId ? 'Edit pairs and create a new batch' : 'pair up VCD and BIN files'}
+                          <p className="text-xs text-slate-500">    
+                            {editJobId ? '' : ''}
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
                           <select
                             value={selectedPairVcdId}
                             onChange={(e) => setSelectedPairVcdId(e.target.value)}
-                            className="px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:border-blue-300 focus:ring-0"
+                            className="px-3 py-2 text-xs rounded-lg border border-slate-200 bg-slate-50 text-slate-700 shadow-sm focus:border-blue-400 focus:ring-2 focus:ring-blue-100 appearance-none"
                           >
                             <option value="">Select VCD</option>
                             {vcdFilesList.map((f) => (
@@ -2129,9 +3331,9 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                           <select
                             value={selectedPairBinId}
                             onChange={(e) => setSelectedPairBinId(e.target.value)}
-                            className="px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:border-blue-300 focus:ring-0"
+                            className="px-3 py-2 text-xs rounded-lg border border-slate-200 bg-slate-50 text-slate-700 shadow-sm focus:border-blue-400 focus:ring-2 focus:ring-blue-100 appearance-none"
                           >
-                            <option value="">Select BIN</option>
+                            <option value="">Select ERoM</option>
                             {binFilesList.map((f) => (
                               <option key={f.id} value={f.id}>{f.name}</option>
                             ))}
@@ -2139,9 +3341,9 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                           <select
                             value={selectedPairLinId}
                             onChange={(e) => setSelectedPairLinId(e.target.value)}
-                            className="px-3 py-2 text-xs rounded-lg border border-slate-200 bg-white focus:border-blue-300 focus:ring-0"
+                            className="px-3 py-2 text-xs rounded-lg border border-slate-200 bg-slate-50 text-slate-700 shadow-sm focus:border-blue-400 focus:ring-2 focus:ring-blue-100 appearance-none"
                           >
-                            <option value="">Select LIN (optional)</option>
+                            <option value="">Select ULP </option>
                             {linFilesList.map((f) => (
                               <option key={f.id} value={f.id}>{f.name}</option>
                             ))}
@@ -2258,7 +3460,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                             <div className="px-3 py-2 border-r border-slate-300">ERoM</div>
                             <div className="px-3 py-2 border-r border-slate-300">ULP</div>
                             <div className="px-2 py-2 text-center border-r border-slate-300">try</div>
-                            <div className="px-3 py-2 text-right">Actions</div>
+                            <div className="px-3 py-2 text-center">Actions</div>
                           </div>
                           {selectedPairs.map((pair, idx) => {
                             const vcdName = vcdFilesList.find((f) => f.id === pair.vcdId)?.name || '—';
@@ -2338,7 +3540,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                     onClick={(e) => e.stopPropagation()}
                                     className="w-full px-2 py-1 text-xs rounded border border-slate-300 bg-white focus:border-blue-400 focus:ring-1 focus:ring-blue-400 cursor-pointer"
                                   >
-                                    <option value="">— Select ULP (optional) —</option>
+                                    <option value="">— Select ULP  —</option>
                                     {linFilesList.map((f) => (
                                       <option key={f.id} value={f.id}>{f.name}</option>
                                     ))}
@@ -2380,7 +3582,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                     title="จำนวนรอบในการ test (พิมพ์ได้, default: 1)"
                                   />
                                 </div>
-                                <div className="px-3 py-2 flex items-center justify-end gap-1">
+                                <div className="px-3 py-2 flex items-center justify-center gap-1">
                                   <span
                                     draggable
                                     onDragStart={(e) => {
@@ -2682,9 +3884,10 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
 
                               try {
                                 setIsCreatingBatch(true);
-                                const created = await createJob(jobPayload);
-                                if (created) {
-                                  // ถ้าเป็น edit mode ให้ clear edit state
+                                const result = editJobId
+                                  ? await updateJob(editJobId, jobPayload)
+                                  : await createJob(jobPayload);
+                                if (result) {
                                   if (editJobId && onEditComplete) {
                                     onEditComplete();
                                   }
@@ -2694,14 +3897,15 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                   setSelectedTestCaseIds([]);
                                   setTag('');
                                   setConfigName('Default_Setup');
-                                  addToast({ 
-                                    type: 'success', 
-                                    message: editJobId 
-                                      ? 'Batch updated successfully (new batch created).' 
-                                      : 'Batch created successfully.' 
+                                  addToast({
+                                    type: 'success',
+                                    message: editJobId ? 'Batch updated successfully.' : 'Batch created successfully.',
                                   });
                                 } else {
-                                  addToast({ type: 'error', message: 'Failed to create batch.' });
+                                  addToast({
+                                    type: 'error',
+                                    message: editJobId ? 'Failed to update batch.' : 'Failed to create batch.',
+                                  });
                                 }
                               } finally {
                                 setIsCreatingBatch(false);
@@ -2711,12 +3915,12 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                             {isCreatingBatch ? (
                               <>
                                 <RefreshCw size={16} className="animate-spin" />
-                                Creating...
+                                {editJobId ? 'Updating...' : 'Creating...'}
                               </>
                             ) : (
                               <>
                                 <Play size={16} />
-                                Create Batch
+                                {editJobId ? 'Update Batch' : 'Create Batch'}
                               </>
                             )}
                           </button>
@@ -2878,9 +4082,12 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
     jobs, 
     startPendingJobs,
     stopAllJobs,
+    stopJob,
     moveJobUp,
     moveJobDown,
-    stopFile, 
+    moveJobToIndex,
+    stopFile,
+    rerunFile,
     moveFileUp, 
     moveFileDown, 
     updateJobTag, 
@@ -2895,18 +4102,36 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
   const [editingTag, setEditingTag] = useState(null);
   const [tagInput, setTagInput] = useState('');
   const [testCasesView, setTestCasesView] = useState(null); // jobId ที่กำลังดู test cases
+  const [expandedDetailsJobs, setExpandedDetailsJobs] = useState([]); // job ids ที่แสดง details (Firmware, Boards, Progress, Files)
   const [testCasesFilter, setTestCasesFilter] = useState('all'); // 'all' | 'running' | 'completed' | 'pending' | 'failed'
   const [testCasesSearch, setTestCasesSearch] = useState('');
   const [isRunningBatch, setIsRunningBatch] = useState(false);
   const [isStoppingAll, setIsStoppingAll] = useState(false);
+  const [isStoppingSelected, setIsStoppingSelected] = useState(false);
   const [selectedJobIds, setSelectedJobIds] = useState([]); // สำหรับเลือก batch ที่ต้องการ run
+  const [selectAllColumn, setSelectAllColumn] = useState('pending'); // 'pending' | 'running' | 'completed' - column สำหรับ Select All
   const [dragStartIndex, setDragStartIndex] = useState(null); // สำหรับ drag selection
   const [isDragging, setIsDragging] = useState(false); // track ว่ากำลัง drag อยู่หรือไม่
-  const [completedJobsFilter, setCompletedJobsFilter] = useState('all'); // 'today' | 'week' | 'month' | 'all'
-  const [completedJobsSearch, setCompletedJobsSearch] = useState(''); // Search text
-  const [completedJobsTagFilter, setCompletedJobsTagFilter] = useState(''); // Filter by tag
-  const [completedJobsConfigFilter, setCompletedJobsConfigFilter] = useState(''); // Filter by config name
-  
+  // Single search + dropdown filters for Job Management
+  const [jobsSearch, setJobsSearch] = useState('');
+  const [jobsStatusFilter, setJobsStatusFilter] = useState('all'); // 'all' | 'pending' | 'running' | 'completed'
+  const [jobsTagFilter, setJobsTagFilter] = useState('');
+  const [jobsConfigFilter, setJobsConfigFilter] = useState('');
+  const [jobsTimeFilter, setJobsTimeFilter] = useState('all'); // 'today' | 'week' | 'month' | 'all'
+  const [draggingJobId, setDraggingJobId] = useState(null);
+
+  // จาก History: เปิด job นั้นและโฟกัสที่ test cases/files
+  useEffect(() => {
+    if (!expandJobId) return;
+    setExpandedJobs(prev => prev.includes(expandJobId) ? prev : [...prev, expandJobId]);
+    setTestCasesView(expandJobId);
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`job-${expandJobId}`);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    onExpandComplete();
+  }, [expandJobId]);
+
   const toggleJobExpanded = (jobId) => {
     setExpandedJobs(prev => 
       prev.includes(jobId) 
@@ -2926,6 +4151,33 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
       } else {
         addToast({ type: 'error', message: 'Failed to stop all jobs.' });
       }
+    }
+  };
+
+  const handleStopSelected = async () => {
+    const runningSelected = selectedJobIds.filter((id) => {
+      const job = jobs.find((j) => j.id === id);
+      return job && job.status === 'running';
+    });
+    if (runningSelected.length === 0) {
+      addToast({ type: 'warning', message: 'No running batch selected. Select running batch(es) to stop.' });
+      return;
+    }
+    if (!window.confirm(`Stop ${runningSelected.length} selected running batch(es)?`)) return;
+    if (isStoppingSelected) return;
+    setIsStoppingSelected(true);
+    const results = await Promise.allSettled(runningSelected.map((jobId) => stopJob(jobId)));
+    setIsStoppingSelected(false);
+    const ok = results.filter((r) => r.status === 'fulfilled' && r.value).length;
+    const failed = results.length - ok;
+    if (failed === 0) {
+      addToast({ type: 'success', message: `${ok} batch(es) stopped.` });
+      setSelectedJobIds((prev) => prev.filter((id) => !runningSelected.includes(id)));
+    } else if (ok > 0) {
+      addToast({ type: 'warning', message: `${ok} stopped, ${failed} failed.` });
+      setSelectedJobIds((prev) => prev.filter((id) => !runningSelected.includes(id)));
+    } else {
+      addToast({ type: 'error', message: 'Failed to stop selected batches.' });
     }
   };
 
@@ -2955,11 +4207,13 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
     );
   };
 
-  const toggleSelectAllJobs = () => {
-    if (selectedJobIds.length === jobs.length) {
-      setSelectedJobIds([]);
+  const toggleSelectAllJobs = (columnIds) => {
+    if (!columnIds || columnIds.length === 0) return;
+    const allInColumnSelected = columnIds.every(id => selectedJobIds.includes(id));
+    if (allInColumnSelected) {
+      setSelectedJobIds(prev => prev.filter(id => !columnIds.includes(id)));
     } else {
-      setSelectedJobIds(jobs.map(j => j.id));
+      setSelectedJobIds(prev => [...new Set([...prev.filter(id => !columnIds.includes(id)), ...columnIds])]);
     }
   };
 
@@ -3080,6 +4334,17 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
     return [...job.files].sort((a, b) => (a.order || 0) - (b.order || 0));
   };
 
+  // สีการ์ดตามสถานะ: เขียว = ผ่านทั้งหมด, แดง = มี fail
+  const getCardStatusStyle = (job) => {
+    const hasFail = (job.files || []).some(f => f.result === 'fail' || f.status === 'error');
+    if (job.status === 'running') return 'border-l-4 border-l-blue-500';
+    if (job.status === 'pending') return 'border-l-4 border-l-amber-500';
+    if (job.status === 'completed' || job.status === 'stopped') {
+      return hasFail ? 'border-l-4 border-l-red-500' : 'border-l-4 border-l-emerald-500';
+    }
+    return 'border-l-4 border-l-slate-300';
+  };
+
   // Helper function to get job date for sorting (newest first)
   const getJobDate = (job) => {
     // สำหรับ pending/running: ใช้ createdAt หรือ startedAt (ใหม่สุด)
@@ -3104,18 +4369,19 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
     return dateB - dateA; // newest first
   });
 
-  // แบ่ง jobs เป็น Running และ Completed (เรียงตาม date แล้ว)
-  const runningJobs = sortedAllJobs
-    .filter(j => j.status === 'running' || j.status === 'pending')
-    .sort((a, b) => {
-      // Sort running jobs by date (newest first)
-      const dateA = getJobDate(a);
-      const dateB = getJobDate(b);
-      return dateB - dateA;
-    });
-  
-  // Filter completed jobs by date, search, tag, and config name
-  const filterCompletedJobs = (jobsList) => {
+  // แบ่ง jobs เป็น Pending | Running | Completed (เรียงตาม date แล้ว)
+  const sortByDate = (list) =>
+    [...list].sort((a, b) => getJobDate(b) - getJobDate(a));
+
+  const pendingJobs = sortByDate(
+    sortedAllJobs.filter(j => (j.status || '').toLowerCase() === 'pending')
+  );
+  const runningJobs = sortByDate(
+    sortedAllJobs.filter(j => (j.status || '').toLowerCase() === 'running')
+  );
+
+  // Apply single search + tag + config + time to any job list
+  const applyJobsFilters = (jobsList) => {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const weekAgo = new Date(today);
@@ -3123,106 +4389,150 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
     const monthAgo = new Date(today);
     monthAgo.setMonth(monthAgo.getMonth() - 1);
 
-    let filtered = jobsList.filter(job => {
-      // Filter by date
-      const jobDate = getJobDate(job);
-      let dateMatch = true;
-      switch (completedJobsFilter) {
-        case 'today':
-          dateMatch = jobDate >= today;
-          break;
-        case 'week':
-          dateMatch = jobDate >= weekAgo;
-          break;
-        case 'month':
-          dateMatch = jobDate >= monthAgo;
-          break;
-        case 'all':
-        default:
-          dateMatch = true;
-      }
-      if (!dateMatch) return false;
-
-      // Filter by tag
-      if (completedJobsTagFilter) {
-        const jobTag = (job.tag || '').toLowerCase();
-        const filterTag = completedJobsTagFilter.toLowerCase();
-        if (!jobTag.includes(filterTag)) return false;
-      }
-
-      // Filter by config name
-      if (completedJobsConfigFilter) {
-        const jobConfig = (job.configName || '').toLowerCase();
-        const filterConfig = completedJobsConfigFilter.toLowerCase();
-        if (!jobConfig.includes(filterConfig)) return false;
-      }
-
-      // Search in name, id, firmware, boards
-      if (completedJobsSearch) {
-        const searchLower = completedJobsSearch.toLowerCase();
+    return jobsList.filter(job => {
+      // Search text
+      if (jobsSearch.trim()) {
+        const searchLower = jobsSearch.trim().toLowerCase();
         const nameMatch = (job.name || '').toLowerCase().includes(searchLower);
         const idMatch = (job.id || '').toLowerCase().includes(searchLower);
         const firmwareMatch = (job.firmware || '').toLowerCase().includes(searchLower);
-        const boardsMatch = (job.boards || []).some(b => b.toLowerCase().includes(searchLower));
+        const boardsMatch = (job.boards || []).some(b => (b || '').toLowerCase().includes(searchLower));
         const tagMatch = (job.tag || '').toLowerCase().includes(searchLower);
         const configMatch = (job.configName || '').toLowerCase().includes(searchLower);
-        
-        if (!nameMatch && !idMatch && !firmwareMatch && !boardsMatch && !tagMatch && !configMatch) {
-          return false;
+        if (!nameMatch && !idMatch && !firmwareMatch && !boardsMatch && !tagMatch && !configMatch) return false;
+      }
+      // Tag
+      if (jobsTagFilter) {
+        const jobTag = (job.tag || '').toLowerCase();
+        if (!jobTag.includes(jobsTagFilter.toLowerCase())) return false;
+      }
+      // Config
+      if (jobsConfigFilter) {
+        const jobConfig = (job.configName || '').trim();
+        if (jobConfig !== jobsConfigFilter) return false;
+      }
+      // Time (by job date)
+      if (jobsTimeFilter !== 'all') {
+        const jobDate = getJobDate(job);
+        switch (jobsTimeFilter) {
+          case 'today': if (jobDate < today) return false; break;
+          case 'week': if (jobDate < weekAgo) return false; break;
+          case 'month': if (jobDate < monthAgo) return false; break;
+          default: break;
         }
       }
-
       return true;
-    }).sort((a, b) => {
-      // Sort by date (newest first)
-      const dateA = getJobDate(a);
-      const dateB = getJobDate(b);
-      return dateB - dateA;
     });
-
-    return filtered;
   };
 
+  const filteredPendingJobs = sortByDate(applyJobsFilters(pendingJobs));
+  const filteredRunningJobs = sortByDate(applyJobsFilters(runningJobs));
   const allCompletedJobs = sortedAllJobs.filter(j => j.status === 'completed' || j.status === 'stopped');
-  const completedJobs = filterCompletedJobs(allCompletedJobs);
+  const completedJobsFiltered = sortByDate(applyJobsFilters(allCompletedJobs));
 
-  // Get unique tags and config names for filter dropdowns
-  const uniqueTags = [...new Set(allCompletedJobs.map(j => j.tag).filter(Boolean))].sort();
-  const uniqueConfigNames = [...new Set(allCompletedJobs.map(j => j.configName).filter(Boolean))].sort();
+  // Simulated completed batch for demo when there are no real completed jobs
+  const DEMO_COMPLETED_JOB = {
+    id: 'demo-completed',
+    name: 'Demo completed batch',
+    status: 'completed',
+    progress: 100,
+    tag: 'Demo',
+    configName: 'Default_Setup',
+    totalFiles: 3,
+    completedFiles: 3,
+    firmware: 'abi_many_args_2.bin',
+    boards: ['Demo Board 1'],
+    startedAt: new Date(Date.now() - 3600000).toISOString(),
+    completedAt: new Date().toISOString(),
+    files: [
+      { id: 1, name: 'test_case_1.vcd', status: 'completed', result: 'pass', order: 1 },
+      { id: 2, name: 'test_case_2.vcd', status: 'completed', result: 'pass', order: 2 },
+      { id: 3, name: 'test_case_3.vcd', status: 'completed', result: 'pass', order: 3 },
+    ],
+  };
+  // Demo batch ที่มีบาง test case fail (สำหรับพรีเซนต์ - แสดงการ์ดสีแดง)
+  const DEMO_FAILED_JOB = {
+    id: 'demo-failed',
+    name: 'Demo failed batch (some tests failed)',
+    status: 'completed',
+    progress: 100,
+    tag: 'Demo',
+    configName: 'Default_Setup',
+    totalFiles: 3,
+    completedFiles: 3,
+    firmware: 'demo_erom_1.erom',
+    boards: ['Demo Board 2'],
+    startedAt: new Date(Date.now() - 7200000).toISOString(),
+    completedAt: new Date(Date.now() - 3600000).toISOString(),
+    files: [
+      { id: 1, name: 'test_case_1.vcd', status: 'completed', result: 'pass', order: 1 },
+      { id: 2, name: 'test_case_2.vcd', status: 'completed', result: 'fail', order: 2 },
+      { id: 3, name: 'test_case_3.vcd', status: 'completed', result: 'pass', order: 3 },
+    ],
+  };
+  // แสดง demo completed/error เสมอด้านบนของ completed column เพื่อใช้พรีเซนต์
+  const displayCompletedJobs = [
+    DEMO_COMPLETED_JOB,
+    DEMO_FAILED_JOB,
+    ...completedJobsFiltered,
+  ];
+
+  // Unique tags and configs from all jobs (for dropdowns)
+  const uniqueTags = [...new Set(jobs.map(j => j.tag).filter(Boolean))].sort();
+  const uniqueConfigs = [...new Set(jobs.map(j => j.configName).filter(Boolean))].sort();
+  const hasActiveFilters = !!(jobsSearch.trim() || jobsTagFilter || jobsConfigFilter || jobsTimeFilter !== 'all');
 
   // Component สำหรับ render job card (ใช้ซ้ำได้)
+  const toggleDetails = (jobId) => {
+    setExpandedDetailsJobs(prev => prev.includes(jobId) ? prev.filter(id => id !== jobId) : [...prev, jobId]);
+  };
+
   const renderJobCard = (job, jobIndex, allJobs) => {
+    const isDemoJob = job.id === 'demo-completed' || job.id === 'demo-failed';
     const sortedFiles = getSortedFiles(job);
     const isExpanded = expandedJobs.includes(job.id);
+    const showDetails = expandedDetailsJobs.includes(job.id);
     const runningFiles = sortedFiles.filter(f => f.status === 'running');
     
     return (
       <div 
         key={job.id} 
         id={`job-${job.id}`} 
-        className={`bg-white rounded-2xl border shadow-sm overflow-hidden transition-all ${
+        className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${getCardStatusStyle(job)} ${
           selectedJobIds.includes(job.id) ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200'
-        }`}
+        } ${draggingJobId === job.id ? 'opacity-50' : ''}`}
         onClick={(e) => {
-          // ไม่ toggle selection ถ้าคลิกที่ button, input, checkbox, หรือ element ที่มี stopPropagation
-          if (e.target.closest('button') || 
-              e.target.closest('input') || 
-              e.target.closest('select') ||
-              e.target.closest('[data-no-select]')) {
+          if (e.target.closest('button') || e.target.closest('input') || e.target.closest('select') || e.target.closest('[data-no-select]')) {
             return;
           }
-          // Toggle selection เมื่อคลิกที่พื้นที่ว่าง
-          toggleJobSelection(job.id);
+          // คลิกที่การ์ด = เปิด/ปิดรายการไฟล์ (ดูไฟล์ทั้งหมด)
+          toggleJobExpanded(job.id);
         }}
+        onDragOver={isDemoJob || job.status === 'running' ? undefined : (e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+        }}
+        onDrop={isDemoJob || job.status === 'running' ? undefined : (e) => {
+          e.preventDefault();
+          const jobId = e.dataTransfer.getData('application/x-job-id') || e.dataTransfer.getData('text/plain');
+          const fromIndex = parseInt(e.dataTransfer.getData('application/x-job-from-index'), 10);
+          const toIndex = allJobs.findIndex(j => j.id === job.id);
+          if (jobId && !Number.isNaN(fromIndex) && toIndex >= 0 && fromIndex !== toIndex) {
+            moveJobToIndex(jobId, toIndex, allJobs);
+          }
+          setDraggingJobId(null);
+        }}
+        onDragEnd={() => setDraggingJobId(null)}
       >
         {/* Job Header */}
-        <div className="p-6 border-b border-slate-100">
-          <div className="flex flex-col gap-4">
+        <div className="p-3 border-b border-slate-100">
+          <div className="flex flex-col gap-0">
             {/* Top Row: Batch Info */}
-            <div className="flex justify-between items-start gap-4">
-              <div className="flex-1 min-w-0" data-no-select>
-                <div className="flex items-center gap-3 mb-2 flex-wrap" data-no-select>
-                  {/* Checkbox for selection */}
+            <div className="flex justify-between items-center gap-3">
+              <div className="flex-1 min-w-0 overflow-hidden" data-no-select>
+                <div className="flex items-center gap-2 mb-0.5 flex-wrap" data-no-select>
+                  {/* Checkbox for selection (hidden for demo job) */}
+                  {!isDemoJob && (
                   <input
                     type="checkbox"
                     checked={selectedJobIds.includes(job.id)}
@@ -3235,50 +4545,54 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                     className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer shrink-0"
                     title="Select this batch"
                   />
-                  <h3 className="text-xl font-bold text-slate-800">Batch #{job.id}</h3>
-                  <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase shrink-0 ${
+                  )}
+                  {isDemoJob && (
+                    <span className="px-2 py-0.5 bg-slate-200 text-slate-500 rounded text-xs font-semibold">Demo</span>
+                  )}
+                  <span className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
+                    <h3 className="text-lg font-bold text-slate-800 truncate" title={`Batch #${job.id}`}>Batch #{job.id}</h3>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-bold uppercase shrink-0 ${
                     job.status === 'running' ? 'bg-blue-100 text-blue-700' :
-                    job.status === 'completed' ? 'bg-emerald-100 text-emerald-700' :
-                    job.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-slate-100 text-slate-700'
+                    job.status === 'pending' ? 'bg-amber-100 text-amber-700' :
+                    (job.status === 'completed' || job.status === 'stopped')
+                      ? ((job.files || []).some(f => f.result === 'fail' || f.status === 'error') ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700')
+                      : 'bg-slate-100 text-slate-700'
                   }`}>
-                    {job.status}
+                    {(job.status === 'completed' || job.status === 'stopped') && (job.files || []).some(f => f.result === 'fail')
+                      ? 'Failed'
+                      : job.status
+                    }
                   </span>
                   {job.tag && (
-                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-700 flex items-center gap-1 shrink-0">
+                    <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-700 flex items-center gap-1 shrink-0">
                       <Tag size={12} />
                       {job.tag}
                     </span>
                   )}
+                  </span>
                 </div>
-                <p className="text-slate-600 mb-3">{job.name}</p>
-                <div className="flex items-center gap-6 text-sm text-slate-500 flex-wrap">
-                  <span>Firmware: <strong className="text-slate-700">{job.firmware}</strong></span>
-                  <span>Boards: <strong className="text-slate-700">{job.boards?.join(', ')}</strong></span>
-                  <span>Progress: <strong className="text-slate-700">{job.progress}%</strong></span>
-                  <span>Files: <strong className="text-slate-700">{job.completedFiles}/{job.totalFiles}</strong></span>
-                  {/* Date Badge */}
-                  {(job.completedAt || job.startedAt) && (
-                    <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs font-semibold">
-                      {(() => {
-                        const date = job.completedAt ? new Date(job.completedAt) : new Date(job.startedAt);
-                        const now = new Date();
-                        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-                        const jobDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-                        
-                        if (jobDate.getTime() === today.getTime()) {
-                          return `Today ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
-                        } else {
-                          return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
-                        }
-                      })()}
-                    </span>
-                  )}
-                </div>
+                <p className="text-slate-600 text-sm line-clamp-2 break-words" title={job.name}>{job.name || '—'}</p>
               </div>
               
-              {/* Move Buttons */}
-              <div className="flex flex-col gap-1 shrink-0" data-no-select>
+              {/* Reorder: Drag handle + Up/Down (hidden for demo job และ Running column) */}
+              {!isDemoJob && job.status !== 'running' && (
+              <div className="flex flex-col gap-1 shrink-0 items-center" data-no-select>
+                <div
+                  className="flex items-center justify-center p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-500 cursor-grab active:cursor-grabbing"
+                  draggable
+                  onDragStart={(e) => {
+                    e.stopPropagation();
+                    setDraggingJobId(job.id);
+                    e.dataTransfer.setData('application/x-job-id', job.id);
+                    e.dataTransfer.setData('text/plain', job.id);
+                    e.dataTransfer.setData('application/x-job-from-index', String(jobIndex));
+                    e.dataTransfer.effectAllowed = 'move';
+                  }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  title="Drag to reorder"
+                >
+                  <GripVertical size={16} />
+                </div>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -3287,10 +4601,10 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                   }}
                   onMouseDown={(e) => e.stopPropagation()}
                   disabled={jobIndex === 0}
-                  className={`p-2 rounded-lg border text-slate-600 ${jobIndex === 0 ? 'opacity-30 cursor-not-allowed border-slate-200' : 'hover:bg-slate-50 border-slate-200'}`}
+                  className={`p-1.5 rounded-lg border text-slate-600 ${jobIndex === 0 ? 'opacity-30 cursor-not-allowed border-slate-200' : 'hover:bg-slate-50 border-slate-200'}`}
                   title="Move batch up"
                 >
-                  <ArrowUp size={16} />
+                  <ArrowUp size={14} />
                 </button>
                 <button
                   onClick={(e) => {
@@ -3300,96 +4614,27 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                   }}
                   onMouseDown={(e) => e.stopPropagation()}
                   disabled={jobIndex === allJobs.length - 1}
-                  className={`p-2 rounded-lg border text-slate-600 ${jobIndex === allJobs.length - 1 ? 'opacity-30 cursor-not-allowed border-slate-200' : 'hover:bg-slate-50 border-slate-200'}`}
+                  className={`p-1.5 rounded-lg border text-slate-600 ${jobIndex === allJobs.length - 1 ? 'opacity-30 cursor-not-allowed border-slate-200' : 'hover:bg-slate-50 border-slate-200'}`}
                   title="Move batch down"
                 >
-                  <ArrowDown size={16} />
+                  <ArrowDown size={14} />
                 </button>
               </div>
+              )}
             </div>
-            
-            {/* Bottom Row: Action Buttons */}
-            <div className="flex items-center gap-2 flex-wrap" data-no-select>
-              {editingTag === job.id ? (
-                <div className="flex items-center gap-2 flex-wrap" data-no-select>
-                  <input
-                    type="text"
-                    value={tagInput}
-                    onChange={(e) => {
-                      e.stopPropagation();
-                      setTagInput(e.target.value);
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    placeholder="Enter tag/group"
-                    className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    onKeyDown={(e) => {
-                      e.stopPropagation();
-                      if (e.key === 'Enter') handleSaveTag(job.id);
-                      if (e.key === 'Escape') handleCancelTag();
-                    }}
-                    autoFocus
-                  />
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      handleSaveTag(job.id);
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700"
-                  >
-                    Save
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      handleCancelTag();
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="px-3 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-300"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      handleEditTag(job);
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-200 transition-all flex items-center gap-1 shrink-0"
-                  >
-                    <Tag size={14} />
-                    {job.tag ? 'Edit Tag' : 'Add Tag'}
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      exportJobToJSON(job.id);
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-bold hover:bg-blue-200 transition-all flex items-center gap-1 shrink-0"
-                  >
-                    <FileJson size={14} />
-                    Export JSON
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      toggleJobExpanded(job.id);
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-200 transition-all shrink-0"
-                  >
-                    {isExpanded ? 'Hide Files' : 'Show Files'}
-                  </button>
+            {/* Action Row: Details (with nested actions) + View Progress, Edit, Delete */}
+            <div className="flex items-center gap-2 flex-wrap pt-1.5" data-no-select>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleDetails(job.id); }}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors shrink-0"
+                title="Show batch details"
+              >
+                {showDetails ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                Details
+              </button>
+              {/* Main actions on the same row */}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -3397,12 +4642,12 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                       setTestCasesView(testCasesView === job.id ? null : job.id);
                     }}
                     onMouseDown={(e) => e.stopPropagation()}
-                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-all flex items-center gap-1.5 shrink-0"
+                    className="px-2 py-1 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-all flex items-center gap-1 shrink-0"
                   >
-                    <Eye size={14} />
+                    <Eye size={12} />
                     {testCasesView === job.id ? 'Hide Progress' : 'View Progress'}
                   </button>
-                  {onEditJob && (
+                  {onEditJob && (job.status || '').toLowerCase() !== 'running' && !isDemoJob && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -3410,40 +4655,151 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                         onEditJob(job.id);
                       }}
                       onMouseDown={(e) => e.stopPropagation()}
-                      className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700 transition-all flex items-center gap-1.5 shrink-0"
+                      className="px-2 py-1 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-all flex items-center gap-1 shrink-0"
                       title="Edit this batch - Load pairs table for editing"
                     >
-                      <Pencil size={14} />
+                      <Pencil size={12} />
                       Edit Batch
                     </button>
                   )}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      handleDeleteJob(job.id, job.name);
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700 transition-all flex items-center gap-1.5 shrink-0"
-                    title="Delete this batch"
-                  >
-                    <XCircle size={14} />
-                    Delete
-                  </button>
-                </>
-              )}
+                  {!isDemoJob && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        handleDeleteJob(job.id, job.name);
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="px-2 py-1 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 transition-all flex items-center gap-1 shrink-0"
+                      title="Delete this batch"
+                    >
+                      <XCircle size={12} />
+                      Delete
+                    </button>
+                  )}
             </div>
+            {showDetails && (
+              <div className="mt-2 pt-2 border-t border-slate-100 space-y-2 text-xs text-slate-500">
+                {/* Summary line */}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span>Firmware: <strong className="text-slate-700">{job.firmware}</strong></span>
+                  <span>Boards: <strong className="text-slate-700">{job.boards?.join(', ')}</strong></span>
+                  <span>Progress: <strong className="text-slate-700">{job.progress}%</strong></span>
+                  <span>Files: <strong className="text-slate-700">{job.completedFiles}/{job.totalFiles}</strong></span>
+                  {(job.completedAt || job.startedAt) && (
+                    <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs font-semibold">
+                      {(() => {
+                        const date = job.completedAt ? new Date(job.completedAt) : new Date(job.startedAt);
+                        const now = new Date();
+                        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                        const jobDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+                        if (jobDate.getTime() === today.getTime()) {
+                          return `Today ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+                        }
+                        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+                      })()}
+                    </span>
+                  )}
+                </div>
+
+                {/* Inline actions hiddenภายใต้ Details */}
+                {editingTag === job.id ? (
+                  <div className="flex items-center gap-2 flex-wrap" data-no-select>
+                    <input
+                      type="text"
+                      value={tagInput}
+                      onChange={(e) => {
+                        e.stopPropagation();
+                        setTagInput(e.target.value);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      placeholder="Enter tag/group"
+                      className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      onKeyDown={(e) => {
+                        e.stopPropagation();
+                        if (e.key === 'Enter') handleSaveTag(job.id);
+                        if (e.key === 'Escape') handleCancelTag();
+                      }}
+                      autoFocus
+                    />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        handleSaveTag(job.id);
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700"
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        handleCancelTag();
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="px-3 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-300"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 flex-wrap" data-no-select>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        handleEditTag(job);
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="px-2 py-1 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-200 transition-all flex items-center gap-1 shrink-0"
+                    >
+                      <Tag size={12} />
+                      {job.tag ? 'Edit Tag' : 'Add Tag'}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        exportJobToJSON(job.id);
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="px-2 py-1 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition-all flex items-center gap-1 shrink-0"
+                    >
+                      <FileJson size={12} />
+                      Export JSON
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        toggleJobExpanded(job.id);
+                      }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="px-2 py-1 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-200 transition-all shrink-0"
+                    >
+                      {isExpanded ? 'Hide Files' : 'Show Files'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           
-          {/* Progress Bar */}
-          <div className="mt-4">
-            <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-blue-600 transition-all duration-1000" 
-                style={{ width: `${job.progress}%` }}
-              ></div>
+          {/* Progress Bar (แสดงเฉพาะเมื่อมี progress > 0 เพื่อไม่ให้ดูเป็นพื้นที่ว่างใน PENDING) */}
+          {(job.progress || 0) > 0 && (
+            <div className="mt-2">
+              <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-blue-600 transition-all duration-1000" 
+                  style={{ width: `${job.progress}%` }}
+                ></div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
         
         {/* Test Cases Progress View */}
@@ -3456,14 +4812,15 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
             onFilterChange={setTestCasesFilter}
             onSearchChange={setTestCasesSearch}
             onStopFile={(fileId) => stopFile(job.id, fileId)}
+            onRerunFile={(fileId) => rerunFile(job.id, fileId)}
           />
         )}
         
         {/* Files/Test Cases List (Expandable) */}
         {isExpanded && (
-          <div className="p-6 bg-slate-50">
-            <h4 className="text-sm font-bold text-slate-600 uppercase mb-4">Test Cases in Batch (Sorted by Order)</h4>
-            <p className="text-xs text-slate-500 mb-4">Note: Each file = 1 test case</p>
+          <div className="p-4 bg-slate-50">
+            <h4 className="text-xs font-bold text-slate-600 uppercase mb-2">Test Cases in Batch (Sorted by Order)</h4>
+            <p className="text-xs text-slate-500 mb-2">Note: Each file = 1 test case</p>
             {sortedFiles.length > 0 ? (
               <>
                 {/* Failed Files Alert */}
@@ -3543,6 +4900,7 @@ Recommendations:
                       index={index}
                       totalFiles={sortedFiles.length}
                       onStop={() => stopFile(job.id, file.id)}
+                      onRerun={() => rerunFile(job.id, file.id)}
                       onMoveUp={() => moveFileUp(job.id, file.id)}
                       onMoveDown={() => moveFileDown(job.id, file.id)}
                     />
@@ -3561,28 +4919,46 @@ Recommendations:
   };
   
   return (
-  <div className="space-y-4">
-    <div className="flex justify-between items-center">
-        <div>
-      <h1 className="text-3xl font-bold">Job Management</h1>
-          <p className="text-slate-500 mt-1">Manage and monitor all test jobs</p>
+  <div className="space-y-4 min-w-0">
+    <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-center gap-3">
+        <div className="min-w-0">
+      <h1 className="text-2xl sm:text-3xl font-bold">Job Management</h1>
+          <p className="text-slate-500 mt-1 text-sm sm:text-base">Manage and monitor all test jobs</p>
         </div>
-      <div className="flex gap-3 items-center">
-        {/* Select All Checkbox */}
-        {jobs.length > 0 && (
-          <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-lg border border-slate-200">
-            <input
-              type="checkbox"
-              checked={selectedJobIds.length === jobs.length && jobs.length > 0}
-              onChange={toggleSelectAllJobs}
-              className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-              title="Select all batches"
-            />
-            <span className="text-sm font-semibold text-slate-700">
-              {selectedJobIds.length > 0 ? `${selectedJobIds.length} selected` : 'Select All'}
-            </span>
-          </div>
-        )}
+      <div className="flex flex-wrap gap-2 sm:gap-3 items-center">
+        {/* Select All: เลือก column ก่อน แล้วกด Select All จะเลือกเฉพาะ batch ใน column นั้น */}
+        {jobs.length > 0 && (() => {
+          const selectAllColumnIds = selectAllColumn === 'pending'
+            ? filteredPendingJobs.map(j => j.id)
+            : selectAllColumn === 'running'
+              ? filteredRunningJobs.map(j => j.id)
+              : displayCompletedJobs.filter(j => j.id !== 'demo-completed' && j.id !== 'demo-failed').map(j => j.id);
+          const allSelectedInColumn = selectAllColumnIds.length > 0 && selectAllColumnIds.every(id => selectedJobIds.includes(id));
+          return (
+            <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-lg border border-slate-200">
+              <select
+                value={selectAllColumn}
+                onChange={(e) => setSelectAllColumn(e.target.value)}
+                className="px-2 py-1.5 border border-slate-300 rounded-lg text-sm font-semibold bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                title="เลือก column ก่อนแล้วกด Select All"
+              >
+                <option value="pending">Pending</option>
+                <option value="running">Running</option>
+                <option value="completed">Completed</option>
+              </select>
+              <input
+                type="checkbox"
+                checked={allSelectedInColumn}
+                onChange={() => toggleSelectAllJobs(selectAllColumnIds)}
+                className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                title={`Select all batches in ${selectAllColumn} column`}
+              />
+              <span className="text-sm font-semibold text-slate-700">
+                {selectedJobIds.length > 0 ? `${selectedJobIds.length} selected` : `Select All (in ${selectAllColumn})`}
+              </span>
+            </div>
+          );
+        })()}
         
         {/* Run Selected Button */}
         {selectedJobIds.length > 0 && (
@@ -3606,6 +4982,18 @@ Recommendations:
           {isRunningBatch ? 'Starting...' : 'Run All Pending'}
         </button>
         
+        {/* Stop Selected Button (running only) */}
+        {selectedJobIds.some((id) => jobs.find((j) => j.id === id)?.status === 'running') && (
+          <button
+            onClick={handleStopSelected}
+            disabled={isStoppingSelected}
+            className={`bg-red-600 text-white px-6 py-2 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 ${isStoppingSelected ? 'opacity-60 cursor-not-allowed' : 'hover:bg-red-700'}`}
+            title="Stop selected running batch(es)"
+          >
+            <Square size={18} />
+            {isStoppingSelected ? 'Stopping...' : `Stop Selected (${selectedJobIds.filter((id) => jobs.find((j) => j.id === id)?.status === 'running').length})`}
+          </button>
+        )}
         {/* Stop All Button */}
         <button 
           onClick={handleStopAll}
@@ -3629,6 +5017,79 @@ Recommendations:
         )}
       </div>
     </div>
+
+      {/* Single search + filter bar */}
+      <div className="rounded-xl border border-slate-200 bg-white p-3 mb-4 flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search size={16} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={jobsSearch}
+            onChange={(e) => setJobsSearch(e.target.value)}
+            placeholder="Search by name, ID, firmware, boards..."
+            className="w-full pl-8 pr-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <select
+          value={jobsStatusFilter}
+          onChange={(e) => setJobsStatusFilter(e.target.value)}
+          className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm font-medium bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+          title="Column / Status"
+        >
+          <option value="all">All columns</option>
+          <option value="pending">Pending</option>
+          <option value="running">Running</option>
+          <option value="completed">Completed</option>
+        </select>
+        <select
+          value={jobsTagFilter}
+          onChange={(e) => setJobsTagFilter(e.target.value)}
+          className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm font-medium bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer min-w-[120px]"
+          title="Tag"
+        >
+          <option value="">All Tags</option>
+          {uniqueTags.map(tag => (
+            <option key={tag} value={tag}>{tag}</option>
+          ))}
+        </select>
+        <select
+          value={jobsConfigFilter}
+          onChange={(e) => setJobsConfigFilter(e.target.value)}
+          className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm font-medium bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer min-w-[120px]"
+          title="Config"
+        >
+          <option value="">All Configs</option>
+          {uniqueConfigs.map(config => (
+            <option key={config} value={config}>{config}</option>
+          ))}
+        </select>
+        <select
+          value={jobsTimeFilter}
+          onChange={(e) => setJobsTimeFilter(e.target.value)}
+          className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm font-medium bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+          title="Time"
+        >
+          <option value="all">All Time</option>
+          <option value="today">Today</option>
+          <option value="week">This Week</option>
+          <option value="month">This Month</option>
+        </select>
+        {hasActiveFilters && (
+          <button
+            onClick={() => {
+              setJobsSearch('');
+              setJobsTagFilter('');
+              setJobsConfigFilter('');
+              setJobsTimeFilter('all');
+            }}
+            className="px-2 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold hover:bg-slate-300 flex items-center gap-1"
+            title="Clear all filters"
+          >
+            <X size={14} />
+            Clear
+          </button>
+        )}
+      </div>
       
       {(loading?.jobs || errors?.jobs) && (
         <div className={`rounded-xl border px-4 py-3 text-sm ${
@@ -3644,127 +5105,88 @@ Recommendations:
         </div>
       )}
 
-      {/* 2 Columns Layout: Running (Left) | Completed (Right) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left Column: Running Jobs */}
+      {/* Columns: 3 columns when "All", or 1 column when status selected */}
+      <div className={`grid gap-4 ${jobsStatusFilter === 'all' ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-1'}`}>
+        {/* Column 1: Pending - show when all or pending */}
+        {(jobsStatusFilter === 'all' || jobsStatusFilter === 'pending') && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-xl p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
-              <h2 className="text-xl font-bold text-slate-800">Running</h2>
-              <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-bold">
-                {runningJobs.length}
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 bg-amber-500 rounded-full"></div>
+              <h2 className="text-lg font-bold text-slate-800">Pending</h2>
+              <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs font-bold">
+                {filteredPendingJobs.length}
               </span>
             </div>
           </div>
-          
-          <div className="space-y-4 max-h-[calc(100vh-300px)] overflow-y-auto pr-2">
-            {runningJobs.length === 0 ? (
+          <div className="space-y-3 pr-2">
+            {filteredPendingJobs.length === 0 ? (
               <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-slate-400">
-                <p>No running jobs</p>
+                <p>{hasActiveFilters ? 'No matching pending jobs' : 'No pending jobs'}</p>
               </div>
             ) : (
-              runningJobs.map((job, index) => {
+              filteredPendingJobs.map((job) => {
                 const originalIndex = jobs.findIndex(j => j.id === job.id);
-                return renderJobCard(job, originalIndex, runningJobs);
+                return renderJobCard(job, originalIndex, filteredPendingJobs);
               })
             )}
           </div>
         </div>
+        )}
 
-        {/* Right Column: Completed Jobs */}
+        {/* Column 2: Running - show when all or running */}
+        {(jobsStatusFilter === 'all' || jobsStatusFilter === 'running') && (
         <div className="space-y-4">
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 bg-emerald-500 rounded-full"></div>
-                <h2 className="text-xl font-bold text-slate-800">Completed</h2>
-                <span className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm font-bold">
-                  {completedJobs.length}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <select
-                  value={completedJobsFilter}
-                  onChange={(e) => setCompletedJobsFilter(e.target.value)}
-                  className="px-3 py-1.5 border border-emerald-300 rounded-lg text-sm font-semibold bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
-                  title="Filter completed jobs by date"
-                >
-                  <option value="today">Today</option>
-                  <option value="week">This Week</option>
-                  <option value="month">This Month</option>
-                  <option value="all">All Time</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Search */}
-            <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                value={completedJobsSearch}
-                onChange={(e) => setCompletedJobsSearch(e.target.value)}
-                placeholder="Search by name, ID, firmware, boards..."
-                className="w-full pl-10 pr-4 py-2 border border-emerald-300 rounded-lg text-sm bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-
-            {/* Filters: Tag and Config Name */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <select
-                value={completedJobsTagFilter}
-                onChange={(e) => setCompletedJobsTagFilter(e.target.value)}
-                className="flex-1 min-w-[150px] px-3 py-2 border border-emerald-300 rounded-lg text-sm font-semibold bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
-                title="Filter by tag"
-              >
-                <option value="">All Tags</option>
-                {uniqueTags.map(tag => (
-                  <option key={tag} value={tag}>{tag}</option>
-                ))}
-              </select>
-              <select
-                value={completedJobsConfigFilter}
-                onChange={(e) => setCompletedJobsConfigFilter(e.target.value)}
-                className="flex-1 min-w-[150px] px-3 py-2 border border-emerald-300 rounded-lg text-sm font-semibold bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer"
-                title="Filter by config name"
-              >
-                <option value="">All Configs</option>
-                {uniqueConfigNames.map(config => (
-                  <option key={config} value={config}>{config}</option>
-                ))}
-              </select>
-              {(completedJobsSearch || completedJobsTagFilter || completedJobsConfigFilter) && (
-                <button
-                  onClick={() => {
-                    setCompletedJobsSearch('');
-                    setCompletedJobsTagFilter('');
-                    setCompletedJobsConfigFilter('');
-                  }}
-                  className="px-3 py-2 bg-slate-200 text-slate-700 rounded-lg text-sm font-semibold hover:bg-slate-300 transition-all flex items-center gap-1"
-                  title="Clear all filters"
-                >
-                  <X size={14} />
-                  Clear
-                </button>
-              )}
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-pulse"></div>
+              <h2 className="text-lg font-bold text-slate-800">Running</h2>
+              <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">
+                {filteredRunningJobs.length}
+              </span>
             </div>
           </div>
-          
-          <div className="space-y-4 max-h-[calc(100vh-300px)] overflow-y-auto pr-2">
-            {completedJobs.length === 0 ? (
+          <div className="space-y-3 pr-2">
+            {filteredRunningJobs.length === 0 ? (
               <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-slate-400">
-                <p>No completed jobs</p>
+                <p>{hasActiveFilters ? 'No matching running jobs' : 'No running jobs'}</p>
               </div>
             ) : (
-              completedJobs.map((job, index) => {
+              filteredRunningJobs.map((job) => {
                 const originalIndex = jobs.findIndex(j => j.id === job.id);
-                return renderJobCard(job, originalIndex, completedJobs);
+                return renderJobCard(job, originalIndex, filteredRunningJobs);
               })
             )}
           </div>
         </div>
+        )}
+
+        {/* Column 3: Completed - show when all or completed */}
+        {(jobsStatusFilter === 'all' || jobsStatusFilter === 'completed') && (
+        <div className="space-y-4">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full"></div>
+              <h2 className="text-lg font-bold text-slate-800">Completed</h2>
+              <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-xs font-bold">
+                {displayCompletedJobs.length}
+              </span>
+            </div>
+          </div>
+          <div className="space-y-3 pr-2">
+            {displayCompletedJobs.length === 0 ? (
+              <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-slate-400">
+                <p>{hasActiveFilters ? 'No matching completed jobs' : 'No completed jobs'}</p>
+              </div>
+            ) : (
+              displayCompletedJobs.map((job, index) => {
+                const originalIndex = jobs.findIndex(j => j.id === job.id);
+                return renderJobCard(job, originalIndex, displayCompletedJobs);
+              })
+            )}
+          </div>
+        </div>
+        )}
       </div>
     </div>
   );
@@ -3876,14 +5298,14 @@ const BoardsPage = () => {
   const isBoardsLoading = loading?.boards;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 min-w-0">
       {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold">Fleet Manager</h1>
-          <p className="text-slate-500 mt-1">Manage {boards.length} boards across the facility</p>
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-center gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl sm:text-3xl font-bold">Fleet Manager</h1>
+          <p className="text-slate-500 mt-1 text-sm sm:text-base">Manage {boards.length} boards across the facility</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <button
             onClick={() => setShowAddBoard(true)}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition-all"
@@ -3983,11 +5405,11 @@ const BoardsPage = () => {
       
       {/* Batch Actions Bar */}
       {selectedBoards.length > 0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-center justify-between">
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <span className="text-sm font-bold text-blue-900">
             {selectedBoards.length} board(s) selected
           </span>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={async () => {
                 if (!window.confirm(`Delete ${selectedBoards.length} board(s)?`)) return;
@@ -4064,8 +5486,8 @@ const BoardsPage = () => {
       ))}
     </div>
       ) : (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <table className="w-full">
+        <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto overflow-y-hidden">
+          <table className="w-full min-w-[640px]">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="px-6 py-4 text-left">
@@ -4203,8 +5625,10 @@ const HistoryPage = ({ onViewJob }) => {
   const { jobs, exportJobToJSON, exportAllFailedLogs, loading, errors } = useTestStore();
   const [downloadMenuOpen, setDownloadMenuOpen] = useState({});
   
-  // Filter completed jobs
-  const completedJobs = jobs.filter(job => job.status === 'completed');
+  // Filter completed jobs (รวมทั้ง completed และ stopped เพื่อเก็บประวัติ demo run)
+  const completedJobs = jobs.filter(
+    (job) => job.status === 'completed' || job.status === 'stopped'
+  );
 
   if (loading?.jobs) {
     return (
@@ -4221,14 +5645,6 @@ const HistoryPage = ({ onViewJob }) => {
       </div>
     );
   }
-
-  if (completedJobs.length === 0) {
-    return (
-      <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-slate-500">
-        No completed jobs yet
-      </div>
-    );
-  }
   
   // Helper to check if a job has failed files
   const hasFailedFiles = (job) => {
@@ -4240,17 +5656,76 @@ const HistoryPage = ({ onViewJob }) => {
     return (job.files || []).filter(f => f.result === 'fail' || f.status === 'error').length;
   };
   
-  // Helper to format duration (mock for now)
+  // Helper to format duration จาก startedAt / completedAt
   const formatDuration = (job) => {
-    // Mock duration calculation - in real app, calculate from startedAt/endedAt
-    return '1h 22m';
+    if (!job.startedAt || !job.completedAt) return '—';
+    const start = new Date(job.startedAt);
+    const end = new Date(job.completedAt);
+    const diffMs = Math.max(0, end - start);
+    const totalSec = Math.round(diffMs / 1000);
+    const hours = Math.floor(totalSec / 3600);
+    const minutes = Math.floor((totalSec % 3600) / 60);
+    const seconds = totalSec % 60;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m ${seconds}s`;
+    return `${seconds}s`;
   };
   
-  // Helper to format date (mock for now)
+  // Helper to format date จาก completedAt (fallback เป็น startedAt)
   const formatDate = (job) => {
-    // Mock date - in real app, use job.completedAt or job.endedAt
-    return 'Jan 12, 2026';
+    const ts = job.completedAt || job.startedAt;
+    if (!ts) return '—';
+    const d = new Date(ts);
+    return d.toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
+
+  // Demo history data สำหรับกรณีที่ยังไม่มี completed jobs จริง
+  const DEMO_COMPLETED_HISTORY = {
+    id: 'demo-history-pass',
+    name: 'Demo – All tests pass',
+    status: 'completed',
+    tag: 'Demo',
+    configName: 'Demo_Config',
+    totalFiles: 3,
+    completedFiles: 3,
+    firmware: 'demo_erom_1.erom',
+    boards: ['Demo Board 1'],
+    startedAt: new Date(Date.now() - 90 * 60 * 1000).toISOString(),
+    completedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    files: [
+      { id: 1, name: 'demo_case_pass_1.vcd', status: 'completed', result: 'pass', order: 1 },
+      { id: 2, name: 'demo_case_pass_2.vcd', status: 'completed', result: 'pass', order: 2 },
+      { id: 3, name: 'demo_case_pass_3.vcd', status: 'completed', result: 'pass', order: 3 },
+    ],
+  };
+
+  const DEMO_FAILED_HISTORY = {
+    id: 'demo-history-fail',
+    name: 'Demo – Mixed pass / fail',
+    status: 'completed',
+    tag: 'Demo',
+    configName: 'Demo_Config',
+    totalFiles: 3,
+    completedFiles: 3,
+    firmware: 'demo_erom_2.erom',
+    boards: ['Demo Board 2'],
+    startedAt: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+    completedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    files: [
+      { id: 1, name: 'demo_case_1.vcd', status: 'completed', result: 'pass', order: 1 },
+      { id: 2, name: 'demo_case_2.vcd', status: 'completed', result: 'fail', order: 2 },
+      { id: 3, name: 'demo_case_3.vcd', status: 'completed', result: 'pass', order: 3 },
+    ],
+  };
+
+  const displayCompletedJobs =
+    completedJobs.length === 0 ? [DEMO_COMPLETED_HISTORY, DEMO_FAILED_HISTORY] : completedJobs;
   
   // Export functions for different formats
   const exportToCSV = (jobId) => {
@@ -4573,32 +6048,25 @@ Summary:
   }, [downloadMenuOpen]);
   
   return (
-  <div className="space-y-6">
-      <div className="flex justify-between items-end">
-        <div>
-    <h1 className="text-3xl font-bold">Test History</h1>
-          <p className="text-slate-500 mt-1">View completed test batches and their results</p>
+  <div className="space-y-6 min-w-0">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-2">
+        <div className="min-w-0">
+    <h1 className="text-2xl sm:text-3xl font-bold">Test History</h1>
+          <p className="text-slate-500 mt-1 text-sm sm:text-base">View completed test batches and their results</p>
         </div>
-        <div className="text-sm text-slate-500">
+        <div className="text-sm text-slate-500 flex-shrink-0">
           {completedJobs.length} completed batch{completedJobs.length !== 1 ? 'es' : ''}
         </div>
       </div>
       
-      {completedJobs.length === 0 ? (
-        <div className="bg-white p-12 rounded-2xl border border-slate-200 text-center">
-          <History size={48} className="text-slate-400 mx-auto mb-4" />
-          <p className="text-slate-600 font-bold">No completed jobs yet</p>
-          <p className="text-slate-400 text-sm mt-2">Completed test batches will appear here</p>
-        </div>
-      ) : (
-    <div className="space-y-4">
-          {completedJobs.map(job => (
+      <div className="space-y-4">
+          {displayCompletedJobs.map(job => (
             <div 
               key={job.id} 
               onClick={() => onViewJob(job.id)}
-              className="bg-white p-6 rounded-2xl border border-slate-200 flex justify-between items-center hover:bg-slate-50 hover:border-blue-300 transition-all group cursor-pointer"
+              className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 hover:bg-slate-50 hover:border-blue-300 transition-all group cursor-pointer min-w-0"
             >
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-4 sm:gap-6 min-w-0">
             <div className={`h-14 w-14 rounded-2xl flex items-center justify-center ${
               hasFailedFiles(job) 
                 ? 'bg-red-50 text-red-600' 
@@ -4610,8 +6078,8 @@ Summary:
                 <CheckCircle2 size={28} />
               )}
             </div>
-            <div>
-                  <h4 className="font-bold text-slate-800 text-lg">Batch #{job.id} - {job.name}</h4>
+            <div className="min-w-0">
+                  <h4 className="font-bold text-slate-800 text-base sm:text-lg truncate">Batch #{job.id} - {job.name}</h4>
                   <p className="text-slate-400 text-sm flex items-center gap-2">
                     <Clock size={14}/> {formatDate(job)} • {formatDuration(job)} duration
                   </p>
@@ -4636,7 +6104,7 @@ Summary:
             </div>
           </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3 flex-shrink-0">
                 <div className="text-right">
                   <div className="text-sm font-bold text-emerald-600">{job.progress}%</div>
                   <div className="text-xs text-slate-400">Completed</div>
@@ -4722,10 +6190,9 @@ Summary:
                 </div>
                 <ChevronRight className="text-slate-300 group-hover:text-blue-500 transition-colors" size={20} />
               </div>
+            </div>
+          ))}
         </div>
-      ))}
-    </div>
-      )}
   </div>
 );
 };
@@ -4796,11 +6263,21 @@ const FileItem = ({ name, size }) => (
 
 // Notification Bell Component with Dropdown
 const NotificationBell = () => {
-  const { notifications, markNotificationRead, markAllNotificationsRead, loading, errors } = useTestStore();
+  const { notifications, localNotifications, markNotificationRead, markAllNotificationsRead, loading, errors } = useTestStore();
   const [showNotifications, setShowNotifications] = useState(false);
   const notificationRef = useRef(null);
-  
-  const unreadCount = notifications.filter(n => !n.read).length;
+
+  // Merge local (job completed) with API notifications; normalize shape for display
+  const mergedNotifications = [
+    ...(localNotifications || []).map((n) => ({ ...n, time: n.createdAt ? 'just now' : undefined })),
+    ...(notifications || []),
+  ].sort((a, b) => {
+    const tA = a.createdAt ? new Date(a.createdAt) : new Date(0);
+    const tB = b.createdAt ? new Date(b.createdAt) : new Date(0);
+    return tB - tA;
+  });
+
+  const unreadCount = mergedNotifications.filter((n) => !n.read).length;
   
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -4866,15 +6343,15 @@ const NotificationBell = () => {
                 <Bell size={32} className="mx-auto mb-2 opacity-50" />
                 <p className="text-sm">Failed to load notifications</p>
               </div>
-            ) : notifications.length === 0 ? (
+            ) : mergedNotifications.length === 0 ? (
               <div className="p-8 text-center text-slate-400">
                 <Bell size={32} className="mx-auto mb-2 opacity-50" />
                 <p className="text-sm">No notifications</p>
               </div>
             ) : (
               <div className="divide-y divide-slate-100">
-                {notifications.map(notif => (
-                  <NotificationItem 
+                {mergedNotifications.map((notif) => (
+                  <NotificationItem
                     key={notif.id}
                     notification={notif}
                     onClick={() => {
@@ -4925,9 +6402,10 @@ const NotificationItem = ({ notification, onClick }) => {
 
 // File Row Component (for JobsPage)
 // Test Cases Progress View Component
-const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onSearchChange, onStopFile }) => {
+const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onSearchChange, onStopFile, onRerunFile }) => {
   const runningFileRef = useRef(null);
   const [selectedFileIds, setSelectedFileIds] = useState([]);
+  const [showDetails, setShowDetails] = useState(false); // collapse details to get more space for file list / drop
   
   // Filter and search files
   const filteredFiles = files.filter(file => {
@@ -4970,62 +6448,89 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
   return (
     <div className="border-t border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50/30">
       <div className="p-6">
-        {/* Header with Statistics */}
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <h4 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <Activity size={20} className="text-blue-600" />
-              Test Cases Progress - {job.name}
+        {/* Header: title + Details toggle (collapsed by default for more drop space) */}
+        <div className="mb-4">
+          <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+            <h4 className="text-base font-bold text-slate-800 flex items-center gap-2 min-w-0">
+              <Activity size={18} className="text-blue-600 shrink-0" />
+              <span className="truncate">Test Cases Progress - {job.name}</span>
             </h4>
             <button
-              onClick={() => onFilterChange('all')}
-              className="text-xs text-slate-500 hover:text-slate-700"
+              type="button"
+              onClick={() => setShowDetails(prev => !prev)}
+              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors shrink-0"
+              title={showDetails ? 'Hide details' : 'Show details'}
             >
-              Clear Filters
+              {showDetails ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              Details
             </button>
           </div>
           
-          {/* Statistics Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-4">
-            <div className="bg-white p-3 rounded-xl border border-slate-200">
-              <div className="text-xs font-bold text-slate-400 uppercase mb-1">Total</div>
-              <div className="text-xl font-bold text-slate-800">{files.length}</div>
-            </div>
-            <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-200">
-              <div className="text-xs font-bold text-emerald-600 uppercase mb-1">Completed</div>
-              <div className="text-xl font-bold text-emerald-700">{files.filter(f => f.status === 'completed').length}</div>
-            </div>
-            <div className="bg-blue-50 p-3 rounded-xl border border-blue-200">
-              <div className="text-xs font-bold text-blue-600 uppercase mb-1">Running</div>
-              <div className="text-xl font-bold text-blue-700">{files.filter(f => f.status === 'running').length}</div>
-            </div>
-            <div className="bg-yellow-50 p-3 rounded-xl border border-yellow-200">
-              <div className="text-xs font-bold text-yellow-600 uppercase mb-1">Pending</div>
-              <div className="text-xl font-bold text-yellow-700">{files.filter(f => f.status === 'pending').length}</div>
-            </div>
-            <div className="bg-red-50 p-3 rounded-xl border border-red-200">
-              <div className="text-xs font-bold text-red-600 uppercase mb-1">Failed</div>
-              <div className="text-xl font-bold text-red-700">{files.filter(f => f.result === 'fail').length}</div>
-            </div>
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-              <div className="text-xs font-bold text-slate-600 uppercase mb-1">Stopped</div>
-              <div className="text-xl font-bold text-slate-700">{files.filter(f => f.status === 'stopped').length}</div>
-            </div>
-          </div>
-          
-          {/* Progress Bar */}
-          <div className="mb-4">
-            <div className="flex justify-between text-xs text-slate-600 mb-1">
-              <span>Overall Progress</span>
-              <span className="font-bold">{files.length > 0 ? Math.round((files.filter(f => f.status === 'completed').length / files.length) * 100) : 0}%</span>
-            </div>
-            <div className="h-3 w-full bg-slate-200 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-500" 
-                style={{ width: `${files.length > 0 ? (files.filter(f => f.status === 'completed').length / files.length) * 100 : 0}%` }}
-              ></div>
-            </div>
-          </div>
+          {showDetails && (
+            <>
+              {/* Batch summary (Firmware, Boards, Progress, Files, date) */}
+              <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap mb-3">
+                <span>Firmware: <strong className="text-slate-700">{job.firmware}</strong></span>
+                <span>Boards: <strong className="text-slate-700">{job.boards?.join(', ')}</strong></span>
+                <span>Progress: <strong className="text-slate-700">{job.progress}%</strong></span>
+                <span>Files: <strong className="text-slate-700">{job.completedFiles}/{job.totalFiles}</strong></span>
+                {(job.completedAt || job.startedAt) && (
+                  <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs font-semibold">
+                    {(() => {
+                      const date = job.completedAt ? new Date(job.completedAt) : new Date(job.startedAt);
+                      const now = new Date();
+                      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                      const jobDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+                      if (jobDate.getTime() === today.getTime()) {
+                        return `Today ${date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+                      }
+                      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+                    })()}
+                  </span>
+                )}
+              </div>
+              {/* Statistics Cards */}
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-3">
+                <div className="bg-white p-2 rounded-lg border border-slate-200 min-w-0">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-tight truncate">Total</div>
+                  <div className="text-lg font-bold text-slate-800">{files.length}</div>
+                </div>
+                <div className="bg-emerald-50 p-2 rounded-lg border border-emerald-200 min-w-0">
+                  <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-tight truncate">Done</div>
+                  <div className="text-lg font-bold text-emerald-700">{files.filter(f => f.status === 'completed').length}</div>
+                </div>
+                <div className="bg-blue-50 p-2 rounded-lg border border-blue-200 min-w-0">
+                  <div className="text-[10px] font-bold text-blue-600 uppercase tracking-tight truncate">Run</div>
+                  <div className="text-lg font-bold text-blue-700">{files.filter(f => f.status === 'running').length}</div>
+                </div>
+                <div className="bg-yellow-50 p-2 rounded-lg border border-yellow-200 min-w-0">
+                  <div className="text-[10px] font-bold text-yellow-600 uppercase tracking-tight truncate">Pending</div>
+                  <div className="text-lg font-bold text-yellow-700">{files.filter(f => f.status === 'pending').length}</div>
+                </div>
+                <div className="bg-red-50 p-2 rounded-lg border border-red-200 min-w-0">
+                  <div className="text-[10px] font-bold text-red-600 uppercase tracking-tight truncate">Failed</div>
+                  <div className="text-lg font-bold text-red-700">{files.filter(f => f.result === 'fail').length}</div>
+                </div>
+                <div className="bg-slate-50 p-2 rounded-lg border border-slate-200 min-w-0">
+                  <div className="text-[10px] font-bold text-slate-600 uppercase tracking-tight truncate">Stop</div>
+                  <div className="text-lg font-bold text-slate-700">{files.filter(f => f.status === 'stopped').length}</div>
+                </div>
+              </div>
+              {/* Progress Bar */}
+              <div className="mb-3">
+                <div className="flex justify-between text-xs text-slate-600 mb-1">
+                  <span>Overall Progress</span>
+                  <span className="font-bold">{files.length > 0 ? Math.round((files.filter(f => f.status === 'completed').length / files.length) * 100) : 0}%</span>
+                </div>
+                <div className="h-3 w-full bg-slate-200 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-500" 
+                    style={{ width: `${files.length > 0 ? (files.filter(f => f.status === 'completed').length / files.length) * 100 : 0}%` }}
+                  ></div>
+                </div>
+              </div>
+            </>
+          )}
           
           {/* Search and Filter */}
           <div className="flex gap-3 items-center">
@@ -5039,6 +6544,8 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                 className="w-full pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
+            {/* Status dropdown: ไม่แสดงเมื่อ batch ยัง Pending เพราะ test cases ทั้งหมดเป็น pending อยู่แล้ว */}
+            {(job.status || '').toLowerCase() !== 'pending' && (
             <select
               value={filter}
               onChange={(e) => onFilterChange(e.target.value)}
@@ -5050,27 +6557,46 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
               <option value="pending">Pending</option>
               <option value="stopped">Stopped</option>
             </select>
+            )}
             {/* Stop Selected Button */}
             {selectedFileIds.length > 0 && (
-              <button
-                onClick={async () => {
-                  const runningSelected = filteredFiles.filter(f => 
-                    selectedFileIds.includes(f.id) && (f.status === 'running' || f.status === 'pending')
-                  );
-                  if (runningSelected.length === 0) {
-                    return;
-                  }
-                  if (window.confirm(`Stop ${runningSelected.length} selected test case(s)?`)) {
-                    await Promise.all(runningSelected.map(file => onStopFile(file.id)));
-                    setSelectedFileIds([]);
-                  }
-                }}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700 transition-all flex items-center gap-2"
-                title={`Stop ${selectedFileIds.length} selected test case(s)`}
-              >
-                <StopCircle size={16} />
-                Stop Selected ({selectedFileIds.length})
-              </button>
+              <>
+                <button
+                  onClick={async () => {
+                    const runningSelected = filteredFiles.filter(f => 
+                      selectedFileIds.includes(f.id) && (f.status === 'running' || f.status === 'pending')
+                    );
+                    if (runningSelected.length === 0) return;
+                    if (window.confirm(`Stop ${runningSelected.length} selected test case(s)?`)) {
+                      await Promise.all(runningSelected.map(file => onStopFile(file.id)));
+                      setSelectedFileIds([]);
+                    }
+                  }}
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700 transition-all flex items-center gap-2"
+                  title={`Stop ${selectedFileIds.length} selected test case(s)`}
+                >
+                  <StopCircle size={16} />
+                  Stop Selected ({selectedFileIds.length})
+                </button>
+                {/* Re-run Selected (stopped only) */}
+                {onRerunFile && filteredFiles.some(f => selectedFileIds.includes(f.id) && f.status === 'stopped') && (
+                  <button
+                    onClick={async () => {
+                      const stoppedSelected = filteredFiles.filter(f => 
+                        selectedFileIds.includes(f.id) && f.status === 'stopped'
+                      );
+                      if (stoppedSelected.length === 0) return;
+                      for (const file of stoppedSelected) onRerunFile(file.id);
+                      setSelectedFileIds([]);
+                    }}
+                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700 transition-all flex items-center gap-2"
+                    title="Re-run selected stopped test case(s)"
+                  >
+                    <Play size={16} />
+                    Re-run Selected ({filteredFiles.filter(f => selectedFileIds.includes(f.id) && f.status === 'stopped').length})
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -5126,7 +6652,7 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                           : 'hover:bg-slate-50'
                       }`}
                     >
-                      <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-4 min-w-0">
                         {/* Checkbox for selection */}
                         <input
                           type="checkbox"
@@ -5157,40 +6683,40 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                         </div>
                         
                         {/* File Info */}
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap min-w-0">
                             {/* VCD File */}
                             {file.vcd && (
-                              <div className="flex items-center gap-1">
-                                <FileCode size={18} className="text-blue-500" />
-                                <span className="font-bold text-slate-800 text-sm">{file.vcd}</span>
+                              <div className="flex items-center gap-1 min-w-0 max-w-full">
+                                <FileCode size={18} className="text-blue-500 shrink-0" />
+                                <span className="font-bold text-slate-800 text-sm truncate" title={file.vcd}>{file.vcd}</span>
                               </div>
                             )}
                             {/* ERoM File */}
                             {file.erom && (
-                              <div className="flex items-center gap-1">
-                                <span className="text-slate-400">+</span>
-                                <FileCode size={16} className="text-orange-500" />
-                                <span className="font-semibold text-slate-700 text-sm">{file.erom}</span>
+                              <div className="flex items-center gap-1 min-w-0 max-w-full">
+                                <span className="text-slate-400 shrink-0">+</span>
+                                <FileCode size={16} className="text-orange-500 shrink-0" />
+                                <span className="font-semibold text-slate-700 text-sm truncate" title={file.erom}>{file.erom}</span>
                               </div>
                             )}
                             {/* ULP File */}
                             {file.ulp && (
-                              <div className="flex items-center gap-1">
-                                <span className="text-slate-400">+</span>
-                                <FileCode size={16} className="text-purple-500" />
-                                <span className="font-semibold text-slate-700 text-sm">{file.ulp}</span>
+                              <div className="flex items-center gap-1 min-w-0 max-w-full">
+                                <span className="text-slate-400 shrink-0">+</span>
+                                <FileCode size={16} className="text-purple-500 shrink-0" />
+                                <span className="font-semibold text-slate-700 text-sm truncate" title={file.ulp}>{file.ulp}</span>
                               </div>
                             )}
                             {/* Fallback to file.name if no vcd/erom/ulp */}
                             {!file.vcd && !file.erom && !file.ulp && (
-                              <>
-                                <FileCode size={18} className="text-slate-400" />
-                                <span className="font-bold text-slate-800">{file.name}</span>
-                              </>
+                              <div className="flex items-center gap-1 min-w-0 max-w-full">
+                                <FileCode size={18} className="text-slate-400 shrink-0" />
+                                <span className="font-bold text-slate-800 truncate" title={file.name}>{file.name}</span>
+                              </div>
                             )}
                             {isRunning && (
-                              <span className="px-2 py-0.5 bg-blue-500 text-white rounded text-xs font-bold animate-pulse">
+                              <span className="px-2 py-0.5 bg-blue-500 text-white rounded text-xs font-bold animate-pulse shrink-0">
                                 RUNNING NOW
                               </span>
                             )}
@@ -5201,17 +6727,18 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                           </div>
                         </div>
                         
-                        {/* Status & Result */}
-                        <div className="flex items-center gap-2">
+                        {/* Status & Result (ซ่อน status badge เมื่อเป็น running เพราะมี RUNNING NOW ด้านบนแล้ว) */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          {!isRunning && (
                           <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase border-2 ${
                             file.status === 'completed' ? 'bg-emerald-100 text-emerald-700 border-emerald-300' :
-                            file.status === 'running' ? 'bg-blue-100 text-blue-700 border-blue-400 animate-pulse' :
                             file.status === 'stopped' ? 'bg-red-100 text-red-700 border-red-300' :
                             file.status === 'pending' ? 'bg-yellow-100 text-yellow-700 border-yellow-300' :
                             'bg-slate-100 text-slate-700 border-slate-300'
                           }`}>
                             {file.status}
                           </span>
+                          )}
                           {file.result && (
                             <span className={`px-3 py-1 rounded text-xs font-bold ${
                               file.result === 'pass' ? 'bg-emerald-50 text-emerald-700' :
@@ -5233,6 +6760,16 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                             Stop
                           </button>
                         )}
+                        {file.status === 'stopped' && onRerunFile && (
+                          <button
+                            onClick={() => onRerunFile(file.id)}
+                            className="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-200 transition-all flex items-center gap-1"
+                            title="Re-run this test case"
+                          >
+                            <Play size={14} />
+                            Re-run
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -5245,10 +6782,10 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
         {/* Current Running Indicator */}
         {currentRunningIndex >= 0 && (
           <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <div className="flex items-center gap-2 text-sm">
-              <Activity size={16} className="text-blue-600 animate-pulse" />
-              <span className="font-bold text-blue-700">
-                Currently running: Test Case #{filteredFiles[currentRunningIndex].order || currentRunningIndex + 1} - {filteredFiles[currentRunningIndex].name}
+            <div className="flex items-center gap-2 text-sm min-w-0">
+              <Activity size={16} className="text-blue-600 animate-pulse shrink-0" />
+              <span className="font-bold text-blue-700 min-w-0 truncate" title={filteredFiles[currentRunningIndex].name}>
+                Currently running: Test Case #{filteredFiles[currentRunningIndex].order || currentRunningIndex + 1} — {filteredFiles[currentRunningIndex].name}
               </span>
             </div>
           </div>
@@ -5258,7 +6795,7 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
   );
 };
 
-const FileRow = ({ file, jobId, index, totalFiles, onStop, onMoveUp, onMoveDown, job }) => {
+const FileRow = ({ file, jobId, index, totalFiles, onStop, onRerun, onMoveUp, onMoveDown, job }) => {
   const getStatusColor = (status) => {
     switch(status) {
       case 'completed': return 'bg-emerald-100 text-emerald-700';
@@ -5328,11 +6865,11 @@ ${file.notes || 'No additional notes available.'}
   };
   
   return (
-    <div className={`flex items-center gap-4 p-4 rounded-lg border transition-all ${
+    <div className={`flex items-center gap-4 p-4 rounded-lg border transition-all min-w-0 ${
       isFailed ? 'bg-red-50 border-red-200 hover:border-red-300' : 'bg-white border-slate-200 hover:border-blue-300'
     }`}>
       {/* Order Number */}
-      <div className="flex flex-col items-center gap-1">
+      <div className="flex flex-col items-center gap-1 shrink-0">
         <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${
           isFailed ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'
         }`}>
@@ -5359,19 +6896,19 @@ ${file.notes || 'No additional notes available.'}
       </div>
       
       {/* File Info */}
-      <div className="flex-1 flex items-center gap-3">
-        <FileCode size={20} className={isFailed ? 'text-red-500' : 'text-slate-400'} />
-        <div className="flex-1">
-          <div className={`font-bold ${isFailed ? 'text-red-800' : 'text-slate-700'}`}>{file.name}</div>
+      <div className="flex-1 flex items-center gap-3 min-w-0">
+        <FileCode size={20} className={`shrink-0 ${isFailed ? 'text-red-500' : 'text-slate-400'}`} />
+        <div className="flex-1 min-w-0">
+          <div className={`font-bold truncate ${isFailed ? 'text-red-800' : 'text-slate-700'}`} title={file.name}>{file.name}</div>
           <div className="text-xs text-slate-400">Order: {file.order || index + 1}</div>
           {isFailed && file.errorMessage && (
-            <div className="text-xs text-red-600 mt-1 font-medium">⚠ {file.errorMessage}</div>
+            <div className="text-xs text-red-600 mt-1 font-medium truncate" title={file.errorMessage}>⚠ {file.errorMessage}</div>
           )}
         </div>
       </div>
       
       {/* Status & Result */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 shrink-0">
         <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${getStatusColor(file.status)}`}>
           {file.status}
         </span>
@@ -5383,7 +6920,7 @@ ${file.notes || 'No additional notes available.'}
       </div>
       
       {/* Actions */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 shrink-0">
         {isFailed && (
           <button
             onClick={exportErrorLog}
@@ -5402,6 +6939,16 @@ ${file.notes || 'No additional notes available.'}
           >
             <StopCircle size={14} />
             Stop
+          </button>
+        )}
+        {file.status === 'stopped' && onRerun && (
+          <button
+            onClick={onRerun}
+            className="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-bold hover:bg-emerald-200 transition-all flex items-center gap-1"
+            title="Re-run this test case"
+          >
+            <Play size={14} />
+            Re-run
           </button>
         )}
       </div>

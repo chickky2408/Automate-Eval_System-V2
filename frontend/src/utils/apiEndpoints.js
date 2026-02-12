@@ -55,6 +55,7 @@ export const API_ENDPOINTS = {
   // Files in Job
   JOB_FILES: (jobId) => `${API_BASE_URL}/jobs/${jobId}/files`,
   JOB_FILE_STOP: (jobId, fileId) => `${API_BASE_URL}/jobs/${jobId}/files/${fileId}/stop`,
+  JOB_FILE_RERUN: (jobId, fileId) => `${API_BASE_URL}/jobs/${jobId}/files/${fileId}/rerun`,
   JOB_FILE_MOVE: (jobId, fileId) => `${API_BASE_URL}/jobs/${jobId}/files/${fileId}/move`,
   JOB_PAIRS: (jobId) => `${API_BASE_URL}/jobs/${jobId}/pairs`, // Get pairs data for editing
   
@@ -81,6 +82,8 @@ export const API_ENDPOINTS = {
   WS_SYSTEM: `${WS_BASE_URL}/ws/system`,
   WS_BOARDS: `${WS_BASE_URL}/ws/boards`,
   WS_JOBS: `${WS_BASE_URL}/ws/jobs`,
+  /** Waveform streaming: Sine 125kHz @ fs=1MHz (backend simulates Node → UXUI) */
+  WS_WAVEFORM: `${WS_BASE_URL}/ws/waveform`,
 };
 
 export default API_ENDPOINTS;
