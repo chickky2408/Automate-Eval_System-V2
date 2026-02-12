@@ -202,6 +202,41 @@ async def create_job(payload: JobCreatePayload):
     return await _build_fe_job(job)
 
 
+@router.put("/{job_id}")
+async def update_job(job_id: str, payload: JobCreatePayload):
+    """Update an existing job (pending only). Replaces files and meta from payload."""
+    job = await job_queue_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    if job.status.state != JobState.PENDING:
+        raise HTTPException(
+            status_code=400,
+            detail="Only pending jobs can be updated. Stop the job first to edit.",
+        )
+    file_payloads = [_model_to_dict(f) for f in (payload.files or [])]
+    vcd_filename = file_payloads[0]["name"] if file_payloads else job.vcd_filename or f"{job_id}.vcd"
+    firmware_filename = payload.firmware or ""
+    await job_queue_service.update_job_meta(
+        job_id,
+        name=payload.name,
+        vcd_filename=vcd_filename,
+        firmware_filename=firmware_filename or None,
+    )
+    fe_job_store.create_from_payload(
+        job_id,
+        tag=payload.tag,
+        firmware=payload.firmware,
+        boards=payload.boards,
+        files=file_payloads,
+        client_id=payload.clientId,
+        config_name=payload.configName,
+        default_file_name=vcd_filename,
+    )
+    if payload.pairsData is not None:
+        fe_job_store.save_pairs_data(job_id, payload.pairsData)
+    return await _build_fe_job(await job_queue_service.get_job(job_id))
+
+
 @router.post("/{job_id}/start")
 async def start_job(job_id: str):
     """Start a job (mock)."""
@@ -295,6 +330,23 @@ async def stop_job_file(job_id: str, file_id: int):
     file_item = fe_job_store.update_file(job.id, file_id, status="stopped")
     if not file_item:
         raise HTTPException(status_code=404, detail="File not found")
+    return {"success": True, "file": {"id": file_item.id, "status": file_item.status}}
+
+
+@router.post("/{job_id}/files/{file_id}/rerun")
+async def rerun_job_file(job_id: str, file_id: int):
+    """Set a stopped file back to pending so it can be run again."""
+    job = await job_queue_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    fe_job_store.ensure_meta(job.id, default_file_name=job.vcd_filename)
+    files = fe_job_store.list_files(job.id)
+    file_before = next((f for f in files if f.id == file_id), None)
+    if not file_before:
+        raise HTTPException(status_code=404, detail="File not found")
+    if file_before.status != "stopped":
+        raise HTTPException(status_code=400, detail="Only stopped files can be re-run")
+    file_item = fe_job_store.update_file(job.id, file_id, status="pending", result=None)
     return {"success": True, "file": {"id": file_item.id, "status": file_item.status}}
 
 

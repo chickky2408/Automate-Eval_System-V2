@@ -132,6 +132,27 @@ class JobQueueService:
             await session.commit()
             return result.rowcount > 0
 
+    async def update_job_meta(
+        self, job_id: str, *, name: Optional[str] = None,
+        vcd_filename: Optional[str] = None, firmware_filename: Optional[str] = None
+    ) -> bool:
+        """Update job metadata (name, vcd_filename, firmware_filename). Only for pending jobs."""
+        async with async_session() as session:
+            values = {}
+            if name is not None:
+                values["name"] = name
+            if vcd_filename is not None:
+                values["vcd_filename"] = vcd_filename
+            if firmware_filename is not None:
+                values["firmware_filename"] = firmware_filename
+            if not values:
+                return True
+            result = await session.execute(
+                update(JobORM).where(JobORM.id == job_id).values(**values)
+            )
+            await session.commit()
+            return result.rowcount > 0
+
     async def update_job_status(
         self, 
         job_id: str, 

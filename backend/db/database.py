@@ -1,18 +1,28 @@
 """
 Database configuration and session management.
-Uses SQLAlchemy with asyncpg for async PostgreSQL access.
+
+For the fastest local demo (no PostgreSQL required), this module defaults to
+using a local SQLite file via ``sqlite+aiosqlite``. You can still switch back
+to PostgreSQL later by setting the environment variable
+``USE_SQLITE_DEMO=0``.
 """
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 import os
 
-# Database configuration
-DB_USER = os.getenv("DB_USER", "eval_admin")
-DB_PASS = os.getenv("DB_PASS", "secure_pass")
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_NAME = os.getenv("DB_NAME", "eval_system")
+# Toggle between SQLite demo mode and PostgreSQL
+USE_SQLITE_DEMO = os.getenv("USE_SQLITE_DEMO", "1") == "1"
 
-DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}"
+if USE_SQLITE_DEMO:
+    # Single-file SQLite DB for quick demo runs (no external service needed)
+    DATABASE_URL = "sqlite+aiosqlite:///./eval_system_demo.db"
+else:
+    # PostgreSQL configuration (production / real deployment)
+    DB_USER = os.getenv("DB_USER", "eval_admin")
+    DB_PASS = os.getenv("DB_PASS", "secure_pass")
+    DB_HOST = os.getenv("DB_HOST", "localhost")
+    DB_NAME = os.getenv("DB_NAME", "eval_system")
+    DATABASE_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASS}@{DB_HOST}/{DB_NAME}"
 
 # Create async engine
 engine = create_async_engine(
@@ -35,13 +45,17 @@ class Base(DeclarativeBase):
 
 
 async def init_db():
-    """Initialize database tables."""
-    # In production, use Alembic for migrations.
-    # checking connection only
+    """Initialize database tables (create if not present).
+
+    For demo (SQLite) this will create all tables on first run.
+    For PostgreSQL, this at least verifies connection; you can still
+    layer Alembic migrations on top later.
+    """
     try:
         async with engine.begin() as conn:
-            pass
-        print(f"[DB] Database connection ready at {DB_HOST}/{DB_NAME}")
+            # Create all tables defined in ORM metadata if they do not exist.
+            await conn.run_sync(Base.metadata.create_all)
+        print(f"[DB] Database ready at {DATABASE_URL}")
     except Exception as e:
         print(f"[DB] Connection failed: {e}")
 
