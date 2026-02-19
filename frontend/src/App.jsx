@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { 
   Menu, X, LayoutDashboard, Settings, PlayCircle, Cpu, 
   History, Bell, Upload, FileCode, Box, Search, 
@@ -7,19 +7,20 @@ import {
   RefreshCw, Download, Activity, XCircle, Eye, MoreVertical,
   ArrowUp, ArrowDown, Square, Tag, FileJson, StopCircle, Plus,
   Command, Copy, Play, Layers, Monitor, ChevronDown, ChevronUp, GripVertical, ChevronLeft, CheckSquare, Pencil,
-  Pause, ZoomIn, ZoomOut, Trash2, Gauge
+  Pause, ZoomIn, ZoomOut, Trash2, Gauge, User, UserPlus, LogOut, Save, FileDown, FileUp, FolderOpen
 } from 'lucide-react';
 import { useTestStore } from './store/useTestStore';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import API_ENDPOINTS from './utils/apiEndpoints';
+import api from './services/api';
 
 // --- MAIN APPLICATION COMPONENT ---
 const App = () => {
   const [activePage, setActivePage] = useState('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [expandJobId, setExpandJobId] = useState(null); // สำหรับ expand job จาก history
+  const [expandJobId, setExpandJobId] = useState(null); // for expanding job from history
   const { systemHealth, boards, theme, toggleTheme } = useTestStore();
   const refreshSystemHealth = useTestStore((state) => state.refreshSystemHealth);
   const refreshBoards = useTestStore((state) => state.refreshBoards);
@@ -41,7 +42,7 @@ const App = () => {
   }, [theme]);
 
   useEffect(() => {
-    // รอบแรก: ใช้ refresh ปกติ (มี loading state ให้ user เห็นชัด)
+    // First run: use normal refresh (with loading state for user)
     const initialFetch = async () => {
       await Promise.allSettled([
         refreshSystemHealth(),
@@ -52,7 +53,7 @@ const App = () => {
       ]);
     };
 
-    // รอบถัด ๆ ไป: ใช้ silent refresh ไม่แตะ loading เพื่อไม่ให้ UI กระพริบ
+    // Subsequent runs: use silent refresh without touching loading to avoid UI flicker
     const silentFetchAll = async () => {
       await Promise.allSettled([
         silentRefreshSystemHealth(),
@@ -65,7 +66,7 @@ const App = () => {
 
     void initialFetch();
 
-    const intervalId = setInterval(silentFetchAll, 15000); // ยิงซ้ำทุก 15 วินาที
+    const intervalId = setInterval(silentFetchAll, 5000); // poll every 5 seconds
     return () => clearInterval(intervalId);
   }, [
     refreshSystemHealth,
@@ -105,9 +106,10 @@ const App = () => {
         
         <nav className="mt-6 px-3 space-y-2">
           <NavItem icon={<LayoutDashboard size={20}/>} label="Dashboard" active={activePage === 'dashboard'} isOpen={isSidebarOpen} onClick={() => setActivePage('dashboard')} />
-          <NavItem icon={<Monitor size={20}/>} label="Board Overview" active={activePage === 'overview'} isOpen={isSidebarOpen} onClick={() => setActivePage('overview')} />
-          <NavItem icon={<Settings size={20}/>} label="Test Setup" active={activePage === 'setup'} isOpen={isSidebarOpen} onClick={() => setActivePage('setup')} />
-          <NavItem icon={<PlayCircle size={20}/>} label="Jobs Manager" active={activePage === 'jobs'} isOpen={isSidebarOpen} onClick={() => setActivePage('jobs')} />
+          <NavItem icon={<Database size={20}/>} label="Library" active={activePage === 'fileLibrary'} isOpen={isSidebarOpen} onClick={() => setActivePage('fileLibrary')} />
+          <NavItem icon={<FileCode size={20}/>} label="Test Cases" active={activePage === 'testCases'} isOpen={isSidebarOpen} onClick={() => setActivePage('testCases')} />
+          <NavItem icon={<PlayCircle size={20}/>} label="Run Set" active={activePage === 'runSet'} isOpen={isSidebarOpen} onClick={() => setActivePage('runSet')} />
+          <NavItem icon={<Monitor size={20}/>} label="Jobs Manager" active={activePage === 'jobs'} isOpen={isSidebarOpen} onClick={() => setActivePage('jobs')} />
           <NavItem icon={<Cpu size={20}/>} label="Board Status" active={activePage === 'boards'} isOpen={isSidebarOpen} onClick={() => setActivePage('boards')} />
           <NavItem icon={<History size={20}/>} label="Test History" active={activePage === 'history'} isOpen={isSidebarOpen} onClick={() => setActivePage('history')} />
           <NavItem icon={<Activity size={20}/>} label="Realtime Waveform" active={activePage === 'waveform'} isOpen={isSidebarOpen} onClick={() => setActivePage('waveform')} />
@@ -130,8 +132,8 @@ const App = () => {
           <div className="h-14 flex items-center justify-between px-4 sm:px-6 lg:px-8 gap-2 min-w-0">
             {activePage === 'dashboard' ? (
               <div className="flex items-center gap-3">
-                <h2 className="text-base font-semibold text-slate-900">System Dashboard</h2>
-                <span className="text-xs text-slate-500">
+                <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">System Dashboard</h2>
+                <span className="text-xs text-slate-500 dark:text-slate-400">
                   Monitoring {systemHealth.totalBoards} boards
                 </span>
                 <div className={`ml-4 flex items-center gap-2 px-2.5 py-1 rounded-full text-[11px] font-semibold ${
@@ -147,6 +149,7 @@ const App = () => {
               <div />
             )}
             <div className="flex items-center gap-3">
+              <ProfileSwitcher />
               <button
                 type="button"
                 onClick={toggleTheme}
@@ -166,8 +169,15 @@ const App = () => {
 
         {/* CONTENT PAGES */}
         <div className="p-4 sm:p-6 lg:p-8 overflow-x-hidden overflow-y-auto min-w-0">
-          {activePage === 'dashboard' && <DashboardPage />}
-          {activePage === 'overview' && <BoardOverviewPage />}
+          {activePage === 'dashboard' && (
+            <DashboardPage
+              onNavigateBoards={() => setActivePage('boards')}
+              onNavigateJobs={() => setActivePage('jobs')}
+            />
+          )}
+          {activePage === 'fileLibrary' && <FileLibraryPage onNavigateToTestCases={() => setActivePage('testCases')} />}
+          {activePage === 'testCases' && <TestCasesPage />}
+          {activePage === 'runSet' && <RunSetPage onNavigateJobs={() => setActivePage('jobs')} />}
           {activePage === 'setup' && <SetupPage editJobId={expandJobId} onEditComplete={() => setExpandJobId(null)} />}
           {activePage === 'jobs' && <JobsPage expandJobId={expandJobId} onExpandComplete={() => setExpandJobId(null)} onEditJob={(jobId) => { setExpandJobId(jobId); setActivePage('setup'); }} />}
           {activePage === 'boards' && <BoardsPage />}
@@ -190,6 +200,343 @@ const NavItem = ({ icon, label, active, isOpen, onClick }) => (
     {isOpen && <span className="animate-in fade-in slide-in-from-left-2 duration-300 truncate">{label}</span>}
   </button>
 );
+
+const ProfileSwitcher = () => {
+  const theme = useTestStore((state) => state.theme);
+  const profiles = useTestStore((state) => state.profiles || []);
+  const activeProfileId = useTestStore((state) => state.activeProfileId);
+  const createProfile = useTestStore((state) => state.createProfile);
+  const switchProfile = useTestStore((state) => state.switchProfile);
+  const deleteProfile = useTestStore((state) => state.deleteProfile);
+  const updateProfileName = useTestStore((state) => state.updateProfileName);
+  const exportProfile = useTestStore((state) => state.exportProfile);
+  const importProfile = useTestStore((state) => state.importProfile);
+  const addToast = useTestStore((state) => state.addToast);
+
+  const [isOpen, setIsOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [newProfileName, setNewProfileName] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editingName, setEditingName] = useState('');
+  const fileInputRef = useRef(null);
+  const dropdownRef = useRef(null);
+
+  const activeProfile = profiles.find((p) => p.id === activeProfileId) || { id: 'default', name: 'Default' };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+        setIsCreating(false);
+        setEditingId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleCreateProfile = () => {
+    if (!newProfileName.trim()) {
+      addToast({ type: 'warning', message: 'Please enter a profile name' });
+      return;
+    }
+    const id = createProfile(newProfileName.trim());
+    addToast({ type: 'success', message: `Created profile "${newProfileName.trim()}"` });
+    setNewProfileName('');
+    setIsCreating(false);
+    setIsOpen(false);
+  };
+
+  const handleSwitchProfile = (profileId) => {
+    switchProfile(profileId);
+    addToast({ type: 'success', message: `Switched to profile "${profiles.find((p) => p.id === profileId)?.name || 'Unknown'}"` });
+    setIsOpen(false);
+  };
+
+  const handleDeleteProfile = (profileId, profileName) => {
+    if (profileId === 'default') {
+      addToast({ type: 'error', message: 'Cannot delete the Default profile' });
+      return;
+    }
+    if (window.confirm(`Delete profile "${profileName}"?`)) {
+      deleteProfile(profileId);
+      addToast({ type: 'success', message: `Deleted profile "${profileName}"` });
+      setIsOpen(false);
+    }
+  };
+
+  const handleStartEdit = (profileId, currentName) => {
+    setEditingId(profileId);
+    setEditingName(currentName);
+  };
+
+  const handleSaveEdit = (profileId) => {
+    if (!editingName.trim()) {
+      addToast({ type: 'warning', message: 'Please enter a profile name' });
+      return;
+    }
+    updateProfileName(profileId, editingName.trim());
+    addToast({ type: 'success', message: `Renamed profile to "${editingName.trim()}"` });
+    setEditingId(null);
+    setEditingName('');
+  };
+
+  const handleExportProfile = async (profileId, includeHistory = false) => {
+    try {
+      const exported = await exportProfile(profileId || activeProfileId, includeHistory);
+      const blob = new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `profile_${exported.name || 'export'}_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      addToast({ type: 'success', message: `Exported profile "${exported.name}"` });
+      setIsOpen(false);
+    } catch (error) {
+      addToast({ type: 'error', message: `Export failed: ${error.message}` });
+    }
+  };
+
+  const handleImportProfile = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const imported = JSON.parse(text);
+      const profileName = imported.name || 'Imported Profile';
+      const newId = importProfile(imported, { name: profileName, switchToImported: true });
+      addToast({ type: 'success', message: `Imported profile "${profileName}"` });
+      setIsOpen(false);
+      // Reset file input
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    } catch (error) {
+      addToast({ type: 'error', message: `Import failed: ${error.message}` });
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  return (
+    <div className="relative" ref={dropdownRef}>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-colors ${
+          theme === 'dark'
+            ? 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700'
+            : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+        }`}
+        title="Profile Settings"
+      >
+        <User size={16} />
+        <span className="max-w-[120px] truncate">{activeProfile.name}</span>
+        <ChevronDown size={14} className={isOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
+      </button>
+
+      {isOpen && (
+        <div
+          className={`absolute right-0 top-full mt-2 w-72 rounded-lg border shadow-lg z-50 ${
+            theme === 'dark'
+              ? 'bg-slate-800 border-slate-700'
+              : 'bg-white border-slate-200'
+          }`}
+        >
+          <div className={`p-3 border-b ${theme === 'dark' ? 'border-slate-700' : 'border-slate-200'}`}>
+            <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2">PROFILES</div>
+            {profiles.length === 0 ? (
+              <div className="text-sm text-slate-500 dark:text-slate-400 py-2">No profiles</div>
+            ) : (
+              <div className="space-y-1 max-h-64 overflow-y-auto">
+                {profiles.map((profile) => (
+                  <div
+                    key={profile.id}
+                    className={`flex items-center gap-2 p-2 rounded ${
+                      profile.id === activeProfileId
+                        ? theme === 'dark'
+                          ? 'bg-blue-900/30 border border-blue-700'
+                          : 'bg-blue-50 border border-blue-200'
+                        : theme === 'dark'
+                        ? 'hover:bg-slate-700'
+                        : 'hover:bg-slate-50'
+                    }`}
+                  >
+                    {editingId === profile.id ? (
+                      <>
+                        <input
+                          type="text"
+                          value={editingName}
+                          onChange={(e) => setEditingName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveEdit(profile.id);
+                            if (e.key === 'Escape') {
+                              setEditingId(null);
+                              setEditingName('');
+                            }
+                          }}
+                          className={`flex-1 px-2 py-1 text-sm rounded border ${
+                            theme === 'dark'
+                              ? 'bg-slate-700 border-slate-600 text-slate-200'
+                              : 'bg-white border-slate-300 text-slate-900'
+                          }`}
+                          autoFocus
+                        />
+                        <button
+                          onClick={() => handleSaveEdit(profile.id)}
+                          className="p-1 text-emerald-600 hover:text-emerald-700"
+                        >
+                          <CheckCircle2 size={16} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingId(null);
+                            setEditingName('');
+                          }}
+                          className="p-1 text-slate-500 hover:text-slate-600"
+                        >
+                          <X size={16} />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex-1 flex items-center gap-2 min-w-0">
+                          {profile.id === activeProfileId && (
+                            <div className="w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
+                          )}
+                          <span className="text-sm font-medium truncate">{profile.name}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          {profile.id !== activeProfileId && (
+                            <button
+                              onClick={() => handleSwitchProfile(profile.id)}
+                              className="p-1.5 rounded hover:bg-slate-600 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400"
+                              title="Switch to this profile"
+                            >
+                              <LogOut size={14} />
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleStartEdit(profile.id, profile.name)}
+                            className="p-1.5 rounded hover:bg-slate-600 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400"
+                            title="Rename"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleExportProfile(profile.id, false)}
+                            className="p-1.5 rounded hover:bg-slate-600 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400"
+                            title="Export"
+                          >
+                            <FileDown size={14} />
+                          </button>
+                          {profile.id !== 'default' && (
+                            <button
+                              onClick={() => handleDeleteProfile(profile.id, profile.name)}
+                              className="p-1.5 rounded hover:bg-red-600 dark:hover:bg-red-700 text-red-600 dark:text-red-400"
+                              title="Delete"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className={`p-3 border-b ${theme === 'dark' ? 'border-slate-700' : 'border-slate-200'}`}>
+            {isCreating ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={newProfileName}
+                  onChange={(e) => setNewProfileName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleCreateProfile();
+                    if (e.key === 'Escape') {
+                      setIsCreating(false);
+                      setNewProfileName('');
+                    }
+                  }}
+                  placeholder="Profile name"
+                  className={`flex-1 px-2 py-1.5 text-sm rounded border ${
+                    theme === 'dark'
+                      ? 'bg-slate-700 border-slate-600 text-slate-200'
+                      : 'bg-white border-slate-300 text-slate-900'
+                  }`}
+                  autoFocus
+                />
+                <button
+                  onClick={handleCreateProfile}
+                  className="p-1.5 text-emerald-600 hover:text-emerald-700"
+                >
+                  <CheckCircle2 size={16} />
+                </button>
+                <button
+                  onClick={() => {
+                    setIsCreating(false);
+                    setNewProfileName('');
+                  }}
+                  className="p-1.5 text-slate-500 hover:text-slate-600"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setIsCreating(true)}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded text-sm font-medium transition-colors ${
+                  theme === 'dark'
+                    ? 'hover:bg-slate-700 text-slate-300'
+                    : 'hover:bg-slate-50 text-slate-700'
+                }`}
+              >
+                <UserPlus size={16} />
+                <span>Create new profile</span>
+              </button>
+            )}
+          </div>
+
+          <div className="p-3 space-y-2">
+            <button
+              onClick={() => handleExportProfile(activeProfileId, true)}
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded text-sm font-medium transition-colors ${
+                theme === 'dark'
+                  ? 'hover:bg-slate-700 text-slate-300'
+                  : 'hover:bg-slate-50 text-slate-700'
+              }`}
+            >
+              <FileDown size={16} />
+              <span>Export profile (with history)</span>
+            </button>
+            <label
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded text-sm font-medium transition-colors cursor-pointer ${
+                theme === 'dark'
+                  ? 'hover:bg-slate-700 text-slate-300'
+                  : 'hover:bg-slate-50 text-slate-700'
+              }`}
+            >
+              <FileUp size={16} />
+              <span>Import profile</span>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json"
+                onChange={handleImportProfile}
+                className="hidden"
+              />
+            </label>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const ToastContainer = () => {
   const { toasts, removeToast } = useTestStore();
@@ -308,7 +655,7 @@ const ConfigBuilderPage = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Config Builder (beta)</h1>
-          <p className="text-slate-500 text-sm">จับคู่ 1 VCD ต่อ 1 BIN พร้อมบันทึก/โหลด config เป็น .json</p>
+          <p className="text-slate-500 text-sm">Pair 1 VCD with 1 BIN and save/load config as .json</p>
         </div>
         <div className="flex items-center gap-3">
           <button
@@ -342,7 +689,7 @@ const ConfigBuilderPage = () => {
           </div>
           <div className="space-y-2 max-h-[360px] overflow-y-auto">
             {vcdFiles.length === 0 && (
-              <div className="text-sm text-slate-400">ยังไม่มีไฟล์ VCD (อัปโหลดจากเมนู Files)</div>
+              <div className="text-sm text-slate-400">No VCD files yet (upload from Files menu)</div>
             )}
             {vcdFiles.map((file) => (
               <label key={file.id} className={`flex items-center gap-3 p-3 rounded-xl border ${
@@ -371,7 +718,7 @@ const ConfigBuilderPage = () => {
           </div>
           <div className="space-y-2 max-h-[360px] overflow-y-auto">
             {firmwareFiles.length === 0 && (
-              <div className="text-sm text-slate-400">ยังไม่มีไฟล์ BIN (อัปโหลดจากเมนู Files)</div>
+              <div className="text-sm text-slate-400">No BIN files yet (upload from Files menu)</div>
             )}
             {firmwareFiles.map((file) => (
               <label key={file.id} className={`flex items-center gap-3 p-3 rounded-xl border ${
@@ -397,7 +744,7 @@ const ConfigBuilderPage = () => {
           <div className="flex items-center justify-between mb-3">
             <div>
               <h3 className="text-lg font-bold text-slate-900">Selected (1 VCD : 1 BIN)</h3>
-              <p className="text-xs text-slate-500">สามารถ reorder (move up/down) ได้</p>
+              <p className="text-xs text-slate-500">You can reorder (move up/down)</p>
             </div>
             <button
               onClick={addPair}
@@ -420,7 +767,7 @@ const ConfigBuilderPage = () => {
               <div className="px-3 py-2 text-right">Actions</div>
             </div>
             {pairs.length === 0 ? (
-              <div className="p-4 text-sm text-slate-400">ยังไม่ได้เลือกไฟล์</div>
+              <div className="p-4 text-sm text-slate-400">No files selected</div>
             ) : (
               pairs.map((pair, idx) => (
                 <div key={pair.id} className="grid grid-cols-4 min-w-[320px] items-center text-sm border-t border-slate-100">
@@ -458,34 +805,73 @@ const ConfigBuilderPage = () => {
 };
 
 // 1. DASHBOARD PAGE (Enhanced)
-const DashboardPage = () => {
+const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
   const { 
     systemHealth, 
     boards,
     jobs, 
     commonCommands,
+    updateJobTag,
     loading,
     errors
   } = useTestStore();
   
   const [selectedBatch, setSelectedBatch] = useState(null);
   const [showBatchDetails, setShowBatchDetails] = useState(false);
-  const [dashTab, setDashTab] = useState('campaigns'); // 'campaigns' | 'devices' | 'system'
   const [copiedCommand, setCopiedCommand] = useState(null);
   const [isSystemSummaryExpanded, setIsSystemSummaryExpanded] = useState(false);
+  const [systemSearch, setSystemSearch] = useState('');
+  const [systemStatusFilter, setSystemStatusFilter] = useState('running'); // 'all' | 'pending' | 'running' | 'completed' | 'stopped'
+  const [systemTagFilter, setSystemTagFilter] = useState('');
+  const [editingSystemTagId, setEditingSystemTagId] = useState(null);
+  const [systemTagEditInput, setSystemTagEditInput] = useState('');
+  const [systemModalJobId, setSystemModalJobId] = useState(null);
   
-  const runningJobs = jobs.filter(j => j.status === 'running');
-  const filteredJobs = runningJobs;
-  
-  // System Summary: สรุปว่า system ไหน run อะไรอยู่
-  const systemSummary = runningJobs.map(job => ({
-    jobId: job.id,
-    jobName: job.name,
-    tag: job.tag || 'Untagged',
-    boards: job.boards || [],
-    progress: job.progress,
-    firmware: job.firmware
-  }));
+  const pendingJobs = jobs.filter(j => j.status === 'pending');
+  const jobQueueCount = pendingJobs.length;
+  const jobErrorCount = jobs.filter(
+    (job) => (job.files || []).some((f) => f.result === 'fail' || f.status === 'error')
+  ).length;
+
+  const systemSearchLower = systemSearch.trim().toLowerCase();
+  const systemTagOptions = [...new Set(jobs.map((j) => j.tag).filter(Boolean))].sort();
+
+  const systemSummaryJobs = jobs.filter((job) => {
+    if (systemStatusFilter !== 'all' && job.status !== systemStatusFilter) return false;
+    if (systemTagFilter && (job.tag || '').toLowerCase() !== systemTagFilter.toLowerCase()) return false;
+    if (systemSearchLower) {
+      const name = (job.name || '').toLowerCase();
+      const id = (job.id || '').toLowerCase();
+      const tag = (job.tag || '').toLowerCase();
+      if (
+        !name.includes(systemSearchLower) &&
+        !id.includes(systemSearchLower) &&
+        !tag.includes(systemSearchLower)
+      ) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  // System Summary: สรุปว่า system ไหน run อะไรอยู่ (ตาม filter)
+  const systemSummary = systemSummaryJobs.map(job => {
+    const rawAt = job.startedAt || job.createdAt;
+    const d = rawAt ? new Date(rawAt) : null;
+    const displayDate = d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : null;
+    const displayTime = d && !Number.isNaN(d.getTime()) ? d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false }) : null;
+    return {
+      jobId: job.id,
+      jobName: job.name,
+      tag: job.tag || 'Untagged',
+      boards: job.boards || [],
+      status: job.status,
+      totalFiles: job.totalFiles ?? (job.files ? job.files.length : 0),
+      firmware: job.firmware,
+      displayDate,
+      displayTime
+    };
+  });
   
   const availableBoards = boards.filter(b => b.status === 'online' && !b.currentJob).length;
   const queuedBoardsLeft = availableBoards; // simplified
@@ -493,7 +879,13 @@ const DashboardPage = () => {
     const jobId = (b.currentJob || '').replace('Batch #', '');
     const job = jobs.find(j => j.id === jobId);
     const progress = job ? job.progress : 0;
-    return { board: b, progress, job };
+    const completedFiles = job ? (job.completedFiles ?? 0) : 0;
+    const totalFiles = job ? (job.totalFiles ?? (job.files ? job.files.length : 0)) : 0;
+    const remainingFiles = Math.max(0, totalFiles - completedFiles);
+    const jobsWaitingForBoard = pendingJobs.filter(
+      (j) => !(j.boards || []).length || (j.boards || []).some((jb) => (jb || '').toString() === (b.name || b.id || '').toString())
+    ).length;
+    return { board: b, progress, job, completedFiles, totalFiles, remainingFiles, jobsWaitingForBoard };
   });
   
   const handleCopyCommand = (command) => {
@@ -504,6 +896,22 @@ const DashboardPage = () => {
   
   const hasDashboardError = errors?.systemHealth || errors?.boards || errors?.jobs;
   const isDashboardLoading = loading?.systemHealth || loading?.boards || loading?.jobs;
+
+  const goToBoardStatus = () => {
+    if (onNavigateBoards) {
+      onNavigateBoards();
+    }
+  };
+
+  const goToJobManager = () => {
+    if (onNavigateJobs) {
+      onNavigateJobs();
+    }
+  };
+
+  const systemModalJob = systemModalJobId
+    ? jobs.find((j) => j.id === systemModalJobId)
+    : null;
 
   return (
     <div className="space-y-2.5 min-w-0">
@@ -520,31 +928,35 @@ const DashboardPage = () => {
       )}
 
       {/* System Health Summary */}
-    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <StatCard 
-          icon={<CheckCircle2 className="text-emerald-500"/>} 
+          icon={<CheckCircle2 className="text-emerald-500" />} 
           label="Online" 
           value={systemHealth.onlineBoards} 
           sub={`${systemHealth.totalBoards} Total Boards`} 
+          onClick={goToBoardStatus}
         />
         <StatCard 
           icon={<Zap className="text-blue-500"/>} 
           label="Busy" 
           value={systemHealth.busyBoards} 
           sub="Running Tests" 
+          onClick={goToBoardStatus}
         />
         <StatCard 
-          icon={<AlertCircle className="text-red-500"/>} 
-          label="Errors" 
-          value={systemHealth.errorBoards} 
-          sub="Needs Attention" 
+          icon={<AlertCircle className="text-red-500" />} 
+          label="Job Errors" 
+          value={jobErrorCount} 
+          sub="Batches with failed tests" 
+          onClick={goToJobManager}
         />
         <StatCard 
-        icon={<Activity className="text-purple-500" />} 
-        label="Board Queue" 
-        value={queuedBoardsLeft} 
-        sub="Available (online & idle)" 
-      />
+          icon={<Activity className="text-purple-500" />} 
+          label="Job Queue" 
+          value={jobQueueCount} 
+          sub="Batches waiting to run" 
+          onClick={goToJobManager}
+        />
       <StatCard 
           icon={<HardDrive className="text-orange-500"/>} 
           label="Storage" 
@@ -554,136 +966,413 @@ const DashboardPage = () => {
     </div>
 
       {/* System Summary - System ไหน run อะไรอยู่ */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
+      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
           <div className="flex items-center gap-2">
-            <Layers size={20} className="text-blue-600" />
-            <h2 className="text-xl font-bold">System Summary</h2>
+            <Layers size={20} className="text-blue-600 dark:text-blue-400" />
+            <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">System Summary</h2>
             {systemSummary.length > 0 && (
-              <span className="text-sm text-slate-500 font-normal">
+              <span className="text-sm text-slate-500 dark:text-slate-400 font-normal">
                 ({systemSummary.length} {systemSummary.length === 1 ? 'system' : 'systems'})
               </span>
             )}
           </div>
-          {systemSummary.length > 3 && (
-            <button
-              onClick={() => setIsSystemSummaryExpanded(!isSystemSummaryExpanded)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-sm font-semibold hover:bg-blue-100 transition-colors"
-            >
-              {isSystemSummaryExpanded ? (
-                <>
-                  <ChevronUp size={16} />
-                  <span>Collapse</span>
-                </>
-              ) : (
-                <>
-                  <ChevronDown size={16} />
-                  <span>Expand</span>
-                </>
-              )}
-            </button>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search
+                size={14}
+                className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400"
+              />
+              <input
+                type="text"
+                value={systemSearch}
+                onChange={(e) => setSystemSearch(e.target.value)}
+                placeholder="Search by ID, name, tag..."
+                className="pl-7 pr-2 py-1.5 text-xs border border-slate-200 dark:border-slate-600 rounded-lg bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[180px]"
+              />
+            </div>
+            <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-800 rounded-full px-1 py-0.5">
+              <select
+                value={systemStatusFilter}
+                onChange={(e) => setSystemStatusFilter(e.target.value)}
+                className="px-3 py-1.5 text-[11px] border border-slate-200 dark:border-slate-600 rounded-full bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                title="Batch status"
+              >
+                <option value="running">Running</option>
+                <option value="pending">Pending</option>
+                <option value="completed">Completed</option>
+                <option value="stopped">Stopped</option>
+                <option value="all">All Status</option>
+              </select>
+              <select
+                value={systemTagFilter}
+                onChange={(e) => setSystemTagFilter(e.target.value)}
+                className="px-3 py-1.5 text-[11px] border border-slate-200 dark:border-slate-600 rounded-full bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                title="Tag"
+              >
+                <option value="">All Tags</option>
+                {systemTagOptions.map((tag) => (
+                  <option key={tag} value={tag}>
+                    {tag}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {systemSummary.length > 3 && (
+              <button
+                onClick={() => setIsSystemSummaryExpanded(!isSystemSummaryExpanded)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs font-semibold hover:bg-blue-100 transition-colors"
+              >
+                {isSystemSummaryExpanded ? (
+                  <>
+                    <ChevronUp size={14} />
+                    <span>Collapse</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown size={14} />
+                    <span>Expand</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
         </div>
         {systemSummary.length > 0 ? (
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {(isSystemSummaryExpanded ? systemSummary : systemSummary.slice(0, 3)).map((sys) => (
-                <div key={sys.jobId} className="p-4 bg-slate-50 rounded-xl border border-slate-200">
+              {(isSystemSummaryExpanded ? systemSummary : systemSummary.slice(0, 3)).map((sys) => {
+                const status = (sys.status || '').toLowerCase();
+                const statusColors =
+                  status === 'completed'
+                    ? 'border-emerald-200 bg-emerald-50/40'
+                    : status === 'pending'
+                    ? 'border-amber-200 bg-amber-50/40'
+                    : status === 'stopped'
+                    ? 'border-red-200 bg-red-50/40'
+                    : 'border-blue-200 bg-blue-50/40';
+                const dotColor =
+                  status === 'completed'
+                    ? 'bg-emerald-500'
+                    : status === 'pending'
+                    ? 'bg-amber-500'
+                    : status === 'stopped'
+                    ? 'bg-red-500'
+                    : 'bg-blue-500';
+                const isEditingTag = editingSystemTagId === sys.jobId;
+                const handleTagClick = (e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  const job = jobs.find((j) => j.id === sys.jobId);
+                  setEditingSystemTagId(sys.jobId);
+                  setSystemTagEditInput(job?.tag || '');
+                };
+                const handleTagSave = (e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  const newTag = systemTagEditInput.trim();
+                  updateJobTag(sys.jobId, newTag || null);
+                  setEditingSystemTagId(null);
+                  setSystemTagEditInput('');
+                };
+                const handleTagCancel = (e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  setEditingSystemTagId(null);
+                  setSystemTagEditInput('');
+                };
+                return (
+                <div
+                  key={sys.jobId}
+                  className={`p-4 rounded-2xl border shadow-sm hover:shadow-md transition-all cursor-pointer dark:bg-slate-800 dark:border-slate-700 ${statusColors}`}
+                  onClick={() => setSystemModalJobId(sys.jobId)}
+                >
                   <div className="flex items-center justify-between mb-2">
-                    <div className="font-bold text-slate-800 text-sm">Batch #{sys.jobId}</div>
-                    <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">
-                      {sys.tag}
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-bold text-slate-800 dark:text-slate-200 text-sm">
+                          Batch #{sys.jobId}
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-600 dark:text-slate-300">{sys.jobName}</div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {isEditingTag ? (
+                        <>
+                          <input
+                            type="text"
+                            value={systemTagEditInput}
+                            onChange={(e) => setSystemTagEditInput(e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="px-2 py-0.5 text-[11px] border border-purple-200 rounded bg-white text-slate-700 focus:outline-none focus:ring-1 focus:ring-purple-400"
+                            placeholder="Tag"
+                          />
+                          <button
+                            onClick={handleTagSave}
+                            className="p-1 rounded-full bg-emerald-500 hover:bg-emerald-600 text-white"
+                            title="Save tag"
+                          >
+                            <CheckSquare size={12} />
+                          </button>
+                          <button
+                            onClick={handleTagCancel}
+                            className="p-1 rounded-full bg-slate-200 hover:bg-slate-300 text-slate-700"
+                            title="Cancel"
+                          >
+                            <X size={12} />
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={handleTagClick}
+                          className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold hover:bg-purple-200 transition-colors"
+                          title="Edit tag"
+                        >
+                          {sys.tag}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 mb-1 text-[11px] text-slate-500 dark:text-slate-400">
+                    <span className={`inline-flex w-2 h-2 rounded-full ${dotColor}`} />
+                    <span className="uppercase tracking-wide font-semibold">
+                      {status || 'RUNNING'}
                     </span>
                   </div>
-                  <div className="text-xs text-slate-600 mb-2">{sys.jobName}</div>
-                  <div className="text-xs text-slate-500">
-                    <div>Boards: {sys.boards.length} ({sys.boards.join(', ')})</div>
-                    <div>Firmware: {sys.firmware}</div>
+                  {(sys.displayDate || sys.displayTime) && (
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 mb-1">
+                      {sys.displayDate}{sys.displayTime ? ` · ${sys.displayTime}` : ''}
+                    </div>
+                  )}
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                    <div className="mb-0.5">
+                      {sys.totalFiles ?? 0} Files{sys.firmware ? ` | ${sys.firmware}` : ''}
+                    </div>
+                    <div>
+                      Boards:{' '}
+                      {sys.boards.length > 0 ? sys.boards.join(', ') : '—'}
+                    </div>
                   </div>
                 </div>
-              ))}
+              )})}
             </div>
             {!isSystemSummaryExpanded && systemSummary.length > 3 && (
-              <div className="mt-4 text-center text-sm text-slate-500">
+              <div className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">
                 Showing top 3 of {systemSummary.length} systems. Click "Expand" to view all.
               </div>
             )}
           </>
         ) : (
-          <div className="text-center py-8 text-slate-400">
+          <div className="text-center py-8 text-slate-400 dark:text-slate-500">
             <p>No active systems running</p>
           </div>
         )}
       </div>
 
-      <div className="w-full">
-        {/* Active Campaigns Widget */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm min-w-0">
-          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
-            <h2 className="text-xl font-bold">Active</h2>
-            <div className="flex flex-wrap gap-2 bg-slate-100 rounded-lg p-1">
-              <button
-                onClick={() => setDashTab('campaigns')}
-                className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${dashTab === 'campaigns' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
-              >
-                Campaigns
-              </button>
-              <button
-                onClick={() => setDashTab('devices')}
-                className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${dashTab === 'devices' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
-              >
-                Device Progress
-              </button>
+      {/* System Summary - Quick View Modal */}
+      {systemModalJob && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4"
+          onClick={() => setSystemModalJobId(null)}
+        >
+          <div
+            className="w-full max-w-3xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+              <div className="flex items-center gap-2">
+                <Layers size={18} className="text-blue-600 dark:text-blue-400" />
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-bold text-slate-900 dark:text-slate-100 text-sm sm:text-base">
+                      Batch #{systemModalJob.id}
+                    </h2>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {systemModalJob.name || '—'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {systemModalJob.tag && (
+                  <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-bold">
+                    {systemModalJob.tag}
+                  </span>
+                )}
+                <button
+                  onClick={() => {
+                    setSystemModalJobId(null);
+                    goToJobManager();
+                  }}
+                  className="hidden sm:inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                >
+                  <Monitor size={14} />
+                  Open in Job Manager
+                </button>
+                <button
+                  onClick={() => setSystemModalJobId(null)}
+                  className="p-1.5 rounded-full hover:bg-slate-200 text-slate-500"
+                  title="Close"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                <span>
+                  <span className="font-semibold">Firmware:</span>{' '}
+                  {systemModalJob.firmware || 'N/A'}
+                </span>
+                <span>
+                  <span className="font-semibold">Boards:</span>{' '}
+                  {(systemModalJob.boards && systemModalJob.boards.length > 0)
+                    ? systemModalJob.boards.join(', ')
+                    : '—'}
+                </span>
+                <span>
+                  <span className="font-semibold">Files:</span>{' '}
+                  {systemModalJob.totalFiles ??
+                    (systemModalJob.files ? systemModalJob.files.length : 0)}
+                </span>
+              </div>
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                    <span>Test Cases</span>
+                    <span className="text-[10px] font-normal text-slate-500">
+                      (running / failed highlighted)
+                    </span>
+                  </div>
+                </div>
+                <div className="max-h-72 overflow-y-auto text-xs">
+                  {(!systemModalJob.files || systemModalJob.files.length === 0) ? (
+                    <div className="px-4 py-6 text-center text-slate-400">
+                      No test cases in this batch.
+                    </div>
+                  ) : (
+                    (systemModalJob.files || [])
+                      .slice()
+                      .sort((a, b) => (a.order || 0) - (b.order || 0))
+                      .map((file) => {
+                        const isRunning = file.status === 'running';
+                        const isFailed =
+                          file.result === 'fail' || file.status === 'error';
+                        const rowBg = isFailed
+                          ? 'bg-red-50'
+                          : isRunning
+                          ? 'bg-blue-50'
+                          : 'bg-white';
+                        return (
+                          <div
+                            key={file.id}
+                            className={`px-4 py-2 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 ${rowBg}`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-[10px] text-slate-400 shrink-0">
+                                #{file.order || file.id}
+                              </span>
+                              <span className="truncate font-medium text-slate-700">
+                                {file.name || 'N/A'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-[10px] uppercase font-semibold text-slate-500">
+                                {file.status || 'pending'}
+                              </span>
+                              {file.result && (
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                    file.result === 'pass'
+                                      ? 'bg-emerald-100 text-emerald-700'
+                                      : file.result === 'fail'
+                                      ? 'bg-red-100 text-red-700'
+                                      : 'bg-slate-100 text-slate-500'
+                                  }`}
+                                >
+                                  {file.result.toUpperCase()}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                  )}
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  onClick={() => setSystemModalJobId(null)}
+                  className="px-3 py-1.5 text-xs font-semibold text-slate-600 rounded-lg hover:bg-slate-100"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={() => {
+                    setSystemModalJobId(null);
+                    goToJobManager();
+                  }}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-1"
+                >
+                  <Monitor size={14} />
+                  Open in Job Manager
+                </button>
+              </div>
             </div>
           </div>
-          
-          {dashTab === 'campaigns' ? (
-        <div className="space-y-4">
-              {filteredJobs.length === 0 ? (
-                <div className="text-center py-12 text-slate-400">
-                  <p>No active jobs</p>
         </div>
-              ) : (
-                filteredJobs.map(job => (
-                  <ActiveJobCard 
-                    key={job.id}
-                    job={job}
-                    onClick={() => {
-                      setSelectedBatch(job);
-                      setShowBatchDetails(true);
-                    }}
-                  />
-                ))
-              )}
-      </div>
-          ) : (
-            <div className="space-y-3">
-              {deviceProgressRows.length === 0 ? (
-                <div className="p-6 text-center text-slate-500 bg-slate-50 rounded-2xl border border-slate-100">
-                  No devices available
-                </div>
-              ) : (
-                deviceProgressRows.map(({ board, progress }) => (
-                  <div key={board.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                    <div className="flex justify-between items-center mb-2">
-        <div>
-                        <div className="font-bold text-slate-800">{board.name}</div>
-                        <div className="text-xs text-slate-500">{board.currentJob ? board.currentJob : 'Idle'}</div>
-        </div>
-                      <div className="text-xs font-bold text-blue-700 bg-blue-100 px-2 py-1 rounded-lg">
-                        {board.currentJob ? `${progress}%` : '—'}
-                      </div>
+      )}
+
+      <div className="w-full">
+        {/* Device Progress - compact cards */}
+        <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm min-w-0">
+          <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-2">Device Progress</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+            {deviceProgressRows.length === 0 ? (
+              <div className="col-span-full py-4 text-center text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700">
+                No devices available
+              </div>
+            ) : (
+              deviceProgressRows.map(({ board, progress, job, completedFiles, totalFiles, remainingFiles, jobsWaitingForBoard }) => {
+                const isBusy = !!board.currentJob;
+                const isOnline = board.status === 'online';
+                return (
+                  <div key={board.id} className="p-2.5 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700">
+                    <div className="flex items-center justify-between gap-1.5 mb-1">
+                      <span className="font-semibold text-sm text-slate-800 dark:text-slate-200 truncate">{board.name}</span>
+                      <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0 ${
+                        isBusy
+                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
+                          : isOnline
+                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                            : 'bg-slate-200 text-slate-600 dark:bg-slate-600 dark:text-slate-300'
+                      }`}>
+                        {isBusy ? 'Busy' : isOnline ? 'Online' : (board.status || '—')}
+                      </span>
                     </div>
-                    <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
-                      <div className="h-full bg-blue-600 transition-all" style={{ width: `${board.currentJob ? progress : 0}%` }}></div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate mb-1" title={job ? `${(job.configName || job.name || 'Batch').trim()} · batch #${job.id}` : 'Idle'}>
+                      {job ? `${(job.configName || job.name || 'Batch').trim()} · #${job.id}` : 'Idle'}
                     </div>
+                    {isBusy && (
+                      <>
+                        <div className="h-1 w-full bg-slate-200 dark:bg-slate-600 rounded-full overflow-hidden mb-1">
+                          <div className="h-full bg-blue-600 transition-all" style={{ width: `${progress}%` }} />
+                        </div>
+                        <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                          {completedFiles}/{totalFiles} ({progress}%) · {remainingFiles} left · Queue: {jobsWaitingForBoard}
+                        </div>
+                      </>
+                    )}
+                    {!isBusy && (
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">Queue: {jobsWaitingForBoard} waiting</div>
+                    )}
                   </div>
-                ))
-              )}
-            </div>
-          )}
+                );
+              })
+            )}
+          </div>
         </div>
-    </div>
+      </div>
 
       {/* Batch Details Modal */}
       {showBatchDetails && selectedBatch && (
@@ -699,110 +1388,7 @@ const DashboardPage = () => {
 );
 };
 
-// 1.5. BOARD OVERVIEW PAGE (ภาพรวมบอร์ดที่รัน test อยู่)
-const BoardOverviewPage = () => {
-  const { boards, loading, errors } = useTestStore();
-
-  // Helper: get numeric order from id or name
-  const getBoardOrderNumber = (board) => {
-    const idNum = Number(board.id);
-    if (!Number.isNaN(idNum) && idNum > 0) return idNum;
-    if (typeof board.name === 'string') {
-      const match = board.name.match(/\d+/);
-      if (match) return Number(match[0]);
-    }
-    return 0;
-  };
-
-  // Safe sort (handles undefined / numeric ids)
-  const sortedBoards = (boards || []).slice().sort(
-    (a, b) => getBoardOrderNumber(a) - getBoardOrderNumber(b)
-  );
-
-  const getStatusPillClass = (status) => {
-    switch (status) {
-      case 'online':
-        return 'bg-emerald-100 text-emerald-700 border-emerald-200';
-      case 'busy':
-        return 'bg-blue-100 text-blue-700 border-blue-200';
-      case 'error':
-        return 'bg-red-100 text-red-700 border-red-200';
-      default:
-        return 'bg-slate-100 text-slate-700 border-slate-200';
-    }
-  };
-
-  if (loading?.boards) {
-    return (
-      <div className="flex items-center justify-center h-full py-20">
-        <div className="bg-white p-12 rounded-2xl border border-slate-200 shadow-sm text-center">
-          <Monitor size={48} className="text-slate-400 mx-auto mb-4" />
-          <p className="text-slate-600">Loading boards...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (errors?.boards) {
-    return (
-      <div className="flex items-center justify-center h-full py-20">
-        <div className="bg-white p-12 rounded-2xl border border-red-200 shadow-sm text-center">
-          <Monitor size={48} className="text-red-400 mx-auto mb-4" />
-          <p className="text-red-700">Failed to load boards: {errors.boards}</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!sortedBoards.length) {
-    return (
-      <div className="flex items-center justify-center h-full py-20">
-        <div className="bg-white p-12 rounded-2xl border border-slate-200 shadow-sm text-center">
-          <Monitor size={48} className="text-slate-400 mx-auto mb-4" />
-          <p className="text-slate-600">No boards available</p>
-      </div>
-        </div>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-        {sortedBoards.map((board, index) => (
-          <div
-            key={board.id ?? index}
-            className="bg-white p-4 rounded-2xl border border-slate-200 hover:border-blue-300 hover:shadow-md transition-all flex items-center justify-between"
-          >
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-slate-50 flex items-center justify-center text-sm font-bold text-slate-700">
-                {index + 1}
-      </div>
-              <div>
-                <div className="text-sm font-semibold text-slate-800">
-                  {board.name || `Board ${index + 1}`}
-                </div>
-                {board.ip && (
-                  <div className="text-[11px] text-slate-500">
-                    {board.ip}
-                  </div>
-                )}
-              </div>
-            </div>
-            <span
-              className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase border ${getStatusPillClass(
-                board.status
-              )}`}
-            >
-              {board.status || 'unknown'}
-            </span>
-          </div>
-        ))}
-    </div>
-  </div>
-);
-};
-
-// 1.6. REALTIME WAVEFORM PAGE (Node จำลอง Sine 125kHz @ fs=1MHz → Backend → UXUI)
+// 1.5. REALTIME WAVEFORM PAGE (Node จำลอง Sine 125kHz @ fs=1MHz → Backend → UXUI)
 const MAX_WAVEFORM_SAMPLES = 3000;   // เก็บใน buffer
 const DISPLAY_WAVEFORM_SAMPLES = 800; // แสดงแค่ช่วงล่าสุด เพื่อไม่ให้เส้นทับกันจนเป็นสีทึบ
 const WAVEFORM_CANVAS_WIDTH = 800;
@@ -1915,7 +2501,7 @@ const WaveformPage = () => {
             {isLive ? (
               <span className="text-emerald-600 font-medium">Receiving data from Node</span>
             ) : connected ? (
-              <span className="text-amber-600">รอ Node ส่ง chunk</span>
+              <span className="text-amber-600">Waiting for node to send chunk</span>
             ) : (
               <span className="text-slate-400">Lost of Signal / Backend Disconnected</span>
             )}
@@ -2016,7 +2602,2506 @@ const WaveformPage = () => {
 // );
 
 
-// 2. SETUP PAGE (Version with File Upload)
+// Set names that use this file (from fileLibrarySnapshot or items)
+const getSetNamesUsingFile = (fileName, savedTestCaseSets) => {
+  if (!fileName || !savedTestCaseSets?.length) return [];
+  const names = [];
+  for (const set of savedTestCaseSets) {
+    const hasInSnapshot = set.fileLibrarySnapshot?.some((s) => s.name === fileName);
+    const hasInItems = (set.items || []).some(
+      (t) => t.vcdName === fileName || t.binName === fileName || t.linName === fileName
+    );
+    if (hasInSnapshot || hasInItems) names.push(set.name || set.id);
+  }
+  return names;
+};
+
+// FILE LIBRARY PAGE — default: Test Case Library (เรียง set ลงมา แต่ละ set มีตารางแนวนอน + แสดงไฟล์); ปุ่มสลับView files in Library
+const FileLibraryPage = ({ onNavigateToTestCases }) => {
+  const { uploadedFiles, removeUploadedFile, loading, errors, savedTestCaseSets, savedTestCases, removeSavedTestCase, updateSavedTestCaseSet, removeSavedTestCaseSet } = useTestStore();
+  const refreshFiles = useTestStore((s) => s.refreshFiles);
+  const addToast = useTestStore((s) => s.addToast);
+  useEffect(() => { refreshFiles(); }, [refreshFiles]);
+  const [libraryView, setLibraryView] = useState('rawTestCases'); // 'testCases' | 'rawTestCases' (default) | 'files'
+  const [fileFilter, setFileFilter] = useState('all');
+  const [fileSearch, setFileSearch] = useState('');
+  const [fileSort, setFileSort] = useState('time');
+  const [fileViewMode, setFileViewMode] = useState('all'); // 'all' | 'bySet'
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deletingBoxId, setDeletingBoxId] = useState(null);
+  const [libraryTcNameFilter, setLibraryTcNameFilter] = useState('');
+  const [libraryTcTagFilter, setLibraryTcTagFilter] = useState('');
+  const [selectedLibraryTcKeys, setSelectedLibraryTcKeys] = useState([]);
+  const lastClickedLibraryTcIndexRef = useRef(null);
+  const isDragSelectingLibraryRef = useRef(false);
+  const [librarySetTcNameFilter, setLibrarySetTcNameFilter] = useState('');
+  const [librarySetTcTagFilter, setLibrarySetTcTagFilter] = useState('');
+  const [selectedLibrarySetTcKeys, setSelectedLibrarySetTcKeys] = useState([]);
+  const lastClickedLibrarySetTcRef = useRef({ setId: null, index: null });
+  const isDragSelectingLibrarySetRef = useRef(false);
+  const [selectedLibraryFileIds, setSelectedLibraryFileIds] = useState([]);
+  const lastClickedFileIndexRef = useRef(null);
+  const isDragSelectingFileRef = useRef(false);
+
+  const getFileKind = (f) => {
+    const ext = String(f?.name || '').split('.').pop()?.toLowerCase();
+    if (ext === 'vcd') return 'vcd';
+    if (['bin', 'hex', 'elf', 'erom'].includes(ext)) return 'bin';
+    if (['lin', 'txt', 'ulp'].includes(ext)) return 'lin';
+    return 'other';
+  };
+  const filteredFiles = [...(uploadedFiles || [])]
+    .filter((f) => {
+      const k = getFileKind(f);
+      if (fileFilter !== 'all' && (fileFilter === 'vcd' ? k !== 'vcd' : fileFilter === 'bin' ? k !== 'bin' : k !== 'lin')) return false;
+      if (fileSearch.trim()) return f.name.toLowerCase().includes(fileSearch.trim().toLowerCase());
+      return true;
+    })
+    .sort((a, b) => (fileSort === 'time' ? (b.uploadDate || 0) - (a.uploadDate || 0) : (a.name || '').localeCompare(b.name || '')));
+
+  // ชื่อไฟล์ที่ Set ใช้ (จาก snapshot หรือ items)
+  const getFileNamesForSet = (set) => {
+    const names = new Set();
+    (set.fileLibrarySnapshot || []).forEach((s) => s.name && names.add(s.name));
+    (set.items || []).forEach((t) => {
+      if (t.vcdName) names.add(t.vcdName);
+      if (t.binName) names.add(t.binName);
+      if (t.linName) names.add(t.linName);
+    });
+    return [...names];
+  };
+  const filesBySet =
+    fileViewMode === 'bySet'
+      ? (savedTestCaseSets || []).map((set) => ({
+          set,
+          files: filteredFiles.filter((f) => getFileNamesForSet(set).includes(f.name)),
+        }))
+      : [];
+
+  const libraryRawRows = useMemo(() => {
+    if (libraryView !== 'rawTestCases') return [];
+    const contentKey = (tc) => [tc.name ?? '', tc.vcdName ?? '', tc.binName ?? '', tc.linName ?? ''].join('\0');
+    const fromCurrent = (savedTestCases || []).map((tc) => ({
+      ...tc,
+      _key: `current-${tc.id}`,
+      _source: 'current',
+    }));
+    const seen = new Set(fromCurrent.map((tc) => contentKey(tc)));
+    const fromSets = (savedTestCaseSets || []).flatMap((set) =>
+      (Array.isArray(set.items) ? set.items : []).map((tc, tcIdx) => ({
+        ...tc,
+        _key: `set-${set.id}-${tcIdx}`,
+        _source: 'set',
+        _setId: set.id,
+        _itemIndex: tcIdx,
+      }))
+    );
+    const fromSetsDeduped = fromSets.filter((tc) => {
+      const key = contentKey(tc);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return [...fromCurrent, ...fromSetsDeduped];
+  }, [libraryView, savedTestCases, savedTestCaseSets]);
+
+  const libraryFilteredRows = useMemo(() => {
+    return libraryRawRows.filter((tc) => {
+      if (libraryTcNameFilter.trim() && !(tc.name || '').toLowerCase().includes(libraryTcNameFilter.trim().toLowerCase())) return false;
+      const tagVal = (tc.extraColumns && (tc.extraColumns.tag || tc.extraColumns.Tag)) || '';
+      if (libraryTcTagFilter.trim() && !String(tagVal).toLowerCase().includes(libraryTcTagFilter.trim().toLowerCase())) return false;
+      return true;
+    });
+  }, [libraryRawRows, libraryTcNameFilter, libraryTcTagFilter]);
+
+  useEffect(() => {
+    const onMouseUp = () => {
+      isDragSelectingLibraryRef.current = false;
+      isDragSelectingLibrarySetRef.current = false;
+      isDragSelectingFileRef.current = false;
+    };
+    window.addEventListener('mouseup', onMouseUp);
+    return () => window.removeEventListener('mouseup', onMouseUp);
+  }, []);
+
+  const handleDeleteAll = async () => {
+    if (!uploadedFiles?.length) return;
+    if (!window.confirm('Delete all files in Library?')) return;
+    setIsDeleting(true);
+    for (const f of uploadedFiles) await removeUploadedFile(f.id);
+    setIsDeleting(false);
+    addToast({ type: 'success', message: 'All files deleted' });
+  };
+
+  const handleDeleteBox = async (setId, files) => {
+    if (!files?.length) return;
+    if (!window.confirm(`Delete all ${files.length} file(s) in this box from Library?`)) return;
+    setDeletingBoxId(setId);
+    for (const f of files) await removeUploadedFile(f.id);
+    setDeletingBoxId(null);
+    addToast({ type: 'success', message: `Deleted ${files.length} file(s) from box` });
+  };
+
+  return (
+    <div className="w-full max-w-6xl mx-auto space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Test Case and File Library</h1>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg border border-slate-200 dark:border-slate-600 overflow-hidden shrink-0">
+            <button
+              type="button"
+              onClick={() => setLibraryView('testCases')}
+              className={`px-3 py-1.5 text-xs font-semibold ${libraryView === 'testCases' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
+            >
+              Test Case Library
+            </button>
+            <button
+              type="button"
+              onClick={() => setLibraryView('rawTestCases')}
+              className={`px-3 py-1.5 text-xs font-semibold ${libraryView === 'rawTestCases' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
+            >
+              Raw Test Cases
+            </button>
+            <button
+              type="button"
+              onClick={() => setLibraryView('files')}
+              className={`px-3 py-1.5 text-xs font-semibold ${libraryView === 'files' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
+            >
+              File in Library
+            </button>
+          </div>
+          {onNavigateToTestCases && (
+            <button type="button" onClick={onNavigateToTestCases} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-medium hover:bg-slate-200 dark:hover:bg-slate-600">
+              Go to Test Cases <ChevronRight size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {libraryView === 'testCases' ? (
+        /* Test Case Library — sets with filter name/tag, multi-select, delete icon */
+        (() => {
+          const selectedSetKeys = new Set(selectedLibrarySetTcKeys);
+          const handleDeleteSelectedSetTcs = () => {
+            if (selectedSetKeys.size === 0) {
+              addToast({ type: 'info', message: 'Select test case(s) first' });
+              return;
+            }
+            if (!window.confirm(`Delete ${selectedSetKeys.size} selected test case(s) from set(s)?`)) return;
+            const bySet = {};
+            selectedSetKeys.forEach((key) => {
+              const sep = key.indexOf('::');
+              if (sep < 0) return;
+              const setId = key.slice(0, sep);
+              const idx = parseInt(key.slice(sep + 2), 10);
+              if (isNaN(idx)) return;
+              if (!bySet[setId]) bySet[setId] = new Set();
+              bySet[setId].add(idx);
+            });
+            Object.entries(bySet).forEach(([setId, indices]) => {
+              const set = (savedTestCaseSets || []).find((s) => s.id === setId);
+              if (!set || !Array.isArray(set.items)) return;
+              const newItems = set.items.filter((_, i) => !indices.has(i));
+              updateSavedTestCaseSet(setId, { items: newItems });
+            });
+            setSelectedLibrarySetTcKeys([]);
+            addToast({ type: 'success', message: `Deleted ${selectedSetKeys.size} test case(s)` });
+          };
+          return (
+            <div className="space-y-6">
+              <div className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 flex flex-wrap items-center gap-3">
+                <input type="text" value={librarySetTcNameFilter} onChange={(e) => setLibrarySetTcNameFilter(e.target.value)} placeholder="Filter by name" className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 w-40" />
+                <input type="text" value={librarySetTcTagFilter} onChange={(e) => setLibrarySetTcTagFilter(e.target.value)} placeholder="Filter by tag" className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 w-32" />
+                <button type="button" onClick={handleDeleteSelectedSetTcs} disabled={selectedSetKeys.size === 0} className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:pointer-events-none transition-colors" title={selectedSetKeys.size > 0 ? `Delete ${selectedSetKeys.size} selected` : 'Select test cases to delete'}>
+                  <Trash2 size={18} strokeWidth={2} />
+                </button>
+                {selectedSetKeys.size > 0 && <span className="text-xs text-slate-500">{selectedSetKeys.size} selected</span>}
+                <span className="text-xs text-slate-400">Click, Shift+click range, Ctrl/Cmd+click toggle, or drag to select</span>
+              </div>
+              {!savedTestCaseSets?.length ? (
+                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-8 text-center text-slate-500 dark:text-slate-400">
+                  No sets yet — create test cases and Save Set on the Test Cases page
+                </div>
+              ) : (
+                savedTestCaseSets.map((set, setIdx) => {
+                  const items = Array.isArray(set.items) ? set.items : [];
+                  const itemsWithIndex = items.map((tc, i) => ({ ...tc, _origIndex: i }));
+                  const filteredItems = itemsWithIndex.filter((tc) => {
+                    if (librarySetTcNameFilter.trim() && !(tc.name || '').toLowerCase().includes(librarySetTcNameFilter.trim().toLowerCase())) return false;
+                    const tagVal = (tc.extraColumns && (tc.extraColumns.tag || tc.extraColumns.Tag)) || '';
+                    if (librarySetTcTagFilter.trim() && !String(tagVal).toLowerCase().includes(librarySetTcTagFilter.trim().toLowerCase())) return false;
+                    return true;
+                  });
+                  const extraCols = [...new Set((items || []).flatMap((t) => Object.keys(t.extraColumns || {})))].sort();
+                  const setName = set.name || `Set ${setIdx + 1}`;
+                  const toggleSetTc = (key, rowIndex, e) => {
+                    const last = lastClickedLibrarySetTcRef.current;
+                    if (e.shiftKey && last.setId === set.id) {
+                      const from = Math.min(last.index, rowIndex);
+                      const to = Math.max(last.index, rowIndex);
+                      const keysToAdd = filteredItems.slice(from, to + 1).map((r) => `${set.id}::${r._origIndex}`);
+                      setSelectedLibrarySetTcKeys((prev) => [...new Set([...prev, ...keysToAdd])]);
+                      lastClickedLibrarySetTcRef.current = { setId: set.id, index: rowIndex };
+                      return;
+                    }
+                    if (e.ctrlKey || e.metaKey) {
+                      setSelectedLibrarySetTcKeys((prev) => (selectedSetKeys.has(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+                      lastClickedLibrarySetTcRef.current = { setId: set.id, index: rowIndex };
+                      return;
+                    }
+                    setSelectedLibrarySetTcKeys(selectedSetKeys.has(key) ? [] : [key]);
+                    lastClickedLibrarySetTcRef.current = { setId: set.id, index: rowIndex };
+                  };
+                  const rowKey = (tc) => `${set.id}::${tc._origIndex}`;
+                  const setSelectedKeysInSet = filteredItems.filter((r) => selectedSetKeys.has(rowKey(r))).length;
+                  return (
+                    <div key={set.id} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                      <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-600 flex items-center justify-between">
+                        <h2 className="text-sm font-bold text-slate-700 dark:text-slate-200">
+                          {setName}
+                          <span className="ml-2 text-xs font-normal text-slate-500">({filteredItems.length} test case{filteredItems.length !== 1 ? 's' : ''}{filteredItems.length !== items.length ? `, filtered from ${items.length}` : ''})</span>
+                        </h2>
+                        <div className="flex items-center gap-2">
+                          {setSelectedKeysInSet > 0 && <span className="text-xs text-slate-500">{setSelectedKeysInSet} selected</span>}
+                          {onNavigateToTestCases && (
+                            <button type="button" onClick={onNavigateToTestCases} className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline">
+                              Edit Test Cases
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (!window.confirm(`Delete set "${setName}"? This will remove it from the library and from the database.`)) return;
+                              try {
+                                await api.deleteSet(set.id);
+                              } catch (e) {
+                                if (!String(e?.message || '').includes('404')) addToast({ type: 'warning', message: `Backend: ${e?.message || 'Delete failed'}` });
+                              }
+                              removeSavedTestCaseSet(set.id);
+                              setSelectedLibrarySetTcKeys((prev) => prev.filter((k) => !k.startsWith(set.id + '::')));
+                              addToast({ type: 'success', message: `Deleted set "${setName}"` });
+                            }}
+                            className="p-1.5 rounded hover:bg-red-600/10 text-red-600 dark:text-red-400"
+                            title="Delete set (from library and database)"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="bg-slate-100 dark:bg-slate-800 text-left text-xs font-bold text-slate-600 dark:text-slate-400">
+                              <th className="w-9 px-2 py-2 border-r border-slate-200 dark:border-slate-600">
+                                <input type="checkbox" checked={filteredItems.length > 0 && filteredItems.every((r) => selectedSetKeys.has(rowKey(r)))} onChange={(e) => { if (e.target.checked) setSelectedLibrarySetTcKeys((prev) => [...new Set([...prev, ...filteredItems.map((r) => rowKey(r))])]); else setSelectedLibrarySetTcKeys((prev) => prev.filter((k) => !k.startsWith(set.id + '::'))); }} className="w-4 h-4 rounded cursor-pointer" title="Select all in this set" />
+                              </th>
+                              <th className="w-8 px-2 py-2 border-r border-slate-200 dark:border-slate-600">#</th>
+                              <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">Name</th>
+                              <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">ERoM </th>
+                              <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">ULP</th>
+                              <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">VCD </th>
+                              {extraCols.map((col) => (<th key={col} className="px-2 py-2 border-r border-slate-200 dark:border-slate-600 min-w-[80px]">{col}</th>))}
+                              <th className="w-14 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Try</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredItems.length === 0 ? (
+                              <tr>
+                                <td colSpan={7 + extraCols.length} className="px-2 py-4 text-center text-slate-400 text-xs">No test cases in this set{items.length > 0 ? ' (or no match for filter)' : ''}</td>
+                              </tr>
+                            ) : (
+                              filteredItems.map((tc, idx) => {
+                                const key = rowKey(tc);
+                                const isSelected = selectedSetKeys.has(key);
+                                return (
+                                  <tr
+                                    key={key}
+                                    className={`border-b border-slate-100 dark:border-slate-700 cursor-pointer select-none ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}
+                                    onClick={(e) => { if (e.target.closest('input[type="checkbox"]')) return; toggleSetTc(key, idx, e); }}
+                                    onMouseDown={(e) => { if (e.target.closest('input[type="checkbox"]')) return; if (e.button === 0) { isDragSelectingLibrarySetRef.current = true; if (!selectedSetKeys.has(key)) setSelectedLibrarySetTcKeys((prev) => [...prev, key]); } }}
+                                    onMouseEnter={() => { if (!isDragSelectingLibrarySetRef.current) return; if (!selectedSetKeys.has(key)) setSelectedLibrarySetTcKeys((prev) => [...prev, key]); }}
+                                  >
+                                    <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700" onClick={(e) => e.stopPropagation()}>
+                                      <input type="checkbox" checked={isSelected} onChange={() => toggleSetTc(key, idx, { shiftKey: false, ctrlKey: false, metaKey: false })} className="w-4 h-4 rounded cursor-pointer" />
+                                    </td>
+                                    <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-500">{idx + 1}</td>
+                                    <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 font-medium text-slate-800 dark:text-slate-200">{tc.name || '—'}</td>
+                                    <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">{tc.binName || '—'}</td>
+                                    <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">{tc.linName || '—'}</td>
+                                    <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">{tc.vcdName || '—'}</td>
+                                    {extraCols.map((col) => (<td key={col} className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">{tc.extraColumns?.[col] ?? '—'}</td>))}
+                                    <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center text-slate-600 dark:text-slate-400">{typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1}</td>
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          );
+        })()
+      ) : libraryView === 'rawTestCases' ? (
+        /* Raw Test Cases — filter name/tag, multi-select (shift/ctrl + drag), delete selected */
+        (() => {
+          const selectedSet = new Set(selectedLibraryTcKeys);
+          const extraCols = [...new Set(libraryFilteredRows.flatMap((t) => Object.keys(t.extraColumns || {})))].sort();
+          const toggleSelect = (key, idx, e) => {
+            if (e.shiftKey) {
+              const last = lastClickedLibraryTcIndexRef.current;
+              const from = last != null ? Math.min(last, idx) : idx;
+              const to = last != null ? Math.max(last, idx) : idx;
+              const keysToAdd = libraryFilteredRows.slice(from, to + 1).map((r) => r._key).filter(Boolean);
+              setSelectedLibraryTcKeys((prev) => [...new Set([...prev, ...keysToAdd])]);
+              lastClickedLibraryTcIndexRef.current = idx;
+              return;
+            }
+            if (e.ctrlKey || e.metaKey) {
+              setSelectedLibraryTcKeys((prev) =>
+                selectedSet.has(key) ? prev.filter((k) => k !== key) : [...prev, key]
+              );
+              lastClickedLibraryTcIndexRef.current = idx;
+              return;
+            }
+            setSelectedLibraryTcKeys(selectedSet.has(key) ? [] : [key]);
+            lastClickedLibraryTcIndexRef.current = idx;
+          };
+          const handleRowMouseDown = (key, idx) => {
+            isDragSelectingLibraryRef.current = true;
+            if (!selectedSet.has(key)) setSelectedLibraryTcKeys((prev) => [...prev, key]);
+          };
+          const handleRowMouseEnter = (key, idx) => {
+            if (!isDragSelectingLibraryRef.current) return;
+            if (!selectedSet.has(key)) setSelectedLibraryTcKeys((prev) => [...prev, key]);
+          };
+          const handleDeleteSelected = () => {
+            if (selectedSet.size === 0) {
+              addToast({ type: 'info', message: 'Select test case(s) first' });
+              return;
+            }
+            if (!window.confirm(`Delete ${selectedSet.size} selected test case(s)?`)) return;
+            const toRemove = libraryRawRows.filter((r) => r._key && selectedSet.has(r._key));
+            const bySet = {};
+            toRemove.forEach((row) => {
+              if (row._source === 'current' && row.id) {
+                removeSavedTestCase(row.id);
+              } else if (row._source === 'set' && row._setId != null && row._itemIndex != null) {
+                if (!bySet[row._setId]) bySet[row._setId] = new Set();
+                bySet[row._setId].add(row._itemIndex);
+              }
+            });
+            Object.entries(bySet).forEach(([setId, indices]) => {
+              const set = (savedTestCaseSets || []).find((s) => s.id === setId);
+              if (!set || !Array.isArray(set.items)) return;
+              const newItems = set.items.filter((_, i) => !indices.has(i));
+              updateSavedTestCaseSet(setId, { items: newItems });
+            });
+            setSelectedLibraryTcKeys([]);
+            addToast({ type: 'success', message: `Deleted ${toRemove.length} test case(s)` });
+          };
+          return (
+            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-600">
+                <h2 className="text-sm font-bold text-slate-700 dark:text-slate-200">Raw Test Cases</h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1"></p>
+              </div>
+              <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-700 flex flex-wrap items-center gap-3">
+                <input
+                  type="text"
+                  value={libraryTcNameFilter}
+                  onChange={(e) => setLibraryTcNameFilter(e.target.value)}
+                  placeholder="Filter by name"
+                  className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 w-40"
+                />
+                <input
+                  type="text"
+                  value={libraryTcTagFilter}
+                  onChange={(e) => setLibraryTcTagFilter(e.target.value)}
+                  placeholder="Filter by tag"
+                  className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 w-32"
+                />
+                <button
+                  type="button"
+                  onClick={handleDeleteSelected}
+                  disabled={selectedSet.size === 0}
+                  className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                  title={selectedSet.size > 0 ? `Delete ${selectedSet.size} selected` : 'Select test cases to delete'}
+                >
+                  <Trash2 size={18} strokeWidth={2} />
+                </button>
+                {selectedSet.size > 0 && (
+                  <span className="text-xs text-slate-500">{selectedSet.size} selected</span>
+                )}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-100 dark:bg-slate-800 text-left text-xs font-bold text-slate-600 dark:text-slate-400">
+                      <th className="w-9 px-2 py-2 border-r border-slate-200 dark:border-slate-600">
+                        <input
+                          type="checkbox"
+                          checked={libraryFilteredRows.length > 0 && libraryFilteredRows.every((r) => selectedSet.has(r._key))}
+                          onChange={(e) => {
+                            if (e.target.checked) setSelectedLibraryTcKeys(libraryFilteredRows.map((r) => r._key).filter(Boolean));
+                            else setSelectedLibraryTcKeys([]);
+                          }}
+                          className="w-4 h-4 rounded cursor-pointer"
+                          title="Select all"
+                        />
+                      </th>
+                      <th className="w-8 px-2 py-2 border-r border-slate-200 dark:border-slate-600">#</th>
+                      <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">Name</th>
+                      <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">ERoM </th>
+                      <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">ULP </th>
+                      <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">VCD </th>
+                      {extraCols.map((col) => (
+                        <th key={col} className="px-2 py-2 border-r border-slate-200 dark:border-slate-600 min-w-[80px]">{col}</th>
+                      ))}
+                      <th className="w-14 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Try</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {libraryFilteredRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={7 + extraCols.length} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400 text-sm">
+                          No test cases yet — or no match for filter. Create on Test Cases page or clear filters.
+                        </td>
+                      </tr>
+                    ) : (
+                      libraryFilteredRows.map((tc, idx) => {
+                        const key = tc._key || `row-${idx}`;
+                        const isSelected = selectedSet.has(key);
+                        return (
+                          <tr
+                            key={key}
+                            className={`border-b border-slate-100 dark:border-slate-700 cursor-pointer select-none ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}
+                            onClick={(e) => {
+                              if (e.target.closest('input[type="checkbox"]')) return;
+                              toggleSelect(key, idx, e);
+                            }}
+                            onMouseDown={(e) => {
+                              if (e.target.closest('input[type="checkbox"]')) return;
+                              if (e.button === 0) handleRowMouseDown(key, idx);
+                            }}
+                            onMouseEnter={() => handleRowMouseEnter(key, idx)}
+                          >
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleSelect(key, idx, { shiftKey: false, ctrlKey: false, metaKey: false })}
+                                className="w-4 h-4 rounded cursor-pointer"
+                              />
+                            </td>
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-500">
+                              {idx + 1}
+                            </td>
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 font-medium text-slate-800 dark:text-slate-200">
+                              {tc.name || '—'}
+                            </td>
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">
+                              {tc.binName || '—'}
+                            </td>
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">
+                              {tc.linName || '—'}
+                            </td>
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">
+                              {tc.vcdName || '—'}
+                            </td>
+                            {extraCols.map((col) => (
+                              <td key={col} className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">
+                                {tc.extraColumns?.[col] ?? '—'}
+                              </td>
+                            ))}
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center text-slate-600 dark:text-slate-400">
+                              {typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {onNavigateToTestCases && (
+                <div className="px-4 py-2 border-t border-slate-200 dark:border-slate-600 bg-slate-50/50 dark:bg-slate-800/30">
+                  <button type="button" onClick={onNavigateToTestCases} className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline">
+                    Edit test case in Test Cases →
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })()
+      ) : (
+        /* File in Library — filter, multi-select (shift/ctrl/drag), delete icon */
+        (() => {
+          const selectedFileSet = new Set(selectedLibraryFileIds);
+          const toggleFileSelect = (fileId, index, e) => {
+            if (e.shiftKey) {
+              const last = lastClickedFileIndexRef.current;
+              const from = last != null ? Math.min(last, index) : index;
+              const to = last != null ? Math.max(last, index) : index;
+              const idsToAdd = filteredFiles.slice(from, to + 1).map((f) => f.id).filter(Boolean);
+              setSelectedLibraryFileIds((prev) => [...new Set([...prev, ...idsToAdd])]);
+              lastClickedFileIndexRef.current = index;
+              return;
+            }
+            if (e.ctrlKey || e.metaKey) {
+              setSelectedLibraryFileIds((prev) => (selectedFileSet.has(fileId) ? prev.filter((id) => id !== fileId) : [...prev, fileId]));
+              lastClickedFileIndexRef.current = index;
+              return;
+            }
+            setSelectedLibraryFileIds(selectedFileSet.has(fileId) ? [] : [fileId]);
+            lastClickedFileIndexRef.current = index;
+          };
+          const handleDeleteSelectedFiles = async () => {
+            if (selectedFileSet.size === 0) {
+              addToast({ type: 'info', message: 'Select file(s) first' });
+              return;
+            }
+            if (!window.confirm(`Delete ${selectedFileSet.size} selected file(s) from Library?`)) return;
+            setIsDeleting(true);
+            for (const id of selectedLibraryFileIds) await removeUploadedFile(id);
+            setIsDeleting(false);
+            setSelectedLibraryFileIds([]);
+            addToast({ type: 'success', message: `Deleted ${selectedFileSet.size} file(s)` });
+          };
+          return (
+            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+              <div className="p-3 flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-600">
+                <div className="flex rounded-lg border border-slate-200 dark:border-slate-600 overflow-hidden shrink-0">
+                  <button type="button" onClick={() => setFileViewMode('all')} className={`px-3 py-1.5 text-xs font-semibold ${fileViewMode === 'all' ? 'bg-slate-200 dark:bg-slate-600 text-slate-800 dark:text-slate-100' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}>All</button>
+                  <button type="button" onClick={() => setFileViewMode('bySet')} className={`px-3 py-1.5 text-xs font-semibold ${fileViewMode === 'bySet' ? 'bg-slate-200 dark:bg-slate-600 text-slate-800 dark:text-slate-100' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}>Separate by Set</button>
+                </div>
+                {['all', 'vcd', 'bin', 'lin'].map((k) => (
+                  <button key={k} onClick={() => setFileFilter(k)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${fileFilter === k ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700' : 'border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-400'}`}>{k === 'all' ? 'All' : k.toUpperCase()}</button>
+                ))}
+                <input type="text" value={fileSearch} onChange={(e) => setFileSearch(e.target.value)} placeholder="Filter by name" className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 w-40" />
+                <select value={fileSort} onChange={(e) => setFileSort(e.target.value)} className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800"><option value="time">Time</option><option value="name">Name</option></select>
+                <button type="button" onClick={handleDeleteSelectedFiles} disabled={selectedFileSet.size === 0 || isDeleting} className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:pointer-events-none transition-colors" title={selectedFileSet.size > 0 ? `Delete ${selectedFileSet.size} selected` : 'Select files to delete'}>
+                  <Trash2 size={18} strokeWidth={2} />
+                </button>
+                {selectedFileSet.size > 0 && <span className="text-xs text-slate-500">{selectedFileSet.size} selected</span>}
+                <span className="text-xs text-slate-400">Click, Shift+click range, Ctrl/Cmd+click toggle, or drag to select</span>
+                {uploadedFiles?.length > 0 && (
+                  <button type="button" onClick={handleDeleteAll} disabled={isDeleting} className="ml-auto px-2 py-1 rounded text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60" title="Delete all files in Library">Delete All</button>
+                )}
+              </div>
+              <div className="max-h-[500px] overflow-y-auto">
+                {loading?.files ? <div className="p-8 text-center text-slate-400">Loading...</div> : errors?.files ? <div className="p-8 text-center text-red-500">{errors.files}</div> : fileViewMode === 'all' ? (
+                  <div className="divide-y divide-slate-100 dark:divide-slate-700">
+                    {filteredFiles.length > 0 && (
+                      <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-700">
+                        <input type="checkbox" checked={filteredFiles.every((f) => selectedFileSet.has(f.id))} onChange={(e) => { if (e.target.checked) setSelectedLibraryFileIds(filteredFiles.map((f) => f.id)); else setSelectedLibraryFileIds([]); }} className="w-4 h-4 rounded cursor-pointer" title="Select all" />
+                        <span className="text-xs text-slate-500">Select all ({filteredFiles.length})</span>
+                      </div>
+                    )}
+                    {filteredFiles.length === 0 ? <div className="p-8 text-center text-slate-400">No files — upload on the Test Cases page</div> : filteredFiles.map((f, index) => {
+                      const setNames = getSetNamesUsingFile(f.name, savedTestCaseSets);
+                      const isSelected = selectedFileSet.has(f.id);
+                      return (
+                        <div
+                          key={f.id}
+                          className={`flex items-center gap-2 px-4 py-2 flex-wrap cursor-pointer select-none ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}
+                          onClick={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return; toggleFileSelect(f.id, index, e); }}
+                          onMouseDown={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return; if (e.button === 0) { isDragSelectingFileRef.current = true; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); } }}
+                          onMouseEnter={() => { if (!isDragSelectingFileRef.current) return; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); }}
+                        >
+                          <input type="checkbox" checked={isSelected} onChange={() => toggleFileSelect(f.id, index, { shiftKey: false, ctrlKey: false, metaKey: false })} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded cursor-pointer shrink-0" />
+                          <span className="flex-1 min-w-0 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
+                          {setNames.length > 0 && <span className="text-[11px] text-blue-600 dark:text-blue-400 shrink-0" title={`Used by Set: ${setNames.join(', ')}`}>Used by Set: {setNames.slice(0, 2).join(', ')}{setNames.length > 2 ? ` +${setNames.length - 2}` : ''}</span>}
+                          <span className="text-xs text-slate-500 shrink-0">{f.sizeFormatted || f.size}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="p-3 space-y-4">
+                    {filteredFiles.length === 0 ? <div className="p-8 text-center text-slate-400">No files — upload on the Test Cases page</div> : filesBySet.length === 0 ? <div className="p-8 text-center text-slate-400">No sets — create a set on the Test Cases page (Save Set)</div> : (
+                      <>
+                        {filteredFiles.length > 0 && (
+                          <div className="flex items-center gap-2 pb-2">
+                            <input type="checkbox" checked={filteredFiles.length > 0 && filteredFiles.every((f) => selectedFileSet.has(f.id))} onChange={(e) => { if (e.target.checked) setSelectedLibraryFileIds(filteredFiles.map((f) => f.id)); else setSelectedLibraryFileIds([]); }} className="w-4 h-4 rounded cursor-pointer" title="Select all" />
+                            <span className="text-xs text-slate-500">Select all ({filteredFiles.length})</span>
+                          </div>
+                        )}
+                        {filesBySet.map(({ set: setInfo, files }, idx) => {
+                          if (files.length === 0) return null;
+                          const title = setInfo.name || `Set ${idx + 1}`;
+                          const boxId = setInfo.id;
+                          const isDeletingBox = deletingBoxId === boxId;
+                          return (
+                            <div key={boxId} className="rounded-lg border border-slate-200 dark:border-slate-600 overflow-hidden bg-slate-50/50 dark:bg-slate-800/30">
+                              <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800/50 flex items-center justify-between gap-2">
+                                <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">{title} <span className="text-xs font-normal text-slate-500">({files.length})</span></span>
+                                <button type="button" onClick={() => handleDeleteBox(boxId, files)} disabled={isDeletingBox} className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-60" title="Delete all files in this box"><Trash2 size={16} strokeWidth={2} /></button>
+                              </div>
+                              <div className="divide-y divide-slate-100 dark:divide-slate-700">
+                                {files.map((f, fileIdx) => {
+                                  const isSelected = selectedFileSet.has(f.id);
+                                  const globalIndex = filteredFiles.findIndex((x) => x.id === f.id);
+                                  return (
+                                    <div
+                                      key={f.id}
+                                      className={`flex items-center gap-2 px-4 py-2 flex-wrap cursor-pointer select-none bg-white/50 dark:bg-transparent ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-white dark:hover:bg-slate-800/50'}`}
+                                      onClick={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return; toggleFileSelect(f.id, globalIndex >= 0 ? globalIndex : fileIdx, e); }}
+                                      onMouseDown={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return; if (e.button === 0) { isDragSelectingFileRef.current = true; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); } }}
+                                      onMouseEnter={() => { if (!isDragSelectingFileRef.current) return; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); }}
+                                    >
+                                      <input type="checkbox" checked={isSelected} onChange={() => toggleFileSelect(f.id, globalIndex >= 0 ? globalIndex : fileIdx, { shiftKey: false, ctrlKey: false, metaKey: false })} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded cursor-pointer shrink-0" />
+                                      <span className="flex-1 min-w-0 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
+                                      <span className="text-xs text-slate-500 shrink-0">{f.sizeFormatted || f.size}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })() ) }
+    </div>
+  );
+};
+
+// 2a. TEST CASES PAGE — สร้าง/เก็บ test case ไว้ (ฟีเจอร์เทียบเท่า Setup เดิม)
+const TestCasesPage = () => {
+  const {
+    uploadedFiles,
+    savedTestCases,
+    savedTestCaseSets,
+    addSavedTestCase,
+    updateSavedTestCase,
+    removeSavedTestCase,
+    moveSavedTestCaseUp,
+    moveSavedTestCaseDown,
+    reorderSavedTestCases,
+    duplicateSavedTestCase,
+    setSavedTestCases,
+    bulkUpdateTryCount,
+    addTestCaseCommand,
+    updateTestCaseCommand,
+    removeTestCaseCommand,
+    addSavedTestCaseSet,
+    updateSavedTestCaseSet,
+    removeSavedTestCaseSet,
+    duplicateSavedTestCaseSet,
+    applySavedTestCaseSet,
+    appendSavedTestCaseSet,
+    moveSavedTestCaseSetUp,
+    moveSavedTestCaseSetDown,
+    addUploadedFile,
+    removeUploadedFile,
+    loading,
+    errors,
+  } = useTestStore();
+  const addToast = useTestStore((s) => s.addToast);
+  const refreshFiles = useTestStore((s) => s.refreshFiles);
+  const fileInputRef = useRef(null);
+  const csvInputRef = useRef(null);
+  const prevUploadedCountRef = useRef(0);
+  const justDidStartFreshRef = useRef(false);
+
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [selectedTestCaseIds, setSelectedTestCaseIds] = useState([]);
+  const [bulkTryCount, setBulkTryCount] = useState('');
+  const [fileFilter, setFileFilter] = useState('all');
+  const [fileSearch, setFileSearch] = useState('');
+  const [fileSort, setFileSort] = useState('time');
+  const [fileListExpanded, setFileListExpanded] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isDeletingFiles, setIsDeletingFiles] = useState(false);
+  const [draggingRowIndex, setDraggingRowIndex] = useState(null);
+  const [dropTargetRowIndex, setDropTargetRowIndex] = useState(null);
+  const draggingRowIndexRef = useRef(null);
+  const getNextTestCaseName = () => {
+    const list = useTestStore.getState().savedTestCases || [];
+    const nums = list.map((t) => {
+      const m = (t.name || '').match(/^TC(\d+)$/i);
+      return m ? parseInt(m[1], 10) : 0;
+    });
+    const max = Math.max(0, ...nums);
+    return 'TC' + String(max + 1).padStart(5, '0');
+  };
+  const [loadedSetId, setLoadedSetId] = useState(null);
+  const [testCaseTableLayout, setTestCaseTableLayout] = useState('table'); // 'table' | 'step' — ตารางแนวนอน หรือ layout แนวตั้งตามขั้นตอน (ตามภาพ)
+  const [localDroppedFiles, setLocalDroppedFiles] = useState([]);
+  const [commandMenuTcId, setCommandMenuTcId] = useState(null); // which test case's "Add command" dropdown is open
+  const justDidSaveSetRef = useRef(false);
+
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
+    return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
+  };
+
+  const getFileKind = (file) => {
+    const ext = String(file?.name || '').split('.').pop()?.toLowerCase();
+    if (ext === 'vcd') return 'vcd';
+    if (['bin', 'hex', 'elf', 'erom'].includes(ext)) return 'bin';
+    if (['lin', 'txt', 'ulp'].includes(ext)) return 'lin';
+    return 'other';
+  };
+  const workingFilesList = [
+    ...selectedIds.map((id) => uploadedFiles.find((f) => f.id === id)).filter(Boolean),
+    ...localDroppedFiles.map((f) => ({ id: f.id, name: f.name, sizeFormatted: f.sizeFormatted })),
+  ];
+  const selectedFiles = workingFilesList;
+  const vcdFilesList = uploadedFiles.filter((f) => getFileKind(f) === 'vcd');
+  const binFilesList = uploadedFiles.filter((f) => getFileKind(f) === 'bin');
+  const linFilesList = uploadedFiles.filter((f) => getFileKind(f) === 'lin');
+  const vcdSelected = selectedFiles.filter((f) => getFileKind(f) === 'vcd');
+  const binSelected = selectedFiles.filter((f) => getFileKind(f) === 'bin');
+  const workingCount = selectedIds.length + localDroppedFiles.length;
+
+  // ชื่อไม่ซ้ำ: สร้างชื่อที่ยังไม่มีในคลัง (excludeId = id ของแถวที่กำลังแก้ ไม่นับเป็นซ้ำ)
+  const getUniqueName = (baseName, excludeId = null) => {
+    const existing = savedTestCases.filter((t) => t.id !== excludeId).map((t) => (t.name || '').trim()).filter(Boolean);
+    const base = (baseName || 'Test case').trim() || 'Test case';
+    if (!existing.includes(base)) return base;
+    let n = 2;
+    while (existing.includes(`${base} (${n})`)) n++;
+    return `${base} (${n})`;
+  };
+
+  const handleNameChange = (tcId, newName, prevName = '') => {
+    const trimmed = (newName || '').trim();
+    const isDuplicate = trimmed !== '' && savedTestCases.some((t) => t.id !== tcId && (t.name || '').trim() === trimmed);
+    if (isDuplicate) {
+      addToast({ type: 'warning', message: 'Duplicate name — use a unique name for this test case' });
+      updateSavedTestCase(tcId, { name: prevName });
+      return;
+    }
+    updateSavedTestCase(tcId, { name: trimmed });
+  };
+
+  // เมื่อมีไฟล์ใหม่จาก Library (refresh): ไม่ overwrite ถ้า Save Set; ถ้า Start fresh ให้เลือกเฉพาะที่เพิ่ม; ถ้า prev===0 และตารางว่าง (กลับมาหลัง Start fresh) ไม่ auto-select เพื่อไม่ให้ test case กลับมา
+  useEffect(() => {
+    if (justDidSaveSetRef.current) {
+      justDidSaveSetRef.current = false;
+      prevUploadedCountRef.current = uploadedFiles.length;
+      return;
+    }
+    const prev = prevUploadedCountRef.current;
+    const curr = uploadedFiles.length;
+    if (curr > prev) {
+      if (justDidStartFreshRef.current) {
+        const newFiles = uploadedFiles.slice(prev);
+        setSelectedIds((prevIds) => [...prevIds, ...newFiles.map((f) => f.id)]);
+        const t = setTimeout(() => { justDidStartFreshRef.current = false; }, 2000);
+        prevUploadedCountRef.current = curr;
+        return () => clearTimeout(t);
+      }
+      // กลับมาหลัง Start fresh (remount): prev ถูก reset เป็น 0, ตารางว่าง — ไม่เลือกไฟล์ทั้งหมด จะได้ไม่ trigger Auto-pair ให้ test case กลับมา
+      if (prev === 0 && savedTestCases.length === 0) {
+        prevUploadedCountRef.current = curr;
+        return;
+      }
+      setSelectedIds(uploadedFiles.map((f) => f.id));
+    }
+    prevUploadedCountRef.current = curr;
+  }, [uploadedFiles.length, savedTestCases.length]);
+
+  // Auto-pair: เมื่อมีไฟล์ในพื้นที่ทำงาน (จาก Library หรือ drop) มี VCD + ERoM ให้สร้าง test case จากคู่ที่ยังไม่มีในคลัง
+  useEffect(() => {
+    const orderedFiles = selectedFiles;
+    if (orderedFiles.length === 0) return;
+    const orderedVcds = orderedFiles.filter((f) => getFileKind(f) === 'vcd');
+    const orderedBins = orderedFiles.filter((f) => getFileKind(f) === 'bin');
+    const orderedLins = orderedFiles.filter((f) => getFileKind(f) === 'lin');
+    if (orderedVcds.length === 0 || orderedBins.length === 0) return;
+    orderedVcds.forEach((vcdFile, vcdIdx) => {
+      const vcdIndexInOrdered = orderedFiles.findIndex((f) => f.id === vcdFile.id);
+      let nearestBin = null, minDistance = Infinity;
+      orderedBins.forEach((binFile) => {
+        const d = Math.abs(orderedFiles.findIndex((f) => f.id === binFile.id) - vcdIndexInOrdered);
+        if (d < minDistance) { minDistance = d; nearestBin = binFile; }
+      });
+      const binFile = nearestBin || orderedBins[vcdIdx % orderedBins.length];
+      let nearestLin = null, minLin = Infinity;
+      orderedLins.forEach((linFile) => {
+        const d = Math.abs(orderedFiles.findIndex((f) => f.id === linFile.id) - vcdIndexInOrdered);
+        if (d < minLin) { minLin = d; nearestLin = linFile; }
+      });
+      const exists = savedTestCases.some((t) => t.vcdName === vcdFile.name && t.binName === binFile.name);
+      if (!exists) {
+        const name = getNextTestCaseName();
+        addSavedTestCase({ name, vcdName: vcdFile.name, binName: binFile.name, linName: nearestLin?.name || '', tryCount: 1 });
+      }
+    });
+  }, [selectedIds.join(','), localDroppedFiles.length, localDroppedFiles.map((f) => f.id).join(',')]);
+
+  // เมื่อโหลด Set แล้วอัปโหลดไฟล์เพิ่ม — เลือกไฟล์ที่ตรงกับ Set อัตโนมัติ
+  useEffect(() => {
+    if (!loadedSetId || !uploadedFiles.length) return;
+    const loadedSet = savedTestCaseSets?.find((s) => s.id === loadedSetId);
+    if (!loadedSet) return;
+    const fileNames = loadedSet.fileLibrarySnapshot?.length
+      ? loadedSet.fileLibrarySnapshot.map((s) => s.name)
+      : [...(loadedSet.items || []).reduce((acc, t) => { if (t.vcdName) acc.add(t.vcdName); if (t.binName) acc.add(t.binName); if (t.linName) acc.add(t.linName); return acc; }, new Set())];
+    if (fileNames.length === 0) return;
+    const matchingIds = uploadedFiles.filter((f) => fileNames.includes(f.name)).map((f) => f.id);
+    if (matchingIds.length > 0) setSelectedIds((prev) => [...new Set([...prev, ...matchingIds])]);
+  }, [loadedSetId, uploadedFiles.length, savedTestCaseSets]);
+
+  const handleSelectAllFiles = () => {
+    if (selectedIds.length === uploadedFiles.length) setSelectedIds([]);
+    else setSelectedIds(uploadedFiles.map((f) => f.id));
+  };
+  const toggleFileSelect = (id) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+  const handleClearAll = () => {
+    setSelectedIds([]);
+    setLocalDroppedFiles([]);
+    addToast({ type: 'info', message: 'Cleared file selection (files remain in library until Save Set)' });
+  };
+  const handleDeleteSelected = async () => {
+    if (selectedIds.length === 0 && localDroppedFiles.length === 0) return;
+    if (!window.confirm(`Remove selected files from Library (${selectedIds.length} file(s)) and clear unsaved files? Clear test cases table?`)) return;
+    setIsDeletingFiles(true);
+    for (const id of selectedIds) await removeUploadedFile(id);
+    setSelectedIds([]);
+    setLocalDroppedFiles([]);
+    setSavedTestCases([]);
+    setSelectedTestCaseIds([]);
+    setLoadedSetId(null);
+    setIsDeletingFiles(false);
+    addToast({ type: 'success', message: 'Selected files removed and test cases table cleared' });
+  };
+  // Start fresh: ล้างตาราง + ไฟล์ในพื้นที่ทำงาน (ยังไม่เก็บเข้า Library จนกว่ากด Save Set)
+  const handleStartFresh = () => {
+    if (savedTestCases.length === 0 && selectedIds.length === 0 && localDroppedFiles.length === 0) {
+      addToast({ type: 'info', message: 'Table and file selection are already empty' });
+      return;
+    }
+    if (!window.confirm('Clear Table')) return;
+    setSelectedIds([]);
+    setLocalDroppedFiles([]);
+    setSavedTestCases([]);
+    setSelectedTestCaseIds([]);
+    setLoadedSetId(null);
+    justDidStartFreshRef.current = true;
+    addToast({ type: 'success', message: 'Clear Already' });
+  };
+
+  const addToLocalDropped = (file) => {
+    const id = `local-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const sizeFormatted = formatFileSize(file.size || 0);
+    setLocalDroppedFiles((prev) => [...prev, { id, name: file.name, file, size: file.size, sizeFormatted }]);
+  };
+  // Names already in working area (selected from Library + local dropped) — used to skip duplicate drops
+  const workingAreaNames = useMemo(
+    () => new Set([
+      ...selectedIds.map((id) => uploadedFiles.find((f) => f.id === id)?.name).filter(Boolean),
+      ...localDroppedFiles.map((f) => f.name),
+    ]),
+    [selectedIds, uploadedFiles, localDroppedFiles]
+  );
+  const addFilesToWorkingArea = (files) => {
+    const accepted = files.filter((f) => FILE_LIBRARY_ACCEPTED_EXT.has((String(f.name || '').split('.').pop() || '').toLowerCase()));
+    const addedInThisBatch = new Set();
+    let added = 0;
+    let skipped = 0;
+    for (const file of accepted) {
+      if (workingAreaNames.has(file.name) || addedInThisBatch.has(file.name)) {
+        skipped++;
+        continue;
+      }
+      addToLocalDropped(file);
+      addedInThisBatch.add(file.name);
+      added++;
+    }
+    if (added > 0) addToast({ type: 'success', message: added === accepted.length && skipped === 0 ? `Added ${added} file(s)` : `Added ${added} file(s)${skipped > 0 ? `, ${skipped} duplicate(s) skipped` : ''}` });
+    if (skipped > 0 && added === 0) addToast({ type: 'info', message: `${skipped} file(s) already in list (duplicate name), skipped` });
+  };
+  const handleFileInputChange = (e) => {
+    const files = e.target?.files;
+    if (!files?.length) return;
+    addFilesToWorkingArea([...files]);
+    e.target.value = '';
+  };
+  const handleBrowseClick = () => fileInputRef.current?.click();
+
+  const FILE_LIBRARY_ACCEPTED_EXT = new Set(['vcd', 'bin', 'hex', 'elf', 'erom', 'ulp', 'lin', 'txt']);
+  const isAcceptedFile = (file) => FILE_LIBRARY_ACCEPTED_EXT.has((file.name || '').split('.').pop()?.toLowerCase());
+
+  const readDirectoryRecursive = async (dirEntry) => {
+    const files = [];
+    const reader = dirEntry.createReader?.();
+    if (!reader) return files;
+    let entries;
+    do {
+      entries = await new Promise((resolve) => reader.readEntries(resolve));
+      for (const e of entries) {
+        if (e.isDirectory) files.push(...(await readDirectoryRecursive(e)));
+        else {
+          try {
+            const f = await new Promise((res) => e.file(res));
+            if (f) files.push(f);
+          } catch (_) {}
+        }
+      }
+    } while (entries.length > 0);
+    return files;
+  };
+
+  const getAllFilesFromDataTransfer = async (dataTransfer) => {
+    const out = [];
+    if (dataTransfer.items) {
+      for (const item of dataTransfer.items) {
+        if (item.kind !== 'file') continue;
+        const entry = item.webkitGetAsEntry?.() || item.getAsEntry?.();
+        if (entry?.isDirectory) {
+          const sub = await readDirectoryRecursive(entry);
+          out.push(...sub.filter(isAcceptedFile));
+        } else {
+          const file = item.getAsFile();
+          if (file && isAcceptedFile(file)) out.push(file);
+        }
+      }
+    } else {
+      for (const file of dataTransfer.files || []) {
+        if (isAcceptedFile(file)) out.push(file);
+      }
+    }
+    return out;
+  };
+
+  const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); };
+  const handleDragLeave = (e) => { e.preventDefault(); if (!e.currentTarget.contains(e.relatedTarget)) setIsDragging(false); };
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = await getAllFilesFromDataTransfer(e.dataTransfer);
+    addFilesToWorkingArea(files);
+  };
+
+  const handlePaste = async (e) => {
+    const files = e.clipboardData?.files;
+    if (!files?.length) return;
+    e.preventDefault();
+    addFilesToWorkingArea([...files]);
+  };
+
+  const pairAll = () => {
+    if (vcdSelected.length === 0 || binSelected.length === 0) {
+      addToast({ type: 'warning', message: 'Select at least one VCD and one ERoM file first' });
+      return;
+    }
+    const orderedFiles = selectedFiles;
+    const orderedVcds = orderedFiles.filter((f) => getFileKind(f) === 'vcd');
+    const orderedBins = orderedFiles.filter((f) => getFileKind(f) === 'bin');
+    const orderedLins = orderedFiles.filter((f) => getFileKind(f) === 'lin');
+    let added = 0;
+    orderedVcds.forEach((vcdFile, vcdIdx) => {
+      const vcdIndexInOrdered = orderedFiles.findIndex((f) => f.id === vcdFile.id);
+      let nearestBin = null, minDistance = Infinity;
+      orderedBins.forEach((binFile) => {
+        const d = Math.abs(orderedFiles.findIndex((f) => f.id === binFile.id) - vcdIndexInOrdered);
+        if (d < minDistance) { minDistance = d; nearestBin = binFile; }
+      });
+      const binFile = nearestBin || orderedBins[vcdIdx % orderedBins.length];
+      let nearestLin = null, minLin = Infinity;
+      orderedLins.forEach((linFile) => {
+        const d = Math.abs(orderedFiles.findIndex((f) => f.id === linFile.id) - vcdIndexInOrdered);
+        if (d < minLin) { minLin = d; nearestLin = linFile; }
+      });
+      const exists = savedTestCases.some((t) => t.vcdName === vcdFile.name && t.binName === binFile.name);
+      if (!exists) {
+        const name = getNextTestCaseName();
+        addSavedTestCase({ name, vcdName: vcdFile.name, binName: binFile.name, linName: nearestLin?.name, tryCount: 1 });
+        added++;
+      }
+    });
+    if (added > 0) addToast({ type: 'success', message: `Added ${added} test case(s) from selection` });
+    else addToast({ type: 'info', message: 'All possible pairs already in library' });
+  };
+
+  const addOneTestCase = () => {
+    const name = getNextTestCaseName();
+    addSavedTestCase({ name, vcdName: '', binName: '', linName: '', tryCount: 1 });
+    addToast({ type: 'success', message: `Added "${name}" — fill VCD/ERoM below or rename if you like` });
+  };
+
+  const clearAllTestCases = () => {
+    if (savedTestCases.length === 0 && selectedIds.length === 0) { addToast({ type: 'info', message: 'No test cases or file selection to clear' }); return; }
+    if (window.confirm('Clear all test cases and file selection?')) {
+      setSavedTestCases([]);
+      setSelectedTestCaseIds([]);
+      setSelectedIds([]);
+      setLoadedSetId(null);
+      addToast({ type: 'success', message: 'Test cases and file selection cleared' });
+    }
+  };
+
+  const toggleSelectAllTestCases = () => {
+    if (selectedTestCaseIds.length === savedTestCases.length) setSelectedTestCaseIds([]);
+    else setSelectedTestCaseIds(savedTestCases.map((t) => t.id));
+  };
+  const toggleTestCaseSelect = (id) => {
+    setSelectedTestCaseIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+  const handleBulkSetTryCount = () => {
+    if (selectedTestCaseIds.length === 0) { addToast({ type: 'warning', message: 'Select at least one test case' }); return; }
+    const num = parseInt(bulkTryCount, 10);
+    if (isNaN(num) || num < 1) { addToast({ type: 'error', message: 'Enter a valid number (min 1)' }); return; }
+    bulkUpdateTryCount(selectedTestCaseIds, num);
+    setBulkTryCount('');
+    addToast({ type: 'success', message: `Set try count to ${num} for ${selectedTestCaseIds.length} test case(s)` });
+  };
+
+  const reorderList = (arr, fromIndex, toIndex) => {
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= arr.length || toIndex >= arr.length) return arr;
+    const next = [...arr];
+    const [item] = next.splice(fromIndex, 1);
+    next.splice(fromIndex < toIndex ? toIndex - 1 : toIndex, 0, item);
+    return next;
+  };
+  const handleRowDragStart = (e, index) => { draggingRowIndexRef.current = index; setDraggingRowIndex(index); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(index)); };
+  const handleRowDragOver = (e, index) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropTargetRowIndex(index); };
+  const handleRowDrop = (e, toIndex) => {
+    e.preventDefault();
+    const fromIndex = draggingRowIndexRef.current;
+    if (fromIndex != null && savedTestCases.length > 0) reorderSavedTestCases(fromIndex, toIndex);
+    draggingRowIndexRef.current = null;
+    setDraggingRowIndex(null);
+    setDropTargetRowIndex(null);
+  };
+  const handleRowDragEnd = () => { draggingRowIndexRef.current = null; setDraggingRowIndex(null); setDropTargetRowIndex(null); };
+
+  const handleCsvFileInput = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).filter((l) => l.trim() !== '');
+      if (lines.length < 2) {
+        addToast({ type: 'warning', message: 'CSV must have at least 1 data row' });
+        return;
+      }
+      const headerRaw = lines[0].split(',').map((h) => h.trim());
+      const header = headerRaw.map((h) => h.toLowerCase());
+      const knownKeys = new Set(['name', 'testcase', 'test_case', 'vcd', 'bin', 'erom', 'firmware', 'lin', 'ulp', 'try', 'tries', 'retry', 'tag']);
+      const extraColumnIndices = header
+        .map((h, idx) => ({ key: headerRaw[idx] || h, idx }))
+        .filter(({ key }) => {
+          const k = (key || '').trim().toLowerCase();
+          return k && !knownKeys.has(k);
+        });
+
+      const idxName = header.findIndex((h) => h === 'name' || h === 'testcase' || h === 'test_case');
+      const idxVcd = header.findIndex((h) => h === 'vcd');
+      const idxBin = header.findIndex((h) => h === 'bin' || h === 'erom' || h === 'firmware');
+      const idxLin = header.findIndex((h) => h === 'lin' || h === 'ulp');
+      const idxTry = header.findIndex((h) => h === 'try' || h === 'tries' || h === 'retry');
+
+      if (idxVcd === -1 || idxBin === -1) {
+        addToast({ type: 'error', message: 'CSV must have at least VCD and BIN/EROM columns' });
+        return;
+      }
+
+      const existingNames = new Set(
+        savedTestCases.map((t) => (t.name || '').trim()).filter((n) => n !== '')
+      );
+      const created = [];
+
+      const makeUniqueName = (baseRaw) => {
+        const baseInitial = (baseRaw || 'Test case').trim() || 'Test case';
+        let name = baseInitial;
+        if (!existingNames.has(name)) {
+          existingNames.add(name);
+          return name;
+        }
+        let n = 2;
+        while (existingNames.has(`${baseInitial} (${n})`)) n++;
+        name = `${baseInitial} (${n})`;
+        existingNames.add(name);
+        return name;
+      };
+
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(',');
+        if (!cols.some((c) => c.trim() !== '')) continue;
+        const vcdName = (cols[idxVcd] || '').trim();
+        const binName = (cols[idxBin] || '').trim();
+        if (!vcdName || !binName) continue;
+        const rawName = idxName >= 0 ? cols[idxName] : vcdName;
+        const name = makeUniqueName(rawName);
+        const linName = idxLin >= 0 ? (cols[idxLin] || '').trim() : '';
+        let tryCount = 1;
+        if (idxTry >= 0) {
+          const parsed = parseInt(cols[idxTry], 10);
+          if (!isNaN(parsed) && parsed > 0 && parsed <= 100) {
+            tryCount = parsed;
+          }
+        }
+        const extraColumns = {};
+        extraColumnIndices.forEach(({ key, idx }) => {
+          const val = (cols[idx] || '').trim();
+          if (key) extraColumns[key] = val;
+        });
+        created.push({
+          id: `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          name,
+          vcdName,
+          binName,
+          linName: linName || '',
+          tryCount,
+          ...(Object.keys(extraColumns).length > 0 ? { extraColumns } : {}),
+        });
+      }
+
+      if (created.length === 0) {
+        addToast({ type: 'warning', message: 'No rows in CSV have both VCD and BIN/EROM' });
+        return;
+      }
+
+      const nextList = [...savedTestCases, ...created];
+      setSavedTestCases(nextList);
+      let msg = `Imported ${created.length} test case(s) from CSV (names made unique)`;
+      if (extraColumnIndices.length > 0) {
+        msg += ` — ${extraColumnIndices.length} extra column(s) added: ${extraColumnIndices.map((x) => x.key).join(', ')}`;
+      }
+      addToast({ type: 'success', message: msg });
+    } catch (err) {
+      addToast({ type: 'error', message: `Failed to read CSV: ${err.message}` });
+    } finally {
+      if (csvInputRef.current) csvInputRef.current.value = '';
+    }
+  };
+
+  const selectedFilesList = workingFilesList;
+  const filteredFiles = [...selectedFilesList]
+    .filter((f) => { const k = getFileKind(f); if (fileFilter !== 'all' && (fileFilter === 'vcd' ? k !== 'vcd' : fileFilter === 'bin' ? k !== 'bin' : k !== 'lin')) return false; if (fileSearch.trim()) return f.name.toLowerCase().includes(fileSearch.trim().toLowerCase()); return true; })
+    .sort((a, b) => (fileSort === 'time' ? (b.uploadedAt || 0) - (a.uploadedAt || 0) : (a.name || '').localeCompare(b.name || '')));
+  return (
+    <div className="w-full max-w-6xl mx-auto space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Test Cases</h1>
+        <p className="text-slate-500 dark:text-slate-400 mt-1 text-sm">Create and Store Test cases </p>
+      </div>
+
+      {/* File Library (เทียบเท่า Setup) — โหลด Set จะเลือกไฟล์ของ Set ใน Library ด้วย */}
+      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
+        {loadedSetId && (() => {
+          const loadedSet = savedTestCaseSets?.find((s) => s.id === loadedSetId);
+          const namesArr = loadedSet?.fileLibrarySnapshot?.length
+            ? loadedSet.fileLibrarySnapshot.map((s) => s.name)
+            : [...(loadedSet?.items || []).reduce((acc, t) => { if (t.vcdName) acc.add(t.vcdName); if (t.binName) acc.add(t.binName); if (t.linName) acc.add(t.linName); return acc; }, new Set())];
+          const inLibrary = namesArr.filter((n) => uploadedFiles.some((f) => f.name === n)).length;
+          const total = namesArr.length;
+          return total > 0 ? (
+            <div className="px-3 py-2 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-100 dark:border-blue-800 text-xs text-blue-800 dark:text-blue-200">
+              Set &quot;{loadedSet?.name}&quot;: Files in Library {inLibrary}/{total}
+              {inLibrary < total && <span className="ml-1"> — Upload missing files to run this set</span>}
+            </div>
+          ) : null;
+        })()}
+        <div className="p-3 sm:p-4 bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-600 flex flex-wrap justify-between items-center gap-2">
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-bold text-slate-600 dark:text-slate-400"> ({workingCount}) </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {workingCount > 0 && <button onClick={handleClearAll} className="px-3 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-bold hover:bg-slate-200">Un Select All</button>}
+            {workingCount > 0 && <button onClick={handleDeleteSelected} disabled={isDeletingFiles} className="px-3 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-bold hover:bg-red-100 disabled:opacity-60">Delete from Library</button>}
+            {(savedTestCases.length > 0 || workingCount > 0) && <button onClick={handleStartFresh} className="px-3 py-2 bg-amber-50 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-100">Start fresh</button>}
+          </div>
+        </div>
+        <input ref={fileInputRef} type="file" multiple accept=".vcd,.bin,.hex,.elf,.erom,.ulp" onChange={handleFileInputChange} className="hidden" />
+        <div className="px-4 py-3 flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900">
+          {['all', 'vcd', 'bin', 'lin'].map((k) => (
+            <button key={k} onClick={() => setFileFilter(k)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${fileFilter === k ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700' : 'border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:border-blue-200'}`}>{k === 'all' ? 'All' : k.toUpperCase()}</button>
+          ))}
+          <button onClick={handleBrowseClick} className="ml-auto h-8 w-8 inline-flex items-center justify-center rounded-lg bg-blue-600 text-white hover:bg-blue-700" title="Upload files or drop folder / Ctrl+V to paste"><Plus size={16} /></button>
+          <input type="text" value={fileSearch} onChange={(e) => setFileSearch(e.target.value)} placeholder="Search..." className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800" />
+          <select value={fileSort} onChange={(e) => setFileSort(e.target.value)} className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200"><option value="time">Time</option><option value="name">Name</option></select>
+        </div>
+        <div
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          onPaste={handlePaste}
+          tabIndex={0}
+          className={`divide-y divide-slate-100 dark:divide-slate-700 overflow-y-auto transition-[max-height] ${fileListExpanded ? 'max-h-[500px]' : 'max-h-[220px]'} ${isDragging ? 'ring-2 ring-blue-400 bg-blue-50/50 dark:bg-blue-900/20' : ''}`}
+        >
+          {loading?.files ? (
+            <div className="p-8 text-center text-slate-400">Loading...</div>
+          ) : errors?.files ? (
+            <div className="p-8 text-center text-red-500">{errors.files}</div>
+          ) : filteredFiles.length === 0 ? (
+            <div className="p-6 text-center">
+              {loadedSetId && (() => {
+                const loadedSet = savedTestCaseSets?.find((s) => s.id === loadedSetId);
+                const namesArr = loadedSet?.fileLibrarySnapshot?.length
+                  ? loadedSet.fileLibrarySnapshot.map((s) => s.name)
+                  : [...(loadedSet?.items || []).reduce((acc, t) => { if (t.vcdName) acc.add(t.vcdName); if (t.binName) acc.add(t.binName); if (t.linName) acc.add(t.linName); return acc; }, new Set())];
+                if (namesArr.length === 0) return null;
+                return (
+                  <>
+                    <p className="text-sm font-semibold text-amber-700 dark:text-amber-400 mb-2">Set &quot;{loadedSet?.name}&quot; uses {namesArr.length} file(s) — none in Library</p>
+                    <p className="text-xs text-slate-600 dark:text-slate-400 mb-3"></p>
+                    <ul className="text-xs text-left max-w-md mx-auto space-y-1 text-slate-600 dark:text-slate-300">
+                      {namesArr.map((name) => (
+                        <li key={name} className="truncate">• {name}</li>
+                      ))}
+                    </ul>
+                  </>
+                );
+              })()}
+              <p className="text-slate-400 mt-2">No files</p>
+            </div>
+          ) : (
+            filteredFiles.map((f) => (
+              <div key={f.id} className="flex items-center gap-2 px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                <span className="flex-1 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (String(f.id).startsWith('local-')) setLocalDroppedFiles((prev) => prev.filter((x) => x.id !== f.id));
+                    else setSelectedIds((prev) => prev.filter((id) => id !== f.id));
+                  }}
+                  className="text-slate-500 hover:text-slate-700 text-xs"
+                  title={String(f.id).startsWith('local-') ? 'Remove from this area (not saved to Library yet)' : 'Remove from this area'}
+                >
+                  Remove
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+        <button onClick={() => setFileListExpanded((b) => !b)} className="w-full py-1 text-xs text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800">{fileListExpanded ? 'Collapse' : 'Expand'} file list</button>
+      </div>
+
+      {/* Saved Test Cases table (Apply try, Duplicate, Move, Auto select, Save as Set) */}
+      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <h2 className="text-sm font-bold text-slate-700 dark:text-slate-300">Saved Test Cases</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={pairAll} disabled={vcdSelected.length === 0 || binSelected.length === 0} className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 ${vcdSelected.length === 0 || binSelected.length === 0 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`} title="Pair selected files and add to test cases"><Layers size={14} /> Pair All</button>
+            <button onClick={addOneTestCase} className="px-3 py-2 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-2"><Plus size={14} /> Add Test Case</button>
+            <button onClick={clearAllTestCases} disabled={savedTestCases.length === 0 && workingCount === 0} className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 ${savedTestCases.length === 0 && workingCount === 0 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-red-600 text-white hover:bg-red-700'}`}><X size={14} /> Clear</button>
+            <div className="h-6 w-px bg-slate-300 dark:bg-slate-600 mx-1" />
+            <button
+              onClick={() => csvInputRef.current?.click()}
+              className="px-3 py-2 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 flex items-center gap-1.5"
+            >
+              <FileUp size={14} />
+              <span>Import CSV</span>
+            </button>
+            <input
+              ref={csvInputRef}
+              type="file"
+              accept=".csv"
+              onChange={handleCsvFileInput}
+              className="hidden"
+            />
+            <button
+              onClick={() => {
+                if (savedTestCases.length === 0) {
+                  addToast({ type: 'warning', message: 'No test cases to save' });
+                  return;
+                }
+                addToast({ type: 'success', message: `Test cases saved to library (${savedTestCases.length} case(s))` });
+              }}
+              className="px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5"
+              title="Save current test cases to library (table is already the library)"
+            >
+              <Save size={14} />
+              <span>Save to library</span>
+            </button>
+          </div>
+        </div>
+        {loadedSetId && savedTestCaseSets?.find((s) => s.id === loadedSetId) && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700">
+            <span className="text-xs font-semibold text-amber-800 dark:text-amber-200">
+              Editing set: {savedTestCaseSets.find((s) => s.id === loadedSetId)?.name}
+            </span>
+            <button
+              onClick={() => {
+                const normalized = savedTestCases.map((t) => ({
+                  name: t.name || '',
+                  vcdName: t.vcdName || '',
+                  binName: t.binName || '',
+                  linName: t.linName || '',
+                  boardId: t.boardId || '',
+                  tryCount: typeof t.tryCount === 'number' && t.tryCount > 0 ? t.tryCount : 1,
+                  extraColumns: t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {},
+                }));
+                const fileNames = new Set();
+                savedTestCases.forEach((t) => {
+                  if (t.vcdName) fileNames.add(t.vcdName);
+                  if (t.binName) fileNames.add(t.binName);
+                  if (t.linName) fileNames.add(t.linName);
+                });
+                const fileLibrarySnapshot = [...fileNames].map((n) => ({ name: n }));
+                updateSavedTestCaseSet(loadedSetId, { items: normalized, fileLibrarySnapshot });
+                const setName = savedTestCaseSets.find((s) => s.id === loadedSetId)?.name || 'Set';
+                setLoadedSetId(null);
+                addToast({ type: 'success', message: `Updated set "${setName}"` });
+              }}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-600 text-white hover:bg-amber-700"
+            >
+              Update set
+            </button>
+            <button
+              onClick={() => setLoadedSetId(null)}
+              className="px-2 py-1 rounded text-xs text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+        {savedTestCases.length > 0 && (
+          <div className="mb-3 flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-bold text-slate-600 dark:text-slate-400">Bulk try:</span>
+            {selectedTestCaseIds.length > 0 && (
+              <>
+                <span className="text-xs text-slate-500">{selectedTestCaseIds.length} selected</span>
+                <input type="number" min={1} value={bulkTryCount} onChange={(e) => setBulkTryCount(e.target.value)} placeholder="Try" className="w-16 px-2 py-1 text-xs border border-slate-300 dark:border-slate-500 rounded bg-white dark:bg-slate-800" onKeyDown={(e) => e.key === 'Enter' && handleBulkSetTryCount()} />
+                <button onClick={handleBulkSetTryCount} className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700">Apply</button>
+              </>
+            )}
+          </div>
+        )}
+        {/* Tab switcher: Table (horizontal) | Step (vertical layout per image) */}
+        <div className="mb-3 flex items-center gap-2 border-b border-slate-200 dark:border-slate-600">
+          <button
+            type="button"
+            onClick={() => setTestCaseTableLayout('table')}
+            className={`px-3 py-1.5 text-xs font-semibold border-b-2 transition-colors ${
+              testCaseTableLayout === 'table'
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+          >
+            Table
+          </button>
+          <button
+            type="button"
+            onClick={() => setTestCaseTableLayout('step')}
+            className={`px-3 py-1.5 text-xs font-semibold border-b-2 transition-colors ${
+              testCaseTableLayout === 'step'
+                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+          >
+            Vertical
+          </button>
+        </div>
+        {testCaseTableLayout === 'table' ? (
+          /* Tab 1: Table layout (horizontal) — original */
+          <div className="overflow-x-auto border border-slate-200 dark:border-slate-600 rounded-lg">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-100 dark:bg-slate-800 text-left text-xs font-bold text-slate-600 dark:text-slate-400">
+                <th className="w-10 px-2 py-2 border-r border-slate-200 dark:border-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={savedTestCases.length > 0 && selectedTestCaseIds.length === savedTestCases.length}
+                    onChange={toggleSelectAllTestCases}
+                    className="w-4 h-4 rounded cursor-pointer"
+                    title="Select all"
+                  />
+                </th>
+                <th className="w-8 px-2 py-2 border-r border-slate-200 dark:border-slate-600">#</th>
+                <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">Name</th>
+                <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">ERoM</th>
+                <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">ULP</th>
+                <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">VCD</th>
+                {(() => {
+                  const extraCols = [...new Set(savedTestCases.flatMap((t) => Object.keys(t.extraColumns || {})))].sort();
+                  return extraCols.map((col) => (
+                    <th key={col} className="px-2 py-2 border-r border-slate-200 dark:border-slate-600 min-w-[80px]" title="Extra column from CSV">{col}</th>
+                  ));
+                })()}
+                <th className="w-16 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Try</th>
+                <th className="w-32 px-2 py-2 text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {savedTestCases.length === 0 ? (
+                <tr>
+                  <td colSpan={7 + [...new Set(savedTestCases.flatMap((t) => Object.keys(t.extraColumns || {})))].length} className="py-8 text-center text-slate-400">
+                    No test cases — use Pair All or Add Test Case
+                  </td>
+                </tr>
+              ) : (
+                savedTestCases.map((tc, idx) => (
+                  <tr
+                    key={tc.id}
+                    onDragEnter={(e) => e.preventDefault()}
+                    onDragOver={(e) => handleRowDragOver(e, idx)}
+                    onDrop={(e) => handleRowDrop(e, idx)}
+                    className={`border-b border-slate-100 dark:border-slate-700 ${
+                      draggingRowIndex === idx ? 'opacity-50' : ''
+                    } ${
+                      dropTargetRowIndex === idx
+                        ? 'ring-1 ring-blue-400 bg-blue-50 dark:bg-blue-900/20'
+                        : ''
+                    } ${selectedTestCaseIds.includes(tc.id) ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}
+                  >
+                    <td
+                      className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700"
+                      onClick={() => toggleTestCaseSelect(tc.id)}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedTestCaseIds.includes(tc.id)}
+                        onChange={() => toggleTestCaseSelect(tc.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-4 h-4 rounded cursor-pointer"
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700 text-slate-500">
+                      {idx + 1}
+                    </td>
+                    <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700">
+                      <input
+                        type="text"
+                        value={tc.name || ''}
+                        onChange={(e) =>
+                          handleNameChange(tc.id, e.target.value, tc.name || '')
+                        }
+                        className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                        placeholder="set name"
+                        title="Use a unique name for this test case"
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700">
+                      <select
+                        value={tc.binName || ''}
+                        onChange={(e) =>
+                          updateSavedTestCase(tc.id, { binName: e.target.value })
+                        }
+                        className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                      >
+                        <option value="">— ERoM —</option>
+                        {binFilesList.map((f) => (
+                          <option key={f.id} value={f.name}>
+                            {f.name}
+                          </option>
+                        ))}
+                        {tc.binName &&
+                          !binFilesList.some((f) => f.name === tc.binName) && (
+                            <option value={tc.binName}>{tc.binName}</option>
+                          )}
+                      </select>
+                    </td>
+                    <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700">
+                      <select
+                        value={tc.linName || ''}
+                        onChange={(e) =>
+                          updateSavedTestCase(tc.id, {
+                            linName: e.target.value || undefined,
+                          })
+                        }
+                        className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                      >
+                        <option value="">— ULP —</option>
+                        {linFilesList.map((f) => (
+                          <option key={f.id} value={f.name}>
+                            {f.name}
+                          </option>
+                        ))}
+                        {tc.linName &&
+                          !linFilesList.some((f) => f.name === tc.linName) && (
+                            <option value={tc.linName}>{tc.linName}</option>
+                          )}
+                      </select>
+                    </td>
+                    <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700">
+                      <select
+                        value={tc.vcdName || ''}
+                        onChange={(e) =>
+                          updateSavedTestCase(tc.id, { vcdName: e.target.value })
+                        }
+                        className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                      >
+                        <option value="">— VCD —</option>
+                        {vcdFilesList.map((f) => (
+                          <option key={f.id} value={f.name}>
+                            {f.name}
+                          </option>
+                        ))}
+                        {tc.vcdName &&
+                          !vcdFilesList.some((f) => f.name === tc.vcdName) && (
+                            <option value={tc.vcdName}>{tc.vcdName}</option>
+                          )}
+                      </select>
+                    </td>
+                    {[...new Set(savedTestCases.flatMap((t) => Object.keys(t.extraColumns || {})))].sort().map((col) => (
+                      <td key={col} className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700">
+                        <input
+                          type="text"
+                          value={tc.extraColumns?.[col] ?? ''}
+                          onChange={(e) =>
+                            updateSavedTestCase(tc.id, {
+                              extraColumns: { ...(tc.extraColumns || {}), [col]: e.target.value },
+                            })
+                          }
+                          className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                          placeholder="—"
+                        />
+                      </td>
+                    ))}
+                    <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700">
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={tc.tryCount ?? 1}
+                        onChange={(e) =>
+                          updateSavedTestCase(tc.id, {
+                            tryCount: Math.max(
+                              1,
+                              Math.min(100, parseInt(e.target.value, 10) || 1),
+                            ),
+                          })
+                        }
+                        className="w-full px-1 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-center"
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 flex items-center justify-center gap-0.5">
+                      <span
+                        draggable
+                        onDragStart={(e) => handleRowDragStart(e, idx)}
+                        onDragEnd={handleRowDragEnd}
+                        className="p-1 cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600"
+                        title="Drag to reorder"
+                      >
+                        <GripVertical size={14} />
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          duplicateSavedTestCase(tc.id, {
+                            name: getNextTestCaseName(),
+                          });
+                          addToast({ type: 'success', message: 'Duplicated with unique name' });
+                        }}
+                        className="p-1 text-slate-500 hover:text-blue-600 rounded"
+                        title="Duplicate (auto unique name)"
+                      >
+                        <Copy size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveSavedTestCaseUp(tc.id)}
+                        disabled={idx === 0}
+                        className="p-1 text-slate-500 hover:text-slate-700 disabled:opacity-30"
+                        title="Move up"
+                      >
+                        <ArrowUp size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveSavedTestCaseDown(tc.id)}
+                        disabled={idx === savedTestCases.length - 1}
+                        className="p-1 text-slate-500 hover:text-slate-700 disabled:opacity-30"
+                        title="Move down"
+                      >
+                        <ArrowDown size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          removeSavedTestCase(tc.id);
+                          addToast({ type: 'success', message: 'Removed' });
+                        }}
+                        className="p-1 text-red-500 hover:text-red-700 rounded"
+                        title="Delete"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        ) : (
+          /* Tab 2: Step layout (vertical): move handle, EROM/ULP/VCD rows, command section */
+          <div className="space-y-3">
+            {savedTestCases.length === 0 ? (
+              <div className="py-8 text-center text-slate-400 text-sm border border-slate-200 dark:border-slate-600 rounded-lg">
+                No test cases — use Pair All or Add Test Case
+              </div>
+            ) : (
+              savedTestCases.map((tc, idx) => (
+                <div
+                  key={tc.id}
+                  onDragEnter={(e) => e.preventDefault()}
+                  onDragOver={(e) => handleRowDragOver(e, idx)}
+                  onDrop={(e) => handleRowDrop(e, idx)}
+                  className={`border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 ${
+                    draggingRowIndex === idx ? 'opacity-50' : ''
+                  } ${
+                    dropTargetRowIndex === idx
+                      ? 'ring-2 ring-blue-400 bg-blue-50 dark:bg-blue-900/20'
+                      : ''
+                  } ${selectedTestCaseIds.includes(tc.id) ? 'bg-blue-50/60 dark:bg-blue-900/20' : ''}`}
+                >
+                  {/* Test case header: move handle + name + checkbox + actions */}
+                  <div className="flex items-start gap-2 px-3 py-2 border-b border-slate-100 dark:border-slate-700">
+                    <span
+                      draggable
+                      onDragStart={(e) => handleRowDragStart(e, idx)}
+                      onDragEnd={handleRowDragEnd}
+                      className="p-1 cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 shrink-0 mt-0.5"
+                      title="Drag to reorder"
+                    >
+                      <GripVertical size={16} />
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-semibold text-slate-500">#{idx + 1}</span>
+                        <input
+                          type="text"
+                          value={tc.name || ''}
+                          onChange={(e) => handleNameChange(tc.id, e.target.value, tc.name || '')}
+                          className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800 font-medium"
+                          placeholder="Test case name"
+                          title="Use a unique name"
+                        />
+                        <span className="text-xs text-slate-500">Try: {tc.tryCount ?? 1}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={selectedTestCaseIds.includes(tc.id)}
+                        onChange={() => toggleTestCaseSelect(tc.id)}
+                        className="w-4 h-4 rounded cursor-pointer"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          duplicateSavedTestCase(tc.id, { name: getNextTestCaseName() });
+                          addToast({ type: 'success', message: 'Duplicated with unique name' });
+                        }}
+                        className="p-1 text-slate-500 hover:text-blue-600 rounded"
+                        title="Duplicate"
+                      >
+                        <Copy size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          removeSavedTestCase(tc.id);
+                          addToast({ type: 'success', message: 'Removed' });
+                        }}
+                        className="p-1 text-red-500 hover:text-red-700 rounded"
+                        title="Delete"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                  {/* Files: vertical EROM, ULP, VCD rows */}
+                  <div className="px-3 py-2 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-slate-500 w-12 shrink-0">EROM:</span>
+                      <select
+                        value={tc.binName || ''}
+                        onChange={(e) => updateSavedTestCase(tc.id, { binName: e.target.value })}
+                        className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                      >
+                        <option value="">— ERoM —</option>
+                        {binFilesList.map((f) => (
+                          <option key={f.id} value={f.name}>
+                            {f.name}
+                          </option>
+                        ))}
+                        {tc.binName && !binFilesList.some((f) => f.name === tc.binName) && (
+                          <option value={tc.binName}>{tc.binName}</option>
+                        )}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-slate-500 w-12 shrink-0">ULP:</span>
+                      <select
+                        value={tc.linName || ''}
+                        onChange={(e) => updateSavedTestCase(tc.id, { linName: e.target.value || undefined })}
+                        className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                      >
+                        <option value="">— ULP —</option>
+                        {linFilesList.map((f) => (
+                          <option key={f.id} value={f.name}>
+                            {f.name}
+                          </option>
+                        ))}
+                        {tc.linName && !linFilesList.some((f) => f.name === tc.linName) && (
+                          <option value={tc.linName}>{tc.linName}</option>
+                        )}
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold text-slate-500 w-12 shrink-0">VCD:</span>
+                      <select
+                        value={tc.vcdName || ''}
+                        onChange={(e) => updateSavedTestCase(tc.id, { vcdName: e.target.value })}
+                        className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                      >
+                        <option value="">— VCD —</option>
+                        {vcdFilesList.map((f) => (
+                          <option key={f.id} value={f.name}>
+                            {f.name}
+                          </option>
+                        ))}
+                        {tc.vcdName && !vcdFilesList.some((f) => f.name === tc.vcdName) && (
+                          <option value={tc.vcdName}>{tc.vcdName}</option>
+                        )}
+                      </select>
+                    </div>
+                    {tc.extraColumns && Object.keys(tc.extraColumns).length > 0 && (
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
+                        {Object.entries(tc.extraColumns).map(([col, val]) => (
+                          <div key={col} className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-slate-500 shrink-0">{col}:</span>
+                            <input
+                              type="text"
+                              value={val ?? ''}
+                              onChange={(e) =>
+                                updateSavedTestCase(tc.id, {
+                                  extraColumns: { ...tc.extraColumns, [col]: e.target.value },
+                                })
+                              }
+                              className="min-w-[80px] px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                              placeholder="—"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {/* Command section: MDI (text file) + sequences (e.g. extra VCD) */}
+                  <div className="px-3 py-2 border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">(command)</span>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setCommandMenuTcId(commandMenuTcId === tc.id ? null : tc.id)}
+                          className="p-1.5 rounded border border-slate-200 dark:border-slate-600 text-blue-600 hover:text-blue-800 hover:bg-slate-100 dark:hover:bg-slate-700"
+                          title="Add command"
+                        >
+                          <Plus size={14} />
+                        </button>
+                        {commandMenuTcId === tc.id && (
+                          <>
+                            <div className="absolute right-0 top-full mt-1 z-10 py-1 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-lg min-w-[180px]">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  addTestCaseCommand(tc.id, { type: 'mdi', file: '' });
+                                  setCommandMenuTcId(null);
+                                }}
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-slate-100 dark:hover:bg-slate-700"
+                              >
+                                Add MDI (text file)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  addTestCaseCommand(tc.id, { type: 'vcd', file: '' });
+                                  setCommandMenuTcId(null);
+                                }}
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-slate-100 dark:hover:bg-slate-700"
+                              >
+                                Add VCD
+                              </button>
+                            </div>
+                            <div className="fixed inset-0 z-[5]" aria-hidden onClick={() => setCommandMenuTcId(null)} />
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    {(tc.commands && tc.commands.length > 0) ? (
+                      <div className="space-y-2">
+                        {(tc.commands || []).map((cmd) => (
+                          <div key={cmd.id} className="flex items-center gap-2">
+                            <span className="text-xs font-medium text-slate-500 w-14 shrink-0">
+                              {cmd.type === 'mdi' ? 'MDI:' : 'VCD:'}
+                            </span>
+                            {cmd.type === 'mdi' ? (
+                              <select
+                                value={cmd.file || ''}
+                                onChange={(e) => updateTestCaseCommand(tc.id, cmd.id, { file: e.target.value })}
+                                className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                              >
+                                <option value="">— Text file —</option>
+                                {linFilesList.map((f) => (
+                                  <option key={f.id} value={f.name}>{f.name}</option>
+                                ))}
+                                {cmd.file && !linFilesList.some((f) => f.name === cmd.file) && (
+                                  <option value={cmd.file}>{cmd.file}</option>
+                                )}
+                              </select>
+                            ) : (
+                              <select
+                                value={cmd.file || ''}
+                                onChange={(e) => updateTestCaseCommand(tc.id, cmd.id, { file: e.target.value })}
+                                className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                              >
+                                <option value="">— VCD —</option>
+                                {vcdFilesList.map((f) => (
+                                  <option key={f.id} value={f.name}>{f.name}</option>
+                                ))}
+                                {cmd.file && !vcdFilesList.some((f) => f.name === cmd.file) && (
+                                  <option value={cmd.file}>{cmd.file}</option>
+                                )}
+                              </select>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => removeTestCaseCommand(tc.id, cmd.id)}
+                              className="p-1 text-red-500 hover:text-red-700 rounded shrink-0"
+                              title="Remove"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-500 dark:text-slate-400 italic">
+                        Add MDI (text file) or extra VCD via + Add command
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* Saved Test Case Sets (collections) */}
+        {savedTestCaseSets && savedTestCaseSets.length > 0 && (
+          <div className="mt-4 border-t border-slate-200 dark:border-slate-700 pt-3">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wide">
+                Saved 
+              </h3>
+              <span className="text-[11px] text-slate-400 dark:text-slate-500">
+                {savedTestCaseSets.length} set(s)
+              </span>
+            </div>
+            <div className="space-y-1 max-h-52 overflow-y-auto">
+              {savedTestCaseSets.map((set, index) => (
+                <div
+                  key={set.id}
+                  className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700"
+                >
+                  <div className="flex flex-col gap-0 shrink-0">
+                    <button type="button" onClick={() => moveSavedTestCaseSetUp(set.id)} disabled={index === 0} className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30" title="Move up"><ArrowUp size={12} className="text-slate-500" /></button>
+                    <button type="button" onClick={() => moveSavedTestCaseSetDown(set.id)} disabled={index === savedTestCaseSets.length - 1} className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30" title="Move down"><ArrowDown size={12} className="text-slate-500" /></button>
+                  </div>
+                  <span className="text-[10px] text-slate-400 w-4 shrink-0">#{index + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-700 dark:text-slate-200 truncate">
+                        {set.name}
+                      </span>
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                        {Array.isArray(set.items) ? `${set.items.length} cases` : ''}
+                      </span>
+                    </div>
+                    {set.createdAt && (
+                      <div className="text-[10px] text-slate-400 dark:text-slate-500">
+                        {new Date(set.createdAt).toLocaleString()}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button
+                      onClick={async () => {
+                        try {
+                          await api.restoreSetFilesToLibrary(set.id);
+                        } catch (_) {
+                          // Set อาจยังไม่มีไฟล์เก็บใน backend (บันทึกก่อน backend) — ไม่เป็นไร
+                        }
+                        await refreshFiles();
+                        applySavedTestCaseSet(set.id);
+                        setSelectedTestCaseIds([]);
+                        setLoadedSetId(set.id);
+                        const fileNames = set.fileLibrarySnapshot?.length
+                          ? set.fileLibrarySnapshot.map((s) => s.name)
+                          : (() => {
+                              const n = new Set();
+                              (set.items || []).forEach((t) => {
+                                if (t.vcdName) n.add(t.vcdName);
+                                if (t.binName) n.add(t.binName);
+                                if (t.linName) n.add(t.linName);
+                              });
+                              return [...n];
+                            })();
+                        if (fileNames.length) {
+                          const files = useTestStore.getState().uploadedFiles || [];
+                          const ids = files.filter((f) => fileNames.includes(f.name)).map((f) => f.id);
+                          setSelectedIds(ids);
+                        }
+                        addToast({ type: 'success', message: `Loaded set "${set.name}" — files restored to Library, table and selection updated` });
+                      }}
+                      className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white font-semibold"
+                    >
+                      Load
+                    </button>
+                    <button
+                      onClick={() => {
+                        appendSavedTestCaseSet(set.id);
+                        setSelectedTestCaseIds([]);
+                        addToast({ type: 'success', message: `Appended set "${set.name}" to table` });
+                      }}
+                      className="px-2 py-1 rounded bg-slate-600 hover:bg-slate-700 text-white font-semibold"
+                      title="Append this set to table (without replacing)"
+                    >
+                      +Append
+                    </button>
+                    <button
+                      onClick={() => {
+                        duplicateSavedTestCaseSet(set.id);
+                        addToast({ type: 'success', message: `Duplicated set "${set.name}"` });
+                      }}
+                      className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300"
+                      title="Clone set"
+                    >
+                      <Copy size={14} />
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (!window.confirm(`Delete set "${set.name}"? This will remove it from the library and from the database.`)) return;
+                        try {
+                          await api.deleteSet(set.id);
+                        } catch (e) {
+                          if (!String(e?.message || '').includes('404')) addToast({ type: 'warning', message: `Backend: ${e?.message || 'Delete failed'}` });
+                        }
+                        removeSavedTestCaseSet(set.id);
+                        addToast({ type: 'success', message: `Deleted set "${set.name}"` });
+                      }}
+                      className="p-1 rounded hover:bg-red-600/10 text-red-600"
+                      title="Delete set (from library and database)"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// 2b. RUN SET PAGE — เลือก Set ที่สร้างไว้แล้วรัน (หลาย Set รันพร้อมกันได้) + Browse เลือก test case เป็นรายตัว
+const RunSetPage = ({ onNavigateJobs }) => {
+  const { savedTestCaseSets, savedTestCases, uploadedFiles, boards, createJob, refreshJobs, moveSavedTestCaseSetUp, moveSavedTestCaseSetDown, addSavedTestCaseSet } = useTestStore();
+  const addToast = useTestStore((s) => s.addToast);
+  const [runSelectionMode, setRunSelectionMode] = useState('browse');
+  const [showBrowseModal, setShowBrowseModal] = useState(false); // Finder-like: click Browse opens modal to pick test cases
+  const [selectedSetIds, setSelectedSetIds] = useState([]);
+  const [selectedBrowsedKeys, setSelectedBrowsedKeys] = useState(new Set());
+  const [runSetName, setRunSetName] = useState('');
+  const [tag, setTag] = useState('');
+  const [boardSelectionMode, setBoardSelectionMode] = useState('auto');
+  const [selectedBoardIds, setSelectedBoardIds] = useState([]);
+  const [prioritize, setPrioritize] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const toggleSet = (id) => setSelectedSetIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  const selectAllSets = () => setSelectedSetIds((savedTestCaseSets || []).map((s) => s.id));
+  const clearAllSets = () => setSelectedSetIds([]);
+  const toggleBoard = (boardId) => setSelectedBoardIds((prev) => prev.includes(boardId) ? prev.filter((x) => x !== boardId) : [...prev, boardId]);
+  const selectAllBoards = () => setSelectedBoardIds(boards.filter((b) => b.status === 'online').map((b) => b.id));
+  const clearBoards = () => setSelectedBoardIds([]);
+
+  // Flow: drop → match → raw page → select for run. Include current table (savedTestCases) so user can run without Save Set.
+  const browsedRows = [
+    ...(savedTestCases || []).map((tc) => ({
+      setId: '__current__',
+      set: { id: '__current__', name: 'Current (from table)', items: savedTestCases },
+      tc,
+      key: `current-${tc.id}`,
+    })),
+    ...(savedTestCaseSets || []).flatMap((set) =>
+      (Array.isArray(set.items) ? set.items : []).map((tc, tcIdx) => ({
+        setId: set.id,
+        set,
+        tc,
+        key: `${set.id}-${tcIdx}-${tc.id || tc.name || tc.vcdName || ''}`,
+      }))
+    ),
+  ];
+  const toggleBrowsed = (key) => {
+    setSelectedBrowsedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const selectAllBrowsed = () => setSelectedBrowsedKeys(new Set(browsedRows.map((r) => r.key)));
+  const clearAllBrowsed = () => setSelectedBrowsedKeys(new Set());
+
+  const buildJobFromSet = (set, testCasesOverride = null) => {
+    const items = testCasesOverride != null ? testCasesOverride : (set.items || []);
+    const missingNames = new Set(); // ชื่อไฟล์ที่ไม่พบใน Library (ไม่ซ้ำ)
+    const filesPayload = [];
+    let firstBinName = '';
+    for (let i = 0; i < items.length; i++) {
+      const tc = items[i];
+      const vcdFile = uploadedFiles.find((f) => f.name === (tc.vcdName || ''));
+      const binFile = uploadedFiles.find((f) => f.name === (tc.binName || ''));
+      const linFile = (tc.linName && uploadedFiles.find((f) => f.name === tc.linName)) || null;
+      if (!vcdFile || !binFile) {
+        if (tc.vcdName && !uploadedFiles.find((f) => f.name === tc.vcdName)) missingNames.add(tc.vcdName);
+        if (tc.binName && !uploadedFiles.find((f) => f.name === tc.binName)) missingNames.add(tc.binName);
+        continue;
+      }
+      if (!firstBinName) firstBinName = tc.binName || '';
+      filesPayload.push({
+        name: vcdFile.name,
+        order: i + 1,
+        vcd: vcdFile.name,
+        erom: binFile.name,
+        ulp: linFile?.name || null,
+        try_count: typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1,
+      });
+    }
+    const missing = [...missingNames];
+    const pairsData = items.map((tc) => {
+      const vcdFile = uploadedFiles.find((f) => f.name === (tc.vcdName || ''));
+      const binFile = uploadedFiles.find((f) => f.name === (tc.binName || ''));
+      const linFile = (tc.linName && uploadedFiles.find((f) => f.name === tc.linName)) || null;
+      return {
+        vcdId: vcdFile?.id,
+        binId: binFile?.id,
+        linId: linFile?.id || null,
+        vcdName: tc.vcdName || '',
+        binName: tc.binName || '',
+        linName: tc.linName || null,
+        try: typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1,
+        boardId: tc.boardId || null,
+        boardName: tc.boardId ? (boards.find((b) => b.id === tc.boardId)?.name) : null,
+      };
+    });
+    return { missing, filesPayload, firstBinName, pairsData };
+  };
+
+  const runSelected = async () => {
+    const useBrowsedSelection = runSelectionMode === 'browse' ? selectedBrowsedKeys.size > 0 : false;
+    const useSetSelection = runSelectionMode === 'set' && selectedSetIds.length > 0;
+    if (!useBrowsedSelection && !useSetSelection) {
+      addToast({ type: 'warning', message: 'Select at least one Set or browse and select at least one test case' });
+      return;
+    }
+    if (boardSelectionMode === 'manual' && selectedBoardIds.length === 0) {
+      addToast({ type: 'warning', message: 'Select at least one board (or switch to Auto assign)' });
+      return;
+    }
+    const boardNames = boardSelectionMode === 'auto'
+      ? []
+      : boards.filter((b) => selectedBoardIds.includes(b.id)).map((b) => b.name);
+
+    const jobsToCreate = [];
+    const errorsPerSet = [];
+
+    if (useBrowsedSelection) {
+      const bySet = new Map();
+      browsedRows.forEach((row) => {
+        if (!selectedBrowsedKeys.has(row.key)) return;
+        if (!bySet.has(row.setId)) bySet.set(row.setId, { set: row.set, cases: [] });
+        bySet.get(row.setId).cases.push(row.tc);
+      });
+      bySet.forEach(({ set, cases }) => {
+        const { missing, filesPayload, firstBinName, pairsData } = buildJobFromSet(set, cases);
+        if (missing.length > 0) {
+          const list = missing.slice(0, 5).join(', ') + (missing.length > 5 ? ` +${missing.length - 5} files` : '');
+          errorsPerSet.push(`${set.name}: Files not found in Library — ${list}`);
+          return;
+        }
+        if (filesPayload.length === 0) {
+          errorsPerSet.push(`${set.name}: No test cases with both VCD and ERoM`);
+          return;
+        }
+        const jobName = (runSetName || '').trim() || set.name;
+        jobsToCreate.push({
+          name: jobName,
+          tag: tag || undefined,
+          firmware: firstBinName,
+          boards: boardNames,
+          priority: prioritize ? 'high' : undefined,
+          files: filesPayload,
+          configName: jobName,
+          pairsData,
+        });
+      });
+    } else {
+      const setsToRun = (savedTestCaseSets || []).filter((s) => selectedSetIds.includes(s.id));
+      for (const set of setsToRun) {
+        const { missing, filesPayload, firstBinName, pairsData } = buildJobFromSet(set);
+        if (missing.length > 0) {
+          const list = missing.slice(0, 5).join(', ') + (missing.length > 5 ? ` +${missing.length - 5} files` : '');
+          errorsPerSet.push(`${set.name}: Files not found in Library — ${list}`);
+          continue;
+        }
+        if (filesPayload.length === 0) {
+          errorsPerSet.push(`${set.name}: No test cases with both VCD and ERoM`);
+          continue;
+        }
+        const jobName = (runSetName || '').trim() || set.name;
+        jobsToCreate.push({
+          name: jobName,
+          tag: tag || undefined,
+          firmware: firstBinName,
+          boards: boardNames,
+          priority: prioritize ? 'high' : undefined,
+          files: filesPayload,
+          configName: jobName,
+          pairsData,
+        });
+      }
+    }
+
+    if (errorsPerSet.length > 0) {
+      const msg = errorsPerSet.join(' | ') + ' — Upload files on Test Cases → File Library first';
+      addToast({ type: 'error', message: msg, duration: 8000 });
+      if (jobsToCreate.length === 0) return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      let created = 0;
+      for (const payload of jobsToCreate) {
+        const result = await createJob(payload, { startImmediately: true });
+        if (result) created++;
+      }
+      if (created > 0) {
+        if (refreshJobs) await refreshJobs();
+        addToast({ type: 'success', message: `${created} set(s) sent to queue — see Jobs Manager (Running)` });
+        setSelectedSetIds([]);
+        setSelectedBrowsedKeys(new Set());
+        setRunSetName('');
+        setTag('');
+        setSelectedBoardIds([]);
+        if (onNavigateJobs) onNavigateJobs();
+      }
+      if (created < jobsToCreate.length) {
+        addToast({ type: 'warning', message: `Created ${created}/${jobsToCreate.length} set(s)` });
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const saveSelectedNotRun = () => {
+    const useBrowsedSelection = runSelectionMode === 'browse' ? selectedBrowsedKeys.size > 0 : false;
+    const useSetSelection = runSelectionMode === 'set' && selectedSetIds.length > 0;
+    if (!useBrowsedSelection && !useSetSelection) {
+      addToast({ type: 'warning', message: 'Select at least one Set or browse and select test cases first' });
+      return;
+    }
+    let items = [];
+    if (useBrowsedSelection) {
+      items = browsedRows.filter((r) => selectedBrowsedKeys.has(r.key)).map((r) => r.tc);
+    } else {
+      const setsToSave = (savedTestCaseSets || []).filter((s) => selectedSetIds.includes(s.id));
+      const seen = new Set();
+      items = setsToSave.flatMap((set) => (set.items || []).filter((tc) => {
+        const key = [tc.name, tc.vcdName, tc.binName, tc.linName].join('\0');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      }));
+    }
+    if (items.length === 0) {
+      addToast({ type: 'warning', message: 'No test cases to save' });
+      return;
+    }
+    const name = (runSetName || '').trim() || `Set ${(savedTestCaseSets || []).length + 1}`;
+    const fileNames = new Set();
+    items.forEach((t) => {
+      if (t.vcdName) fileNames.add(t.vcdName);
+      if (t.binName) fileNames.add(t.binName);
+      if (t.linName) fileNames.add(t.linName);
+    });
+    const fileLibrarySnapshot = [...fileNames].map((n) => ({ name: n }));
+    addSavedTestCaseSet(name, items, { fileLibrarySnapshot });
+    const sets = useTestStore.getState().savedTestCaseSets;
+    const newSetId = sets[sets.length - 1]?.id;
+    if (newSetId && uploadedFiles?.length > 0) {
+      const fileIds = uploadedFiles.filter((f) => fileNames.has(f.name)).map((f) => f.id);
+      if (fileIds.length > 0) {
+        api.saveSetFiles(newSetId, fileIds).catch((err) => console.error('Save set files failed', err));
+      }
+    }
+    addToast({ type: 'success', message: `Saved "${name}" (${items.length} case(s)) — see SAVED on Test Cases page` });
+  };
+
+  return (
+    <div className="w-full max-w-6xl mx-auto space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Run Set</h1>
+        <p className="text-slate-500 dark:text-slate-400 mt-1 text-sm">Browse to select test cases, then run. Set for run is built on this page.</p>
+      </div>
+
+      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+        {/* Step 1 — Browse (Finder-like): click icon to open picker, optional drop zone */}
+        <div className="mb-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-600">
+          <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">1. Browse — select test cases to run</h3>
+          <div
+            onClick={() => setShowBrowseModal(true)}
+            onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('ring-2', 'ring-blue-400'); }}
+            onDragLeave={(e) => { e.currentTarget.classList.remove('ring-2', 'ring-blue-400'); }}
+            onDrop={(e) => { e.preventDefault(); e.currentTarget.classList.remove('ring-2', 'ring-blue-400'); setShowBrowseModal(true); }}
+            className="flex flex-col items-center justify-center gap-2 py-8 px-4 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 dark:hover:bg-blue-900/20 transition-colors"
+          >
+            <FolderOpen size={40} className="text-slate-500 dark:text-slate-400" />
+            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Click to browse or drop here</span>
+            <span className="text-xs text-slate-500">Opens test case picker</span>
+          </div>
+        </div>
+
+        {/* Step 2 — Set for run (built on this page, last step before Run) */}
+        <div className="mb-4 p-4 rounded-xl border-2 border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900">
+          <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">2. Set for run</h3>
+          {selectedBrowsedKeys.size === 0 && selectedSetIds.length === 0 ? (
+            <p className="text-sm text-slate-500 dark:text-slate-400 py-2">No test cases selected. Click Browse above or select set(s) below.</p>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                  {runSelectionMode === 'browse' ? `${selectedBrowsedKeys.size} test case(s) selected` : `${selectedSetIds.length} set(s) selected`}
+                </span>
+                {runSelectionMode === 'browse' && selectedBrowsedKeys.size > 0 && (
+                  <button type="button" onClick={() => setShowBrowseModal(true)} className="text-xs text-blue-600 hover:underline">Edit selection</button>
+                )}
+                {runSelectionMode === 'browse' ? (
+                  <button type="button" onClick={clearAllBrowsed} className="text-xs font-bold text-slate-600 hover:text-slate-800">Clear</button>
+                ) : (
+                  <button type="button" onClick={clearAllSets} className="text-xs font-bold text-slate-600 hover:text-slate-800">Clear</button>
+                )}
+              </div>
+              {runSelectionMode === 'browse' && selectedBrowsedKeys.size > 0 && (
+                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                  {browsedRows.filter((r) => selectedBrowsedKeys.has(r.key)).map((row) => (
+                    <span key={row.key} className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-xs text-slate-700 dark:text-slate-200">
+                      {row.tc.name || row.tc.vcdName || '—'}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Alternative: Run by Set (whole set) */}
+        <div className="mb-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-600">
+          <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Or run by Set — select whole set(s)</h3>
+          <div className="flex items-center gap-2 mb-2">
+            <button type="button" onClick={() => setRunSelectionMode('set')} className="text-xs font-bold text-blue-600 hover:text-blue-800">Use sets</button>
+            <button type="button" onClick={() => setRunSelectionMode('browse')} className="text-xs font-bold text-slate-600 hover:text-slate-800">Use browse</button>
+            <span className="text-xs text-slate-500">{selectedSetIds.length} set(s) selected</span>
+          </div>
+          <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900">
+            {!savedTestCaseSets || savedTestCaseSets.length === 0 ? (
+              <div className="p-3 text-center text-slate-400 text-xs">No sets yet — create on Test Cases page (Save Set)</div>
+            ) : (
+              <ul className="divide-y divide-slate-100 dark:divide-slate-700">
+                {savedTestCaseSets.map((set, index) => (
+                  <li key={set.id} className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                    <input type="checkbox" checked={selectedSetIds.includes(set.id)} onChange={() => toggleSet(set.id)} className="w-4 h-4 rounded border-slate-400 text-blue-600 shrink-0" />
+                    <span className="flex-1 text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{set.name}</span>
+                    <span className="text-xs text-slate-500 shrink-0">{Array.isArray(set.items) ? set.items.length : 0} cases</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+
+        {/* 3. Set name, Tag, Board selection — ด้านล่าง หลังการเลือก test case */}
+        <div className="mb-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-600 space-y-4">
+          <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300">3. Set name, Tag & Board selection</h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400">Configure after selecting test cases above.</p>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Set name</label>
+              <input
+                type="text"
+                placeholder="Set name (optional)"
+                value={runSetName}
+                onChange={(e) => setRunSetName(e.target.value)}
+                className="px-3 py-2 border border-slate-300 dark:border-slate-500 rounded-lg bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 min-w-[200px]"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Tag (optional)</label>
+              <input
+                type="text"
+                placeholder="Tag (optional)"
+                value={tag}
+                onChange={(e) => setTag(e.target.value)}
+                className="px-3 py-2 border border-slate-300 dark:border-slate-500 rounded-lg bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 min-w-[160px]"
+              />
+            </div>
+          </div>
+          <div>
+            <h4 className="text-xs font-bold text-slate-600 dark:text-slate-400 mb-2">Board selection</h4>
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="boardMode" checked={boardSelectionMode === 'auto'} onChange={() => setBoardSelectionMode('auto')} className="w-4 h-4 text-blue-600" />
+                <span className="text-sm text-slate-700 dark:text-slate-200">Auto assign</span>
+                {boardSelectionMode === 'auto' && <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />}
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="boardMode" checked={boardSelectionMode === 'manual'} onChange={() => setBoardSelectionMode('manual')} className="w-4 h-4 text-blue-600" />
+                <span className="text-sm text-slate-700 dark:text-slate-200">Manual select</span>
+                {boardSelectionMode === 'manual' && <span className="text-xs text-slate-500">({selectedBoardIds.length} selected)</span>}
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer ml-2 border-l border-slate-200 dark:border-slate-600 pl-4">
+                <input type="checkbox" checked={prioritize} onChange={(e) => setPrioritize(e.target.checked)} className="w-4 h-4 rounded border-slate-300 text-amber-500 focus:ring-amber-500" />
+                <span className="text-sm text-slate-700 dark:text-slate-200">Prioritize (high priority)</span>
+              </label>
+            </div>
+            {boardSelectionMode === 'manual' && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button type="button" onClick={selectAllBoards} className="text-xs font-bold text-blue-600 hover:text-blue-800">Select all online</button>
+                <button type="button" onClick={clearBoards} className="text-xs font-bold text-slate-600 hover:text-slate-800">Clear</button>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {boards.length === 0 ? (
+                    <span className="text-xs text-slate-500">No boards loaded</span>
+                  ) : (
+                    boards.map((b) => (
+                      <label key={b.id} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium cursor-pointer transition-colors ${selectedBoardIds.includes(b.id) ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-300 dark:border-blue-700 text-blue-800 dark:text-blue-200' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:border-slate-300'}`}>
+                        <input type="checkbox" checked={selectedBoardIds.includes(b.id)} onChange={() => toggleBoard(b.id)} className="w-3.5 h-3.5 rounded border-slate-400 text-blue-600" />
+                        <span>{b.name || b.id}</span>
+                        {b.status === 'online' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="Online" />}
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Run & Save (not run) */}
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            onClick={runSelected}
+            disabled={isSubmitting || (runSelectionMode === 'browse' ? selectedBrowsedKeys.size === 0 : selectedSetIds.length === 0)}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSubmitting ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} />}
+            Run ({runSelectionMode === 'browse' ? selectedBrowsedKeys.size + ' cases' : selectedSetIds.length + ' set(s)'})
+          </button>
+          <button
+            type="button"
+            onClick={saveSelectedNotRun}
+            disabled={runSelectionMode === 'browse' ? selectedBrowsedKeys.size === 0 : selectedSetIds.length === 0}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-600 text-white rounded-lg text-sm font-bold hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Save current selection as a set (no run). Set appears in SAVED on Test Cases page."
+          >
+            <Save size={16} />
+            Save (not run)
+          </button>
+          <p className="text-xs text-slate-500">After Run, see Jobs Manager → Running. Saved sets appear in SAVED on Test Cases page.</p>
+        </div>
+      </div>
+
+      {/* Browse modal (Finder-like picker) */}
+      {showBrowseModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setShowBrowseModal(false)}>
+          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 w-full max-w-4xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-slate-600">
+              <h3 className="text-sm font-bold text-slate-700 dark:text-slate-200">Select test cases to run</h3>
+              <button type="button" onClick={() => setShowBrowseModal(false)} className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 dark:border-slate-700">
+              <button type="button" onClick={selectAllBrowsed} className="text-xs font-bold text-blue-600 hover:text-blue-800">Select all</button>
+              <button type="button" onClick={clearAllBrowsed} className="text-xs font-bold text-slate-600 hover:text-slate-800">Clear</button>
+              <span className="text-xs text-slate-500">{selectedBrowsedKeys.size} selected</span>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              {browsedRows.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 text-sm">No test cases — create on Test Cases page first</div>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-100 dark:bg-slate-800 sticky top-0">
+                    <tr className="text-left font-bold text-slate-600 dark:text-slate-400">
+                      <th className="w-8 px-2 py-1.5 border-r border-slate-200 dark:border-slate-600"></th>
+                      <th className="w-8 px-2 py-1.5 border-r border-slate-200 dark:border-slate-600">#</th>
+                      <th className="px-2 py-1.5 border-r border-slate-200 dark:border-slate-600">Source</th>
+                      <th className="px-2 py-1.5 border-r border-slate-200 dark:border-slate-600">Name</th>
+                      <th className="px-2 py-1.5 border-r border-slate-200 dark:border-slate-600">ERoM</th>
+                      <th className="px-2 py-1.5 border-r border-slate-200 dark:border-slate-600">ULP</th>
+                      <th className="px-2 py-1.5 border-r border-slate-200 dark:border-slate-600">VCD</th>
+                      {[...new Set(browsedRows.flatMap((row) => Object.keys(row.tc.extraColumns || {})))].sort().map((col) => (
+                        <th key={col} className="px-2 py-1.5 border-r border-slate-200 dark:border-slate-600 min-w-[80px]">{col}</th>
+                      ))}
+                      <th className="w-10 px-2 py-1.5 text-center">Try</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {browsedRows.map((row, idx) => {
+                      const extraCols = [...new Set(browsedRows.flatMap((r) => Object.keys(r.tc.extraColumns || {})))].sort();
+                      return (
+                      <tr
+                        key={row.key}
+                        className={`border-b border-slate-100 dark:border-slate-700 ${selectedBrowsedKeys.has(row.key) ? 'bg-blue-50 dark:bg-blue-900/20' : ''} hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer`}
+                        onClick={() => toggleBrowsed(row.key)}
+                      >
+                        <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700" onClick={(e) => e.stopPropagation()}>
+                          <input type="checkbox" checked={selectedBrowsedKeys.has(row.key)} onChange={() => toggleBrowsed(row.key)} className="w-3.5 h-3.5 rounded border-slate-400 text-blue-600" />
+                        </td>
+                        <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700 text-slate-500">{idx + 1}</td>
+                        <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300 truncate max-w-[120px]" title={row.set.name}>{row.set.name || row.setId}</td>
+                        <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700 font-medium text-slate-800 dark:text-slate-200 truncate max-w-[140px]">{row.tc.name || '—'}</td>
+                        <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300 truncate max-w-[100px]">{row.tc.binName || '—'}</td>
+                        <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300 truncate max-w-[80px]">{row.tc.linName || '—'}</td>
+                        <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300 truncate max-w-[100px]">{row.tc.vcdName || '—'}</td>
+                        {extraCols.map((col) => (
+                          <td key={col} className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300 truncate max-w-[100px]">{row.tc.extraColumns?.[col] ?? '—'}</td>
+                        ))}
+                        <td className="px-2 py-1.5 text-center text-slate-500">{typeof row.tc.tryCount === 'number' && row.tc.tryCount > 0 ? row.tc.tryCount : 1}</td>
+                      </tr>
+                    ); })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-600 flex justify-end">
+              <button type="button" onClick={() => setShowBrowseModal(false)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// 2. SETUP PAGE (Version with File Upload) — ใช้เมื่อ Edit Batch จาก Jobs Manager
 const SetupPage = ({ editJobId, onEditComplete }) => {
   const { 
     uploadedFiles, 
@@ -2044,6 +5129,8 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
   const [tag, setTag] = useState('');
   const [showTagSuggestions, setShowTagSuggestions] = useState(false);
   const [selectedBoardIds, setSelectedBoardIds] = useState([]);
+  const [boardSelectionMode, setBoardSelectionMode] = useState('auto'); // 'auto' | 'manual'
+  const [testNowHighPriority, setTestNowHighPriority] = useState(false);
   const [selectedTestCommand, setSelectedTestCommand] = useState(null);
   const [setupMode, setSetupMode] = useState('files'); // 'files' | 'commands'
   const [showCommandManager, setShowCommandManager] = useState(false);
@@ -2116,7 +5203,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
     if (mode === 'commands' && !selectedTestCommand) {
       nextErrors.command = 'Select a test command.';
     }
-    if (selectedBoardIds.length === 0) {
+    if (boardSelectionMode === 'manual' && selectedBoardIds.length === 0) {
       nextErrors.boards = 'Select at least one board.';
     }
     setSetupErrors(nextErrors);
@@ -2313,6 +5400,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
               binId: binFile?.id || pairData.binId || '',
               linId: linFile?.id || pairData.linId || null,
               try: pairData.try || pairData.try_count || 1,
+              boardId: pairData.boardId ? (boards.find(b => b.id === pairData.boardId)?.id || boards.find(b => b.name === pairData.boardName)?.id) : null,
             };
           }).filter(pair => pair.vcdId && pair.binId); // กรองเฉพาะ pairs ที่มี VCD และ BIN
           
@@ -2340,6 +5428,9 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                   .map(boardName => boards.find(b => b.name === boardName)?.id)
                   .filter(Boolean);
                 setSelectedBoardIds(boardIds);
+                setBoardSelectionMode('manual');
+              } else {
+                setBoardSelectionMode('auto');
               }
             }
                         } else {
@@ -2384,6 +5475,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
         binId: selectedPairBinId,
         linId: selectedPairLinId || null, // lin is optional
         try: 1, // default จำนวนรอบ test
+        boardId: null,
       },
     ]);
     setSelectedPairVcdId('');
@@ -2456,6 +5548,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
           binId: binFile.id,
           linId: nearestLin?.id || null, // pair LIN ที่ใกล้ที่สุดถ้ามี
           try: 1,
+          boardId: null, // เลือกบอร์ดรันแยกต่อ test case ได้ (null = ใช้ตาม batch)
         });
       }
     });
@@ -2501,6 +5594,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
       binId: pair.binId,
       linId: pair.linId,
       try: pair.try || 1,
+      boardId: pair.boardId ?? null,
     };
     const pairIndex = selectedPairs.findIndex((p) => p.id === id);
     setSelectedPairs((prev) => {
@@ -2590,6 +5684,12 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
     const count = Math.max(1, Math.min(100, num));
     setSelectedPairs((prev) =>
       prev.map((p) => (p.id === pairId ? { ...p, try: count } : p))
+    );
+  };
+
+  const updatePairBoard = (pairId, boardId) => {
+    setSelectedPairs((prev) =>
+      prev.map((p) => (p.id === pairId ? { ...p, boardId: boardId || null } : p))
     );
   };
 
@@ -2698,7 +5798,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
         if (!vcdFile || !binFile) {
           addToast({ 
             type: 'warning', 
-            message: `ข้ามคู่: ${pair.vcd} / ${pair.bin} — ไม่พบไฟล์ใน library (ต้อง add ไฟล์ก่อน)` 
+            message: `Skipped pair: ${pair.vcd} / ${pair.bin} — files not found in library (add files first)` 
           });
           continue;
         }
@@ -2734,15 +5834,15 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
       if (config.tag) setTag(config.tag);
 
       if (newPairs.length > 0) {
-        addToast({ type: 'success', message: `โหลด ${newPairs.length} คู่ และเลือกไฟล์ที่เกี่ยวข้องให้แล้ว` });
+        addToast({ type: 'success', message: `Loaded ${newPairs.length} pair(s) and selected related files` });
       } else if (loadedFromFileNames > 0) {
-        addToast({ type: 'success', message: `โหลด config และเลือก ${loadedFromFileNames} ไฟล์ให้แล้ว` });
+        addToast({ type: 'success', message: `Loaded config and selected ${loadedFromFileNames} file(s)` });
       } else if (pairs.length === 0 && (!config.fileNames || config.fileNames.length === 0)) {
-        addToast({ type: 'success', message: 'โหลด config (configName, tag) แล้ว' });
+        addToast({ type: 'success', message: 'Loaded config (configName, tag)' });
       } else if (pairs.length > 0) {
-        addToast({ type: 'warning', message: 'โหลด 0 คู่ — ตรวจว่าไฟล์ใน config อยู่ใน library หรือยัง (add ไฟล์ก่อน)' });
+        addToast({ type: 'warning', message: 'Loaded 0 pairs — check that config files exist in library (add files first)' });
       } else {
-        addToast({ type: 'warning', message: 'ไม่พบไฟล์จาก config ใน library — add ไฟล์ก่อนแล้วโหลดใหม่' });
+        addToast({ type: 'warning', message: 'Config files not found in library — add files first then load again' });
       }
     } catch (error) {
       console.error('Failed to load config:', error);
@@ -2856,10 +5956,10 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
   }, [selectedIds, setupErrors.files]);
 
   useEffect(() => {
-    if (selectedBoardIds.length > 0 && setupErrors.boards) {
+    if ((boardSelectionMode === 'auto' || selectedBoardIds.length > 0) && setupErrors.boards) {
       setSetupErrors((prev) => ({ ...prev, boards: '' }));
     }
-  }, [selectedBoardIds, setupErrors.boards]);
+  }, [boardSelectionMode, selectedBoardIds, setupErrors.boards]);
 
   useEffect(() => {
     if (selectedTestCommand && setupErrors.command) {
@@ -2971,10 +6071,10 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
   <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6 sm:space-y-8">
     <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-end gap-4">
       <div className="min-w-0">
-    <h1 className="text-2xl sm:text-3xl font-bold text-slate-800">
+    <h1 className="text-2xl sm:text-3xl font-bold text-slate-800 dark:text-slate-100">
       {editJobId ? `Edit Batch #${editJobId}` : 'Test Case Setup'}
     </h1>
-        <p className="text-slate-500 mt-1 text-sm sm:text-base">
+        <p className="text-slate-500 dark:text-slate-400 mt-1 text-sm sm:text-base">
           {editJobId 
             ? 'Edit pairs and configuration for this batch' 
             : 'Configure and manage your test files or use pre-written test commands.'}
@@ -3288,7 +6388,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                   onDragOver={handleJsonDragOver}
                   onDragLeave={handleJsonDragLeave}
                   onDrop={handleJsonDrop}
-                  title="ลากไฟล์ .json มาวางเพื่อโหลด config"
+                  title="Drag and drop .json file to load config"
                   className={`bg-white rounded-3xl border shadow-sm overflow-hidden transition-all ${
                     isDraggingJson ? 'border-blue-500 ring-2 ring-blue-300 ring-offset-2' : 'border-slate-200'
                   }`}
@@ -3445,22 +6545,23 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                               )}
                             </div>
                           </div>
-                          <div className="grid bg-slate-50 text-xs font-semibold text-slate-600 border border-slate-300" style={{ gridTemplateColumns: '40px 40px 1fr 1fr 1fr 100px 120px' }}>
-                            <div className="px-2 py-2 flex items-center justify-center border-r border-slate-300">
+                          <div className="grid bg-slate-200 dark:bg-slate-700 text-xs font-bold text-black dark:text-white border border-slate-300 dark:border-slate-600 rounded-t-lg" style={{ gridTemplateColumns: '40px 40px 1fr 1fr 1fr 100px 110px 120px' }}>
+                            <div className="px-2 py-2.5 flex items-center justify-center border-r border-slate-300 dark:border-slate-600">
                               <input
                                 type="checkbox"
                                 checked={selectedTestCaseIds.length === selectedPairs.length && selectedPairs.length > 0}
                                 onChange={toggleSelectAllTestCases}
-                                className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                className="w-4 h-4 rounded border-slate-400 text-blue-600 focus:ring-blue-500 cursor-pointer"
                                 title="Select all"
                               />
                             </div>
-                            <div className="px-2 py-2 text-center border-r border-slate-300">#</div>
-                            <div className="px-3 py-2 border-r border-slate-300">VCD</div>
-                            <div className="px-3 py-2 border-r border-slate-300">ERoM</div>
-                            <div className="px-3 py-2 border-r border-slate-300">ULP</div>
-                            <div className="px-2 py-2 text-center border-r border-slate-300">try</div>
-                            <div className="px-3 py-2 text-center">Actions</div>
+                            <div className="px-2 py-2.5 text-center border-r border-slate-300 dark:border-slate-600">#</div>
+                            <div className="px-3 py-2.5 border-r border-slate-300 dark:border-slate-600">VCD</div>
+                            <div className="px-3 py-2.5 border-r border-slate-300 dark:border-slate-600">ERoM</div>
+                            <div className="px-3 py-2.5 border-r border-slate-300 dark:border-slate-600">ULP</div>
+                            <div className="px-2 py-2.5 text-center border-r border-slate-300 dark:border-slate-600">try</div>
+                            <div className="px-2 py-2.5 border-r border-slate-300 dark:border-slate-600">Board</div>
+                            <div className="px-3 py-2.5 text-center">Actions</div>
                           </div>
                           {selectedPairs.map((pair, idx) => {
                             const vcdName = vcdFilesList.find((f) => f.id === pair.vcdId)?.name || '—';
@@ -3482,33 +6583,33 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                   }
                                   toggleTestCaseSelection(pair.id);
                                 }}
-                                className={`grid items-center text-sm border border-slate-300 cursor-pointer ${draggingRowIndex === idx ? 'opacity-50' : ''} ${dropTargetRowIndex === idx ? 'ring-1 ring-blue-400 bg-blue-50/50' : ''} ${selectedTestCaseIds.includes(pair.id) ? 'bg-blue-50/30' : 'hover:bg-slate-50'}`}
-                                style={{ gridTemplateColumns: '40px 40px 1fr 1fr 1fr 100px 120px' }}
+                                className={`grid items-center text-sm border border-slate-300 dark:border-slate-600 border-t-0 cursor-pointer text-black dark:text-white bg-white dark:bg-slate-800/50 ${idx === selectedPairs.length - 1 ? 'rounded-b-lg' : ''} ${draggingRowIndex === idx ? 'opacity-50' : ''} ${dropTargetRowIndex === idx ? 'ring-1 ring-blue-400 bg-blue-50 dark:bg-blue-900/30' : ''} ${selectedTestCaseIds.includes(pair.id) ? 'bg-blue-50 dark:bg-blue-900/30' : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'}`}
+                                style={{ gridTemplateColumns: '40px 40px 1fr 1fr 1fr 100px 110px 120px' }}
                               >
                                 <div 
-                                  className="px-2 py-2 flex items-center justify-center border-r border-slate-300"
+                                  className="px-2 py-2 flex items-center justify-center border-r border-slate-300 dark:border-slate-600"
                                 >
                                   <input
                                     type="checkbox"
                                     checked={selectedTestCaseIds.includes(pair.id)}
                                     onChange={() => toggleTestCaseSelection(pair.id)}
                                     onClick={(e) => e.stopPropagation()}
-                                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                    className="w-4 h-4 rounded border-slate-400 text-blue-600 focus:ring-blue-500 cursor-pointer"
                                   />
                                 </div>
                                 <div 
-                                  className="px-2 py-2 text-slate-500 text-center border-r border-slate-300"
+                                  className="px-2 py-2 text-black dark:text-slate-200 text-center font-medium border-r border-slate-300 dark:border-slate-600"
                                 >
                                   {idx + 1}
                                 </div>
                                 <div 
-                                  className="px-3 py-2 border-r border-slate-300"
+                                  className="px-3 py-2 border-r border-slate-300 dark:border-slate-600"
                                 >
                                   <select
                                     value={pair.vcdId || ''}
                                     onChange={(e) => updatePairFile(pair.id, 'vcd', e.target.value)}
                                     onClick={(e) => e.stopPropagation()}
-                                    className="w-full px-2 py-1 text-xs rounded border border-slate-300 bg-white focus:border-blue-400 focus:ring-1 focus:ring-blue-400 cursor-pointer"
+                                    className="w-full px-2 py-1.5 text-xs font-medium rounded border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-black dark:text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 cursor-pointer"
                                   >
                                     <option value="">— Select VCD —</option>
                                     {vcdFilesList.map((f) => (
@@ -3517,13 +6618,13 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                   </select>
                                 </div>
                                 <div 
-                                  className="px-3 py-2 border-r border-slate-300"
+                                  className="px-3 py-2 border-r border-slate-300 dark:border-slate-600"
                                 >
                                   <select
                                     value={pair.binId || ''}
                                     onChange={(e) => updatePairFile(pair.id, 'bin', e.target.value)}
                                     onClick={(e) => e.stopPropagation()}
-                                    className="w-full px-2 py-1 text-xs rounded border border-slate-300 bg-white focus:border-blue-400 focus:ring-1 focus:ring-blue-400 cursor-pointer"
+                                    className="w-full px-2 py-1.5 text-xs font-medium rounded border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-black dark:text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 cursor-pointer"
                                   >
                                     <option value="">— Select ERoM —</option>
                                     {binFilesList.map((f) => (
@@ -3532,13 +6633,13 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                   </select>
                                 </div>
                                 <div 
-                                  className="px-3 py-2 border-r border-slate-300"
+                                  className="px-3 py-2 border-r border-slate-300 dark:border-slate-600"
                                 >
                                   <select
                                     value={pair.linId || ''}
                                     onChange={(e) => updatePairFile(pair.id, 'lin', e.target.value)}
                                     onClick={(e) => e.stopPropagation()}
-                                    className="w-full px-2 py-1 text-xs rounded border border-slate-300 bg-white focus:border-blue-400 focus:ring-1 focus:ring-blue-400 cursor-pointer"
+                                    className="w-full px-2 py-1.5 text-xs font-medium rounded border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-black dark:text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 cursor-pointer"
                                   >
                                     <option value="">— Select ULP  —</option>
                                     {linFilesList.map((f) => (
@@ -3547,7 +6648,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                   </select>
                                 </div>
                                 <div 
-                                  className="px-2 py-2 border-r border-slate-300 min-w-[100px] flex items-center"
+                                  className="px-2 py-2 border-r border-slate-300 dark:border-slate-600 min-w-[100px] flex items-center"
                                 >
                                   <input
                                     type="text"
@@ -3578,9 +6679,23 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                       }
                                     }}
                                     placeholder="1"
-                                    className="w-full min-w-0 px-1.5 py-1 text-xs rounded border border-slate-300 bg-white focus:border-blue-400 focus:ring-1 focus:ring-blue-400 text-center"
-                                    title="จำนวนรอบในการ test (พิมพ์ได้, default: 1)"
+                                    className="w-full min-w-0 px-1.5 py-1.5 text-xs font-medium rounded border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-black dark:text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-center"
+                                    title="Number of test runs (editable, default: 1)"
                                   />
+                                </div>
+                                <div className="px-2 py-2 border-r border-slate-300 dark:border-slate-600">
+                                  <select
+                                    value={pair.boardId || ''}
+                                    onChange={(e) => updatePairBoard(pair.id, e.target.value || null)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="w-full px-1.5 py-1.5 text-xs font-medium rounded border border-slate-300 dark:border-slate-500 bg-white dark:bg-slate-700 text-black dark:text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                                    title="Select board for this test case (Any = use batch default)"
+                                  >
+                                    <option value="">Any</option>
+                                    {boards.map((b) => (
+                                      <option key={b.id} value={b.id}>{b.name || b.id}</option>
+                                    ))}
+                                  </select>
                                 </div>
                                 <div className="px-3 py-2 flex items-center justify-center gap-1">
                                   <span
@@ -3595,7 +6710,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                     }}
                                     onMouseDown={(e) => e.stopPropagation()}
                                     className="p-1.5 rounded cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 hover:bg-slate-100"
-                                    title="ลากเพื่อเรียง"
+                                    title="Drag to reorder"
                                   >
                                     <GripVertical size={16} />
                                   </span>
@@ -3749,52 +6864,123 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                   </div>
                                 )}
                                 <div className="flex justify-between">
-                                  <span className="text-slate-600">Selected Boards:</span>
-                                  <span className="font-bold text-slate-800">{selectedBoardIds.length}</span>
+                                  <span className="text-slate-600">Board Selection:</span>
+                                  <span className="font-bold text-slate-800">
+                                    {boardSelectionMode === 'auto' ? 'Auto-Assign' : `${selectedBoardIds.length} board(s)`}
+                                  </span>
                                 </div>
                               </div>
                             </div>
                           )}
 
-                          {/* Select Boards */}
-                          <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-400 uppercase">Select Boards (available)</label>
-                            <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-lg bg-white p-2">
-                              {loading?.boards ? (
-                                <div className="text-xs text-slate-500">Loading boards...</div>
-                              ) : errors?.boards ? (
-                                <div className="text-xs text-red-600">Failed to load boards</div>
-                              ) : selectableBoards.length === 0 ? (
-                                <div className="text-xs text-slate-500">No available boards</div>
-                              ) : (
-                                <div className="space-y-1.5">
-                                  {selectableBoards.map(b => (
-                                    <label key={b.id} className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer">
-                                      <input
-                                        type="checkbox"
-                                        checked={selectedBoardIds.includes(b.id)}
-                                        onChange={() => toggleSelectedBoard(b.id)}
-                                        className="w-3.5 h-3.5 rounded border-slate-300 text-blue-600"
-                                      />
-                                      <div className="flex-1 min-w-0">
-                                        <div className="text-xs font-bold text-slate-800 truncate">{b.name}</div>
-                                        <div className="text-[10px] text-slate-500">{b.ip || 'No IP'} • {b.firmware}</div>
-                                      </div>
-                                      {b.tag && (
-                                        <span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full shrink-0">
-                                          {b.tag}
-                                        </span>
-                                      )}
-                                    </label>
-                                  ))}
+                          {/* Board Selection */}
+                          <div className="space-y-4">
+                            <span className="text-sm font-bold text-black dark:text-white uppercase tracking-wide block">Board Selection</span>
+                            <div className="flex flex-wrap gap-4">
+                              <label className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all flex-1 min-w-[200px] ${
+                                boardSelectionMode === 'auto'
+                                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 dark:border-blue-400'
+                                  : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 hover:border-slate-400 dark:hover:border-slate-500'
+                              }`}>
+                                <input
+                                  type="radio"
+                                  name="boardSelectionMode"
+                                  checked={boardSelectionMode === 'auto'}
+                                  onChange={() => setBoardSelectionMode('auto')}
+                                  className="mt-0.5 w-4 h-4 text-blue-600 border-slate-300"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold text-black dark:text-white">Auto-Assign (Any Available)</span>
+                                    {boardSelectionMode === 'auto' && <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />}
+                                  </div>
+                                  <p className="text-sm text-slate-700 dark:text-slate-200 mt-1">Run on first available board matching criteria.</p>
                                 </div>
-                              )}
+                              </label>
+                              <label className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all flex-1 min-w-[200px] ${
+                                boardSelectionMode === 'manual'
+                                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 dark:border-blue-400'
+                                  : 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 hover:border-slate-400 dark:hover:border-slate-500'
+                              }`}>
+                                <input
+                                  type="radio"
+                                  name="boardSelectionMode"
+                                  checked={boardSelectionMode === 'manual'}
+                                  onChange={() => setBoardSelectionMode('manual')}
+                                  className="mt-0.5 w-4 h-4 text-blue-600 border-slate-300"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <span className="font-bold text-black dark:text-white">Manual Selection</span>
+                                </div>
+                              </label>
                             </div>
-                            {setupErrors.boards && (
-                              <div className="text-xs text-red-600">
-                                {setupErrors.boards}
+                            {boardSelectionMode === 'manual' && (
+                              <div className="max-h-40 overflow-y-auto border border-slate-300 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-800 p-2">
+                                {loading?.boards ? (
+                                  <div className="text-sm text-slate-700 dark:text-slate-200 py-2">Loading boards...</div>
+                                ) : errors?.boards ? (
+                                  <div className="text-sm text-red-600 dark:text-red-400 py-2">Failed to load boards</div>
+                                ) : boards.length === 0 ? (
+                                  <div className="text-sm text-slate-700 dark:text-slate-200 py-2">No boards</div>
+                                ) : (
+                                  <div className="space-y-0.5">
+                                    {boards.map(b => {
+                                      const isIdle = b.status === 'online' && !b.currentJob;
+                                      const isBusy = b.status === 'busy';
+                                      const isOffline = b.status === 'offline' || b.status === 'error' || !isIdle && !isBusy;
+                                      const canSelect = isIdle;
+                                      return (
+                                        <label
+                                          key={b.id}
+                                          className={`flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-colors ${
+                                            selectedBoardIds.includes(b.id)
+                                              ? 'bg-blue-100 dark:bg-blue-900/50'
+                                              : canSelect
+                                              ? 'hover:bg-slate-100 dark:hover:bg-slate-700'
+                                              : 'opacity-60 cursor-not-allowed'
+                                          }`}
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={selectedBoardIds.includes(b.id)}
+                                            onChange={() => canSelect && toggleSelectedBoard(b.id)}
+                                            disabled={!canSelect}
+                                            className="w-4 h-4 rounded border-slate-400 text-blue-600 disabled:opacity-50"
+                                          />
+                                          <div className="flex-1 min-w-0">
+                                            <div className="text-sm font-bold text-black dark:text-white truncate">{b.name}</div>
+                                            <div className="text-xs text-slate-600 dark:text-slate-300">{b.ip || 'No IP'}</div>
+                                          </div>
+                                          <span className="flex items-center gap-1 text-xs font-medium text-slate-700 dark:text-slate-200 shrink-0">
+                                            {isIdle && <><span className="w-2 h-2 rounded-full bg-emerald-500" aria-hidden /> (Idle)</>}
+                                            {isBusy && <><Clock size={12} className="text-amber-500" /> (Busy)</>}
+                                            {isOffline && !isIdle && !isBusy && <><XCircle size={12} className="text-red-500" /> (Offline)</>}
+                                          </span>
+                                        </label>
+                                      );
+                                    })}
+                                  </div>
+                                )}
                               </div>
                             )}
+                            {setupErrors.boards && (
+                              <div className="text-xs text-red-600">{setupErrors.boards}</div>
+                            )}
+
+                            {/* Priority */}
+                            <div className="pt-4 mt-2 border-t border-slate-300 dark:border-slate-600">
+                              <span className="text-sm font-bold text-black dark:text-white uppercase tracking-wide block mb-2">Priority</span>
+                              <label className="flex items-center gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer border border-slate-200 dark:border-slate-600">
+                                <input
+                                  type="checkbox"
+                                  checked={testNowHighPriority}
+                                  onChange={(e) => setTestNowHighPriority(e.target.checked)}
+                                  className="w-4 h-4 rounded border-slate-400 text-amber-500"
+                                />
+                                <Zap size={18} className="text-amber-500 shrink-0" />
+                                <span className="text-sm font-semibold text-black dark:text-white">Test Now! (High Priority)</span>
+                              </label>
+                            </div>
                           </div>
 
                           {/* Create Batch Button */}
@@ -3818,14 +7004,14 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                 addToast({ type: 'warning', message: 'Please select at least one test case pair' });
                                 return;
                               }
-                              if (selectedBoardIds.length === 0) {
+                              if (boardSelectionMode === 'manual' && selectedBoardIds.length === 0) {
                                 setSetupErrors((prev) => ({ ...prev, boards: 'Select at least one board.' }));
                                 return;
                               }
 
-                              const boardNames = selectableBoards
-                                .filter(b => selectedBoardIds.includes(b.id))
-                                .map(b => b.name);
+                              const boardNames = boardSelectionMode === 'auto'
+                                ? []
+                                : boards.filter(b => selectedBoardIds.includes(b.id)).map(b => b.name);
 
                               // สร้าง files array จาก pairs ที่เลือก (แต่ละ pair = 1 test case)
                               // ส่งข้อมูลไฟล์ทั้งหมด: VCD, ERoM (BIN), ULP (LIN)
@@ -3833,7 +7019,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                 const vcdFile = uploadedFiles.find(f => f.id === pair.vcdId);
                                 const binFile = uploadedFiles.find(f => f.id === pair.binId);
                                 const linFile = pair.linId ? uploadedFiles.find(f => f.id === pair.linId) : null;
-                                
+                                const boardName = pair.boardId ? boards.find(b => b.id === pair.boardId)?.name : undefined;
                                 return {
                                   name: vcdFile?.name || '', // VCD file name (primary)
                                   order: index + 1,
@@ -3841,6 +7027,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                   vcd: vcdFile?.name || '', // VCD file
                                   erom: binFile?.name || '', // ERoM (BIN) file
                                   ulp: linFile?.name || null, // ULP (LIN) file (optional)
+                                  board: boardName, // บอร์ดที่รัน test case นี้ (ถ้า backend รองรับ)
                                 };
                               });
 
@@ -3862,6 +7049,8 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                   binName: binFile?.name || '', // เก็บ file name สำหรับ fallback
                                   linName: linFile?.name || null, // เก็บ file name สำหรับ fallback
                                   try: pair.try || 1,
+                                  boardId: pair.boardId || null,
+                                  boardName: pair.boardId ? boards.find(b => b.id === pair.boardId)?.name : null,
                                 };
                               });
 
@@ -3870,6 +7059,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                 tag: tag || undefined,
                                 firmware: firmwareFile?.name || '',
                                 boards: boardNames,
+                                priority: testNowHighPriority ? 'high' : undefined,
                                 files: filesFromPairs.map(f => ({
                                   name: f.name, // VCD file name (for backward compatibility)
                                   order: f.order,
@@ -3877,6 +7067,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                                   erom: f.erom, // ERoM (BIN) file
                                   ulp: f.ulp, // ULP (LIN) file
                                   try_count: f.try, // Number of test rounds
+                                  ...(f.board != null && { board: f.board }), // บอร์ดที่รัน test case นี้ (backend รองรับเมื่อไหร่จะใช้ได้)
                                 })),
                                 configName: configName || undefined,
                                 pairsData: pairsDataForHistory, // เก็บ pairs data สำหรับ edit
@@ -4088,6 +7279,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
     moveJobToIndex,
     stopFile,
     rerunFile,
+    rerunFailedFiles,
     moveFileUp, 
     moveFileDown, 
     updateJobTag, 
@@ -4120,10 +7312,11 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
   const [jobsTimeFilter, setJobsTimeFilter] = useState('all'); // 'today' | 'week' | 'month' | 'all'
   const [draggingJobId, setDraggingJobId] = useState(null);
 
-  // จาก History: เปิด job นั้นและโฟกัสที่ test cases/files
+  // จาก History: เปิด job นั้นและโฟกัสที่ test cases/files (เปิด Details ด้วย)
   useEffect(() => {
     if (!expandJobId) return;
     setExpandedJobs(prev => prev.includes(expandJobId) ? prev : [...prev, expandJobId]);
+    setExpandedDetailsJobs(prev => prev.includes(expandJobId) ? prev : [...prev, expandJobId]);
     setTestCasesView(expandJobId);
     requestAnimationFrame(() => {
       const el = document.getElementById(`job-${expandJobId}`);
@@ -4505,8 +7698,8 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
           if (e.target.closest('button') || e.target.closest('input') || e.target.closest('select') || e.target.closest('[data-no-select]')) {
             return;
           }
-          // คลิกที่การ์ด = เปิด/ปิดรายการไฟล์ (ดูไฟล์ทั้งหมด)
-          toggleJobExpanded(job.id);
+          // คลิกที่การ์ด = เปิด/ปิด Details (สรุป + progress + ทุก test case)
+          toggleDetails(job.id);
         }}
         onDragOver={isDemoJob || job.status === 'running' ? undefined : (e) => {
           e.preventDefault();
@@ -4563,12 +7756,34 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                       : job.status
                     }
                   </span>
-                  {job.tag && (
-                    <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-700 flex items-center gap-1 shrink-0">
-                      <Tag size={12} />
-                      {job.tag}
+                  {(editingTag === job.id ? (
+                    <span className="flex items-center gap-1 shrink-0" data-no-select onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="text"
+                        value={tagInput}
+                        onChange={(e) => setTagInput(e.target.value)}
+                        placeholder="Tag name"
+                        className="px-2 py-0.5 rounded text-xs border border-slate-300 w-24 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSaveTag(job.id);
+                          if (e.key === 'Escape') handleCancelTag();
+                        }}
+                        autoFocus
+                      />
+                      <button type="button" onClick={(e) => { e.stopPropagation(); handleSaveTag(job.id); }} className="px-1.5 py-0.5 bg-blue-600 text-white rounded text-xs font-bold">Save</button>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); handleCancelTag(); }} className="px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded text-xs font-bold">Cancel</button>
                     </span>
-                  )}
+                  ) : (
+                    <span
+                      onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleEditTag(job); }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-700 flex items-center gap-1 shrink-0 cursor-pointer hover:bg-purple-200 transition-colors"
+                      title={job.tag ? 'Click to edit tag' : 'Click to add tag'}
+                    >
+                      <Tag size={12} />
+                      {job.tag || 'Add tag'}
+                    </span>
+                  ))}
                   </span>
                 </div>
                 <p className="text-slate-600 text-sm line-clamp-2 break-words" title={job.name}>{job.name || '—'}</p>
@@ -4622,32 +7837,19 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
               </div>
               )}
             </div>
-            {/* Action Row: Details (with nested actions) + View Progress, Edit, Delete */}
+            {/* Action Row: Details (includes all test cases + progress), Edit, Delete */}
             <div className="flex items-center gap-2 flex-wrap pt-1.5" data-no-select>
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleDetails(job.id); }}
                 onMouseDown={(e) => e.stopPropagation()}
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors shrink-0"
-                title="Show batch details"
+                title="Show all details, progress and test cases"
               >
                 {showDetails ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                 Details
               </button>
-              {/* Main actions on the same row */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                      setTestCasesView(testCasesView === job.id ? null : job.id);
-                    }}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    className="px-2 py-1 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700 transition-all flex items-center gap-1 shrink-0"
-                  >
-                    <Eye size={12} />
-                    {testCasesView === job.id ? 'Hide Progress' : 'View Progress'}
-                  </button>
-                  {onEditJob && (job.status || '').toLowerCase() !== 'running' && !isDemoJob && (
+              {onEditJob && (job.status || '').toLowerCase() !== 'running' && !isDemoJob && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -4702,89 +7904,138 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                   )}
                 </div>
 
-                {/* Inline actions hiddenภายใต้ Details */}
-                {editingTag === job.id ? (
-                  <div className="flex items-center gap-2 flex-wrap" data-no-select>
-                    <input
-                      type="text"
-                      value={tagInput}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        setTagInput(e.target.value);
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      placeholder="Enter tag/group"
-                      className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      onKeyDown={(e) => {
-                        e.stopPropagation();
-                        if (e.key === 'Enter') handleSaveTag(job.id);
-                        if (e.key === 'Escape') handleCancelTag();
-                      }}
-                      autoFocus
-                    />
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        handleSaveTag(job.id);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700"
-                    >
-                      Save
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        handleCancelTag();
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      className="px-3 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-300"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2 flex-wrap" data-no-select>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        handleEditTag(job);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      className="px-2 py-1 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-200 transition-all flex items-center gap-1 shrink-0"
-                    >
-                      <Tag size={12} />
-                      {job.tag ? 'Edit Tag' : 'Add Tag'}
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        exportJobToJSON(job.id);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      className="px-2 py-1 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition-all flex items-center gap-1 shrink-0"
-                    >
-                      <FileJson size={12} />
-                      Export JSON
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        toggleJobExpanded(job.id);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      className="px-2 py-1 bg-slate-100 text-slate-700 rounded-lg text-xs font-bold hover:bg-slate-200 transition-all shrink-0"
-                    >
-                      {isExpanded ? 'Hide Files' : 'Show Files'}
-                    </button>
-                  </div>
-                )}
+                {/* Actions under Details: Export only */}
+                <div className="flex items-center gap-2 flex-wrap" data-no-select>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      exportJobToJSON(job.id);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="px-2 py-1 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition-all flex items-center gap-1 shrink-0"
+                  >
+                    <FileJson size={12} />
+                    Export JSON
+                  </button>
+                </div>
+
+                {/* Progress view + all test cases (files) inside Details */}
+                <TestCasesProgressView
+                  job={job}
+                  files={sortedFiles}
+                  filter={testCasesFilter}
+                  search={testCasesSearch}
+                  onFilterChange={setTestCasesFilter}
+                  onSearchChange={setTestCasesSearch}
+                  onStopFile={(fileId) => stopFile(job.id, fileId)}
+                  onRerunFile={(fileId) => rerunFile(job.id, fileId)}
+                  onRerunFailedFile={(fileIds) => rerunFailedFiles(job.id, fileIds)}
+                />
+
+                <div className="mt-3 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
+                  <h4 className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase mb-2">Test Cases in Batch (Sorted by Order)</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">Each file = 1 test case</p>
+                  {sortedFiles.length > 0 ? (
+                    <>
+                      {sortedFiles.filter(f => f.result === 'fail' || f.status === 'error').length > 0 && (
+                        <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border-2 border-red-200 dark:border-red-800 rounded-xl">
+                          <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                            <div className="flex items-center gap-2">
+                              <AlertCircle size={20} className="text-red-600" />
+                              <h5 className="font-bold text-red-800 dark:text-red-200">
+                                Failed Test Cases ({sortedFiles.filter(f => f.result === 'fail' || f.status === 'error').length})
+                              </h5>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  await rerunFailedFiles(job.id);
+                                }}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-all flex items-center gap-1"
+                                title="Create a new batch with only failed test cases and start it (moves to Running)"
+                              >
+                                <Play size={14} />
+                                Re-run all failed
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  e.preventDefault();
+                                  const failedFiles = sortedFiles.filter(f => f.result === 'fail' || f.status === 'error');
+                                  const lines = failedFiles.map((file, idx) =>
+                                    `[${idx + 1}] ${file.name || 'N/A'}\n    Order: ${file.order || 0}\n    Status: ${file.status || 'unknown'}\n    Result: ${file.result || 'N/A'}\n    Error: ${file.errorMessage || file.error || 'No error message available'}\n    Started: ${file.startedAt || 'N/A'}\n    Completed: ${file.completedAt || 'N/A'}`
+                                  );
+                                  const errorReport = [
+                                    `Failed Test Cases Report - Batch #${job.id}`,
+                                    `Generated: ${new Date().toISOString()}`,
+                                    '========================================',
+                                    '',
+                                    'Job Information:',
+                                    `- Job ID: ${job.id}`,
+                                    `- Job Name: ${job.name || 'N/A'}`,
+                                    `- Tag: ${job.tag || 'Untagged'}`,
+                                    `- Firmware: ${job.firmware || 'N/A'}`,
+                                    `- Boards: ${job.boards?.join(', ') || 'N/A'}`,
+                                    '',
+                                    'Failed Test Cases Summary:',
+                                    `Total Failed: ${failedFiles.length} out of ${sortedFiles.length} test cases`,
+                                    '',
+                                    'Failed Test Cases Details:',
+                                    ...lines,
+                                    '',
+                                    'Recommendations:',
+                                    '1. Review error messages for each failed test case',
+                                    '2. Check hardware connections and firmware compatibility',
+                                    '3. Verify test case configurations',
+                                    '4. Download individual error logs for detailed analysis',
+                                  ].join('\n');
+                                  const blob = new Blob([errorReport], { type: 'text/plain;charset=utf-8;' });
+                                  const url = URL.createObjectURL(blob);
+                                  const link = document.createElement('a');
+                                  link.href = url;
+                                  link.download = `failed_tests_report_batch_${job.id}_${new Date().toISOString().split('T')[0]}.txt`;
+                                  link.click();
+                                  URL.revokeObjectURL(url);
+                                }}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 transition-all flex items-center gap-1"
+                              >
+                                <Download size={14} />
+                                Download All Error Logs
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-sm text-red-700 dark:text-red-300">
+                            The following test cases failed or encountered errors. Click "Error Log" on each failed test case to download detailed error information.
+                          </p>
+                        </div>
+                      )}
+                      <div className="space-y-2">
+                        {sortedFiles.map((file, index) => (
+                          <FileRow
+                            key={file.id}
+                            file={file}
+                            jobId={job.id}
+                            job={job}
+                            index={index}
+                            totalFiles={sortedFiles.length}
+                            onStop={() => stopFile(job.id, file.id)}
+                            onRerun={() => rerunFile(job.id, file.id)}
+                            onRerunFailed={() => rerunFailedFiles(job.id, [file.id])}
+                            onMoveUp={() => moveFileUp(job.id, file.id)}
+                            onMoveDown={() => moveFileDown(job.id, file.id)}
+                          />
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-center py-6 text-slate-400">No files in this batch</div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -4802,118 +8053,6 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
           )}
         </div>
         
-        {/* Test Cases Progress View */}
-        {testCasesView === job.id && (
-          <TestCasesProgressView
-            job={job}
-            files={sortedFiles}
-            filter={testCasesFilter}
-            search={testCasesSearch}
-            onFilterChange={setTestCasesFilter}
-            onSearchChange={setTestCasesSearch}
-            onStopFile={(fileId) => stopFile(job.id, fileId)}
-            onRerunFile={(fileId) => rerunFile(job.id, fileId)}
-          />
-        )}
-        
-        {/* Files/Test Cases List (Expandable) */}
-        {isExpanded && (
-          <div className="p-4 bg-slate-50">
-            <h4 className="text-xs font-bold text-slate-600 uppercase mb-2">Test Cases in Batch (Sorted by Order)</h4>
-            <p className="text-xs text-slate-500 mb-2">Note: Each file = 1 test case</p>
-            {sortedFiles.length > 0 ? (
-              <>
-                {/* Failed Files Alert */}
-                {sortedFiles.filter(f => f.result === 'fail' || f.status === 'error').length > 0 && (
-                  <div className="mb-4 p-4 bg-red-50 border-2 border-red-200 rounded-xl">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <AlertCircle size={20} className="text-red-600" />
-                        <h5 className="font-bold text-red-800">
-                          Failed Test Cases ({sortedFiles.filter(f => f.result === 'fail' || f.status === 'error').length})
-                        </h5>
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault();
-                          const failedFiles = sortedFiles.filter(f => f.result === 'fail' || f.status === 'error');
-                          const errorReport = `Failed Test Cases Report - Batch #${job.id}
-Generated: ${new Date().toISOString()}
-========================================
-
-Job Information:
-- Job ID: ${job.id}
-- Job Name: ${job.name || 'N/A'}
-- Tag: ${job.tag || 'Untagged'}
-- Firmware: ${job.firmware || 'N/A'}
-- Boards: ${job.boards?.join(', ') || 'N/A'}
-
-Failed Test Cases Summary:
-Total Failed: ${failedFiles.length} out of ${sortedFiles.length} test cases
-
-Failed Test Cases Details:
-${failedFiles.map((file, idx) => `
-[${idx + 1}] ${file.name || 'N/A'}
-    Order: ${file.order || 0}
-    Status: ${file.status || 'unknown'}
-    Result: ${file.result || 'N/A'}
-    Error: ${file.errorMessage || file.error || 'No error message available'}
-    Started: ${file.startedAt || 'N/A'}
-    Completed: ${file.completedAt || 'N/A'}
-`).join('\n')}
-
-Recommendations:
-1. Review error messages for each failed test case
-2. Check hardware connections and firmware compatibility
-3. Verify test case configurations
-4. Download individual error logs for detailed analysis
-`;
-                          const blob = new Blob([errorReport], { type: 'text/plain;charset=utf-8;' });
-                          const url = URL.createObjectURL(blob);
-                          const link = document.createElement('a');
-                          link.href = url;
-                          link.download = `failed_tests_report_batch_${job.id}_${new Date().toISOString().split('T')[0]}.txt`;
-                          link.click();
-                          URL.revokeObjectURL(url);
-                        }}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 transition-all flex items-center gap-1"
-                      >
-                        <Download size={14} />
-                        Download All Error Logs
-                      </button>
-                    </div>
-                    <p className="text-sm text-red-700">
-                      The following test cases failed or encountered errors. Click "Error Log" on each failed test case to download detailed error information.
-                    </p>
-                  </div>
-                )}
-                
-                <div className="space-y-2">
-                  {sortedFiles.map((file, index) => (
-                    <FileRow
-                      key={file.id}
-                      file={file}
-                      jobId={job.id}
-                      job={job}
-                      index={index}
-                      totalFiles={sortedFiles.length}
-                      onStop={() => stopFile(job.id, file.id)}
-                      onRerun={() => rerunFile(job.id, file.id)}
-                      onMoveUp={() => moveFileUp(job.id, file.id)}
-                      onMoveDown={() => moveFileDown(job.id, file.id)}
-                    />
-                  ))}
-                </div>
-              </>
-            ) : (
-              <div className="text-center py-8 text-slate-400">
-                <p>No files in this batch</p>
-              </div>
-            )}
-          </div>
-        )}
       </div>
     );
   };
@@ -4922,8 +8061,8 @@ Recommendations:
   <div className="space-y-4 min-w-0">
     <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-center gap-3">
         <div className="min-w-0">
-      <h1 className="text-2xl sm:text-3xl font-bold">Job Management</h1>
-          <p className="text-slate-500 mt-1 text-sm sm:text-base">Manage and monitor all test jobs</p>
+      <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-slate-100">Job Management</h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-1 text-sm sm:text-base">Manage and monitor all test jobs</p>
         </div>
       <div className="flex flex-wrap gap-2 sm:gap-3 items-center">
         {/* Select All: เลือก column ก่อน แล้วกด Select All จะเลือกเฉพาะ batch ใน column นั้น */}
@@ -4940,7 +8079,7 @@ Recommendations:
                 value={selectAllColumn}
                 onChange={(e) => setSelectAllColumn(e.target.value)}
                 className="px-2 py-1.5 border border-slate-300 rounded-lg text-sm font-semibold bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
-                title="เลือก column ก่อนแล้วกด Select All"
+                title="Select column first then click Select All"
               >
                 <option value="pending">Pending</option>
                 <option value="running">Running</option>
@@ -5196,6 +8335,7 @@ Recommendations:
 const BoardsPage = () => {
   const {
     boards,
+    jobs,
     fleetViewMode,
     fleetFilters,
     selectedBoards,
@@ -5206,10 +8346,59 @@ const BoardsPage = () => {
     clearBoardSelection,
     runBoardBatchAction,
     deleteBoards,
+    refreshBoards,
     loading,
     errors
   } = useTestStore();
   const addToast = useTestStore((state) => state.addToast);
+
+  const notSupportedMessage = 'This feature is pending backend support';
+
+  const handleViewDetails = (board) => {
+    setSelectedBoard(board);
+    setShowDetails(true);
+  };
+
+  const handlePauseQueue = async (board) => {
+    try {
+      await api.pauseBoardQueue(board.id);
+      await refreshBoards();
+      addToast({ type: 'success', message: `Paused queue: ${board.name || board.id}` });
+    } catch (e) {
+      addToast({ type: 'warning', message: notSupportedMessage });
+    }
+  };
+
+  const handleResumeQueue = async (board) => {
+    try {
+      await api.resumeBoardQueue(board.id);
+      await refreshBoards();
+      addToast({ type: 'success', message: `Resumed queue: ${board.name || board.id}` });
+    } catch (e) {
+      addToast({ type: 'warning', message: notSupportedMessage });
+    }
+  };
+
+  const handleRestartBoard = async (board) => {
+    try {
+      await api.rebootBoard(board.id);
+      await refreshBoards();
+      addToast({ type: 'success', message: `Restart sent: ${board.name || board.id}` });
+    } catch (e) {
+      addToast({ type: 'error', message: 'Restart failed' });
+    }
+  };
+
+  const handleShutdownBoard = async (board) => {
+    if (!window.confirm(`Stop board ${board.name || board.id}?`)) return;
+    try {
+      await api.shutdownBoard(board.id);
+      await refreshBoards();
+      addToast({ type: 'success', message: `Stop command sent: ${board.name || board.id}` });
+    } catch (e) {
+      addToast({ type: 'warning', message: notSupportedMessage });
+    }
+  };
   
   const [selectedBoard, setSelectedBoard] = useState(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -5219,6 +8408,7 @@ const BoardsPage = () => {
   const [showAddBoard, setShowAddBoard] = useState(false);
   const [isDeletingSelected, setIsDeletingSelected] = useState(false);
   const [isBatchActionRunning, setIsBatchActionRunning] = useState(false);
+  const [isRefreshingBoards, setIsRefreshingBoards] = useState(false);
   
   // Filter boards
   const filteredBoards = boards.filter(board => {
@@ -5302,8 +8492,8 @@ const BoardsPage = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-center gap-3">
         <div className="min-w-0">
-          <h1 className="text-2xl sm:text-3xl font-bold">Fleet Manager</h1>
-          <p className="text-slate-500 mt-1 text-sm sm:text-base">Manage {boards.length} boards across the facility</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-slate-100">Fleet Manager</h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-1 text-sm sm:text-base">Manage {boards.length} boards across the facility</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <button
@@ -5332,20 +8522,38 @@ const BoardsPage = () => {
           >
             <List size={20} />
           </button>
+          <button
+            onClick={async () => {
+              if (isRefreshingBoards) return;
+              setIsRefreshingBoards(true);
+              await refreshBoards();
+              setIsRefreshingBoards(false);
+            }}
+            disabled={isRefreshingBoards}
+            title="Refresh board list"
+            className={`p-2 rounded-lg transition-all flex items-center gap-1.5 ${
+              isRefreshingBoards
+                ? 'bg-slate-100 text-slate-400 cursor-wait'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600'
+            }`}
+          >
+            <RefreshCw size={20} className={isRefreshingBoards ? 'animate-spin' : ''} />
+            <span className="text-sm font-semibold hidden sm:inline">Refresh</span>
+          </button>
         </div>
       </div>
       
       {/* Smart Filtering */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 flex flex-wrap items-center gap-4">
+      <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2">
-          <Filter size={18} className="text-slate-400" />
-          <span className="text-sm font-bold text-slate-600">Filters:</span>
+          <Filter size={18} className="text-slate-400 dark:text-slate-500" />
+          <span className="text-sm font-bold text-slate-600 dark:text-slate-300">Filters:</span>
         </div>
         
         <select
           value={fleetFilters.status || ''}
           onChange={(e) => setFleetFilter('status', e.target.value || null)}
-          className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-3 py-1.5 border border-slate-200 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value="">All Status</option>
           {uniqueStatuses.map(s => (
@@ -5356,7 +8564,7 @@ const BoardsPage = () => {
         <select
           value={fleetFilters.model || ''}
           onChange={(e) => setFleetFilter('model', e.target.value || null)}
-          className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-3 py-1.5 border border-slate-200 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value="">All Models</option>
           {uniqueModels.map(m => (
@@ -5367,7 +8575,7 @@ const BoardsPage = () => {
         <select
           value={fleetFilters.firmware || ''}
           onChange={(e) => setFleetFilter('firmware', e.target.value || null)}
-          className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="px-3 py-1.5 border border-slate-200 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value="">All Firmware</option>
           {uniqueFirmwares.map(f => (
@@ -5390,12 +8598,12 @@ const BoardsPage = () => {
         
         {selectedBoards.length > 0 && (
           <div className="ml-auto flex items-center gap-2">
-            <span className="text-sm text-slate-600 font-bold">
+            <span className="text-sm text-slate-600 dark:text-slate-300 font-bold">
               {selectedBoards.length} selected
             </span>
             <button
               onClick={clearBoardSelection}
-              className="text-xs text-slate-500 hover:text-slate-700"
+              className="text-xs text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
             >
               Clear
             </button>
@@ -5466,7 +8674,7 @@ const BoardsPage = () => {
       )}
 
       {(!isBoardsLoading && !hasBoardError && filteredBoards.length === 0) && (
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-slate-500">
+        <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-10 text-center text-slate-500 dark:text-slate-400">
           No boards found
         </div>
       )}
@@ -5478,10 +8686,16 @@ const BoardsPage = () => {
             <BoardCard
               key={board.id}
               board={board}
+              jobs={jobs || []}
               selected={selectedBoards.includes(board.id)}
               onSelect={() => toggleBoardSelection(board.id)}
               onClick={() => handleBoardClick(board)}
               onRightClick={(e) => handleRightClick(e, board)}
+              onViewDetails={handleViewDetails}
+              onPauseQueue={handlePauseQueue}
+              onResumeQueue={handleResumeQueue}
+              onRestart={handleRestartBoard}
+              onShutdown={handleShutdownBoard}
             />
       ))}
     </div>
@@ -5537,7 +8751,7 @@ const BoardsPage = () => {
             }}
           />
           <div
-            className="fixed z-50 bg-white border border-slate-200 rounded-lg shadow-xl py-2 min-w-[200px]"
+            className="fixed z-50 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl py-2 min-w-[200px]"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
             <button
@@ -5557,14 +8771,14 @@ const BoardsPage = () => {
                 setShowContextMenu(false);
                 setContextMenu(null);
               }}
-              className="w-full text-left px-4 py-2 text-sm hover:bg-red-50 text-red-700 flex items-center gap-2"
+              className="w-full text-left px-4 py-2 text-sm hover:bg-red-50 dark:hover:bg-red-900/40 text-red-700 dark:text-red-300 flex items-center gap-2"
             >
               <XCircle size={16} />
               Delete Selected
             </button>
             <button
               onClick={() => handleBatchAction('Reboot Selected')}
-              className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2"
+              className="w-full text-left px-4 py-2 text-sm text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
             >
               <RefreshCw size={16} />
               Reboot Selected
@@ -6135,49 +9349,49 @@ Summary:
                   </button>
                   
                   {downloadMenuOpen[job.id] && (
-                    <div className="absolute right-0 top-full mt-1 bg-white rounded-lg border border-slate-200 shadow-xl z-50 min-w-[200px]">
+                    <div className="absolute right-0 top-full mt-1 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-xl z-50 min-w-[200px]">
                       <div className="py-1">
                         <button
                           onClick={(e) => handleDownload(e, job.id, 'json')}
-                          className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2"
+                          className="w-full text-left px-4 py-2 text-sm text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
                         >
-                          <FileJson size={16} className="text-blue-600" />
+                          <FileJson size={16} className="text-blue-600 dark:text-blue-400" />
                           <span>Download JSON</span>
                         </button>
                         <button
                           onClick={(e) => handleDownload(e, job.id, 'csv')}
-                          className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2"
+                          className="w-full text-left px-4 py-2 text-sm text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
                         >
-                          <FileCode size={16} className="text-green-600" />
+                          <FileCode size={16} className="text-green-600 dark:text-green-400" />
                           <span>Download CSV</span>
                         </button>
                         <button
                           onClick={(e) => handleDownload(e, job.id, 'html')}
-                          className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2"
+                          className="w-full text-left px-4 py-2 text-sm text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
                         >
-                          <FileCode size={16} className="text-purple-600" />
+                          <FileCode size={16} className="text-purple-600 dark:text-purple-400" />
                           <span>Download HTML Report</span>
                         </button>
                         <button
                           onClick={(e) => handleDownload(e, job.id, 'pdf')}
-                          className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2"
+                          className="w-full text-left px-4 py-2 text-sm text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
                         >
-                          <FileCode size={16} className="text-red-600" />
+                          <FileCode size={16} className="text-red-600 dark:text-red-400" />
                           <span>Download PDF Report</span>
                         </button>
                         <button
                           onClick={(e) => handleDownload(e, job.id, 'log')}
-                          className="w-full text-left px-4 py-2 text-sm hover:bg-slate-50 flex items-center gap-2"
+                          className="w-full text-left px-4 py-2 text-sm text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
                         >
-                          <FileCode size={16} className="text-orange-600" />
+                          <FileCode size={16} className="text-orange-600 dark:text-orange-400" />
                           <span>Download Logs</span>
                         </button>
                         {hasFailedFiles(job) && (
                           <>
-                            <div className="border-t border-slate-200 my-1"></div>
+                            <div className="border-t border-slate-200 dark:border-slate-700 my-1"></div>
                             <button
                               onClick={(e) => handleDownload(e, job.id, 'failed')}
-                              className="w-full text-left px-4 py-2 text-sm hover:bg-red-50 flex items-center gap-2 text-red-600 font-semibold"
+                              className="w-full text-left px-4 py-2 text-sm text-slate-800 dark:text-slate-200 hover:bg-red-50 dark:hover:bg-red-900/40 flex items-center gap-2 text-red-600 dark:text-red-400 font-semibold"
                             >
                               <AlertCircle size={16} className="text-red-600" />
                               <span>Download Failed Files ({getFailedFilesCount(job)})</span>
@@ -6199,52 +9413,60 @@ Summary:
 
 // --- HELPER COMPONENTS ---
 
-const StatCard = ({ icon, label, value, sub }) => (
-  <div className="bg-white px-4 py-3 rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
+const StatCard = ({ icon, label, value, sub, onClick }) => {
+  const isClickable = typeof onClick === 'function';
+  return (
+  <div
+    className={`bg-white dark:bg-slate-900 px-4 py-3 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm transition-shadow ${
+      isClickable ? 'cursor-pointer hover:shadow-md hover:border-blue-200 dark:hover:border-slate-600' : 'hover:shadow-md'
+    }`}
+    onClick={onClick}
+  >
     <div className="flex items-center gap-3 mb-3">
-      <div className="p-2.5 bg-slate-50 rounded-xl">{icon}</div>
-      <div className="text-2xl font-bold">{value}</div>
+      <div className="p-2.5 bg-slate-50 dark:bg-slate-800 rounded-xl">{icon}</div>
+      <div className="text-2xl font-bold text-slate-900 dark:text-slate-100">{value}</div>
     </div>
-    <div className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.18em]">{label}</div>
-    <div className="text-[11px] text-slate-400 mt-1 italic">{sub}</div>
+    <div className="text-[11px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-[0.18em]">{label}</div>
+    <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-1 italic">{sub}</div>
   </div>
-);
+  );
+};
 
 const ActiveJobCard = ({ job, onClick }) => {
   return (
     <div 
-      className="p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-blue-300 hover:shadow-md transition-all cursor-pointer"
+      className="p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 hover:border-blue-300 dark:hover:border-slate-600 hover:shadow-md transition-all cursor-pointer"
       onClick={onClick}
     >
       <div className="flex justify-between items-start mb-3">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-bold text-slate-700">Batch #{job.id}</span>
+            <span className="font-bold text-slate-700 dark:text-slate-200">Batch #{job.id}</span>
             <span className={`text-xs font-bold px-2 py-0.5 rounded ${
-              job.status === 'running' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-700'
+              job.status === 'running' ? 'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300' : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
             }`}>
               {job.status}
             </span>
           </div>
-          <div className="text-sm text-slate-600">{job.name}</div>
-          <div className="text-xs text-slate-400 mt-1">
+          <div className="text-sm text-slate-600 dark:text-slate-300">{job.name}</div>
+          <div className="text-xs text-slate-400 dark:text-slate-400 mt-1">
             {job.totalFiles} Files | {job.firmware} | Boards: {job.boards?.join(', ')}
           </div>
         </div>
-        <span className="text-sm font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-lg">
+        <span className="text-sm font-bold text-blue-600 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/40 px-3 py-1 rounded-lg">
           {job.progress}%
         </span>
       </div>
       <div className="mb-2">
-        <div className="flex justify-between text-xs text-slate-500 mb-1">
+        <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 mb-1">
           <span>Progress: {job.completedFiles}/{job.totalFiles} files completed</span>
           <span>{job.progress}%</span>
     </div>
-    <div className="h-2 w-full bg-slate-200 rounded-full overflow-hidden">
+    <div className="h-2 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
           <div className="h-full bg-blue-600 transition-all duration-1000" style={{ width: `${job.progress}%` }}></div>
         </div>
       </div>
-      <div className="text-xs text-slate-400 mt-2">
+      <div className="text-xs text-slate-400 dark:text-slate-400 mt-2">
         ⏱ Started: {job.startedAt} | ETA: ~{Math.ceil((100 - job.progress) / 5)} min
     </div>
   </div>
@@ -6402,7 +9624,7 @@ const NotificationItem = ({ notification, onClick }) => {
 
 // File Row Component (for JobsPage)
 // Test Cases Progress View Component
-const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onSearchChange, onStopFile, onRerunFile }) => {
+const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onSearchChange, onStopFile, onRerunFile, onRerunFailedFile }) => {
   const runningFileRef = useRef(null);
   const [selectedFileIds, setSelectedFileIds] = useState([]);
   const [showDetails, setShowDetails] = useState(false); // collapse details to get more space for file list / drop
@@ -6639,6 +9861,7 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
               <div className="divide-y divide-slate-100">
                 {filteredFiles.map((file, index) => {
                   const isRunning = file.status === 'running';
+                  const isFailed = file.result === 'fail' || file.status === 'error';
                   const fileIndex = files.findIndex(f => f.id === file.id);
                   return (
                     <div
@@ -6751,6 +9974,16 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                         </div>
                         
                         {/* Actions */}
+                        {isFailed && onRerunFailedFile && (
+                          <button
+                            onClick={() => onRerunFailedFile([file.id])}
+                            className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-all flex items-center gap-1"
+                            title="Re-run this failed test case (new batch in Running)"
+                          >
+                            <Play size={14} />
+                            Re-run
+                          </button>
+                        )}
                         {isRunning && (
                           <button
                             onClick={() => onStopFile(file.id)}
@@ -6795,7 +10028,7 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
   );
 };
 
-const FileRow = ({ file, jobId, index, totalFiles, onStop, onRerun, onMoveUp, onMoveDown, job }) => {
+const FileRow = ({ file, jobId, index, totalFiles, onStop, onRerun, onRerunFailed, onMoveUp, onMoveDown, job }) => {
   const getStatusColor = (status) => {
     switch(status) {
       case 'completed': return 'bg-emerald-100 text-emerald-700';
@@ -6922,14 +10155,26 @@ ${file.notes || 'No additional notes available.'}
       {/* Actions */}
       <div className="flex items-center gap-2 shrink-0">
         {isFailed && (
-          <button
-            onClick={exportErrorLog}
-            className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 transition-all flex items-center gap-1"
-            title="Download error log for this test case"
-          >
-            <Download size={14} />
-            Error Log
-          </button>
+          <>
+            <button
+              onClick={exportErrorLog}
+              className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 transition-all flex items-center gap-1"
+              title="Download error log for this test case"
+            >
+              <Download size={14} />
+              Error Log
+            </button>
+            {onRerunFailed && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onRerunFailed(); }}
+                className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-all flex items-center gap-1"
+                title="Re-run this failed test case (new batch in Running)"
+              >
+                <Play size={14} />
+                Re-run
+              </button>
+            )}
+          </>
         )}
         {file.status === 'running' && (
           <button
@@ -7054,29 +10299,59 @@ const BatchDetailsModal = ({ batch, onClose }) => (
 );
 
 // Board Card (Grid View)
-const BoardCard = ({ board, selected, onSelect, onClick, onRightClick }) => {
+const BoardCard = ({ board, jobs = [], selected, onSelect, onClick, onRightClick, onViewDetails, onPauseQueue, onResumeQueue, onRestart, onShutdown }) => {
+  const jobId = (board.currentJob || '').replace(/^Batch #/, '');
+  const currentJob = jobId ? (jobs || []).find(j => j.id === jobId) : null;
+  const currentJobLabel = currentJob
+    ? `${(currentJob.configName || currentJob.name || 'Batch').trim()} · batch #${currentJob.id}`
+    : (board.currentJob || 'Idle');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+    };
+    if (menuOpen) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [menuOpen]);
+
   const getStatusColor = (status) => {
     switch(status) {
-      case 'online': return 'bg-emerald-100 text-emerald-700 border-emerald-200';
-      case 'busy': return 'bg-blue-100 text-blue-700 border-blue-200';
-      case 'error': return 'bg-red-100 text-red-700 border-red-200';
-      default: return 'bg-slate-100 text-slate-700 border-slate-200';
+      case 'online': return 'bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800';
+      case 'busy': return 'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800';
+      case 'error': return 'bg-red-100 dark:bg-red-900/50 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800';
+      default: return 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-600';
     }
   };
   
   return (
     <div
-      className={`bg-white p-6 rounded-2xl border-2 transition-all hover:shadow-xl cursor-pointer relative ${
+      className={`bg-white p-4 rounded-xl border-2 transition-all hover:shadow-lg cursor-pointer relative ${
         board.status === 'error' 
-          ? 'border-red-200 bg-red-50/20' 
+          ? 'border-red-200 bg-red-50/20 dark:border-slate-600 dark:bg-slate-800' 
           : board.status === 'busy'
-          ? 'border-blue-200 bg-blue-50/10'
-          : 'border-emerald-200 bg-white'
+          ? 'border-blue-200 bg-blue-50/10 dark:border-slate-600 dark:bg-slate-800'
+          : 'border-emerald-200 bg-white dark:border-slate-700 dark:bg-slate-800'
       } ${selected ? 'ring-2 ring-blue-500' : ''}`}
       onClick={onClick}
       onContextMenu={onRightClick}
     >
-      <div className="absolute top-4 right-4">
+      <div className="absolute top-3 right-3 flex items-center gap-2 flex-nowrap" ref={menuRef}>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
+          className="p-1 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 transition-colors"
+          title="เมนูบอร์ด"
+          aria-label="Board menu"
+        >
+          <Settings size={16} />
+        </button>
+        <span className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${getStatusColor(board.status)}`}>
+          {board.status}
+        </span>
         <input
           type="checkbox"
           checked={selected}
@@ -7085,57 +10360,92 @@ const BoardCard = ({ board, selected, onSelect, onClick, onRightClick }) => {
             onSelect();
           }}
           onClick={(e) => e.stopPropagation()}
-          className="w-5 h-5 rounded border-slate-300 text-blue-600"
+          className="w-4 h-4 rounded border-slate-300 dark:border-slate-600 text-blue-600"
         />
+        {menuOpen && (
+          <div
+            className="absolute right-0 top-full mt-1 w-56 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-xl z-50 py-1"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => { onViewDetails?.(board); setMenuOpen(false); }}
+              className="w-full text-left px-4 py-2 text-sm text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
+            >
+              <Eye size={16} className="text-slate-500" />
+              View Logs / Details
+            </button>
+            <button
+              type="button"
+              onClick={() => { (board.queuePaused ? onResumeQueue : onPauseQueue)?.(board); setMenuOpen(false); }}
+              className="w-full text-left px-4 py-2 text-sm text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
+            >
+              {board.queuePaused ? <Play size={16} className="text-slate-500" /> : <Pause size={16} className="text-slate-500" />}
+              {board.queuePaused ? 'Resume Queue' : 'Pause Queue'}
+            </button>
+            <div className="border-t border-slate-200 dark:border-slate-700 my-1" />
+            <button
+              type="button"
+              onClick={() => { onRestart?.(board); setMenuOpen(false); }}
+              className="w-full text-left px-4 py-2 text-sm text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/30 flex items-center gap-2 font-medium"
+            >
+              <RefreshCw size={16} />
+              Restart Board
+            </button>
+            <button
+              type="button"
+              onClick={() => { onShutdown?.(board); setMenuOpen(false); }}
+              className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 flex items-center gap-2 font-medium"
+            >
+              <XCircle size={16} />
+              Shutdown Board
+            </button>
+          </div>
+        )}
       </div>
       
-      <div className="flex justify-between items-center mb-6">
-        <div className="h-12 w-12 bg-slate-100 rounded-2xl flex items-center justify-center font-bold text-slate-600">
-          #{board.id}
-        </div>
-        <div className="flex items-center gap-2">
+      <div className="flex justify-between items-center mb-4 min-w-0">
+        <div className="min-w-0 flex items-center gap-2">
+          <span className="font-bold text-slate-800 dark:text-slate-100 text-base">#{board.id}</span>
           {board.tag && (
-            <span className="px-2 py-1 rounded-full text-[10px] font-bold bg-purple-100 text-purple-700">
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 shrink-0">
               {board.tag}
             </span>
           )}
-          <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase ${getStatusColor(board.status)}`}>
-            {board.status}
-          </span>
         </div>
       </div>
       
-      <div className="space-y-2 text-sm">
+      <div className="space-y-1.5 text-xs">
         <div className="flex justify-between">
-          <span className="text-slate-400">IP:</span>
-          <span className="font-bold">{board.ip}</span>
+          <span className="text-slate-400 dark:text-slate-500">IP:</span>
+          <span className="font-bold text-slate-800 dark:text-slate-200">{board.ip}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-slate-400">Model:</span>
-          <span className="font-bold">{board.model}</span>
+          <span className="text-slate-400 dark:text-slate-500">Model:</span>
+          <span className="font-bold text-slate-800 dark:text-slate-200">{board.model}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-slate-400">Firmware:</span>
-          <span className="font-bold">{board.firmware}</span>
+          <span className="text-slate-400 dark:text-slate-500">Firmware:</span>
+          <span className="font-bold text-slate-800 dark:text-slate-200">{board.firmware}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-slate-400">Current Job:</span>
-          <span className="font-bold">{board.currentJob || 'Idle'}</span>
+          <span className="text-slate-400 dark:text-slate-500">Current Job:</span>
+          <span className="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[60%]" title={currentJobLabel}>{currentJobLabel}</span>
         </div>
         {board.connections && board.connections.length > 0 && (
           <div className="flex flex-wrap gap-1 pt-1">
             {board.connections.slice(0, 3).map((c, idx) => (
-              <span key={idx} className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700">{c}</span>
+              <span key={idx} className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300">{c}</span>
             ))}
             {board.connections.length > 3 && (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600">+{board.connections.length - 3}</span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">+{board.connections.length - 3}</span>
             )}
           </div>
         )}
         {board.voltage && (
           <div className="flex justify-between">
-            <span className="text-slate-400">Voltage:</span>
-            <span className="font-bold">{board.voltage}V</span>
+            <span className="text-slate-400 dark:text-slate-500">Voltage:</span>
+            <span className="font-bold text-slate-800 dark:text-slate-200">{board.voltage}V</span>
           </div>
         )}
       </div>
@@ -7198,42 +10508,88 @@ const BoardTableRow = ({ board, selected, onSelect, onClick, onSSHClick }) => {
 
 // Device Details Side Panel
 const DeviceDetailsPanel = ({ board, onClose, onSSHClick }) => {
-  const { updateBoardTag, updateBoardConnections, deleteBoard } = useTestStore();
+  const { updateBoardTag, updateBoardConnections, deleteBoard, jobs: storeJobs } = useTestStore();
+  const jobs = storeJobs || [];
+  const jobId = (board.currentJob || '').replace(/^Batch #/, '');
+  const currentJob = jobId ? jobs.find(j => j.id === jobId) : null;
+  const currentJobLabel = currentJob
+    ? `${(currentJob.configName || currentJob.name || 'Batch').trim()} · batch #${currentJob.id}`
+    : (board.currentJob || 'Idle');
   const addToast = useTestStore((state) => state.addToast);
   const [boardTag, setBoardTag] = useState(board.tag || '');
   const [connectionsText, setConnectionsText] = useState((board.connections || []).join(', '));
   const [isEditing, setIsEditing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [statusDetail, setStatusDetail] = useState(null);
+  const [statusLoading, setStatusLoading] = useState(true);
 
   useEffect(() => {
     setBoardTag(board.tag || '');
     setConnectionsText((board.connections || []).join(', '));
   }, [board]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setStatusLoading(true);
+    setStatusDetail(null);
+    api.getBoardStatus(board.id)
+      .then((data) => { if (!cancelled) setStatusDetail(data); })
+      .catch(() => { if (!cancelled) setStatusDetail(null); })
+      .finally(() => { if (!cancelled) setStatusLoading(false); });
+    return () => { cancelled = true; };
+  }, [board.id]);
+
   return (
     <>
       <div className="fixed inset-0 bg-black/50 z-50" onClick={onClose} />
-      <div className="fixed right-0 top-0 h-full w-[500px] bg-white shadow-2xl z-50 overflow-y-auto">
-        <div className="p-6 border-b border-slate-200 sticky top-0 bg-white">
+      <div className="fixed right-0 top-0 h-full w-[500px] bg-white dark:bg-slate-900 shadow-2xl z-50 overflow-y-auto">
+        <div className="p-6 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-900">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-2xl font-bold">{board.name} Details</h2>
-            <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg">
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{board.name} Details</h2>
+            <button onClick={onClose} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg text-slate-600 dark:text-slate-400">
               <X size={24} />
             </button>
           </div>
           <div className={`inline-block px-3 py-1 rounded-full text-xs font-bold uppercase ${
-            board.status === 'online' ? 'bg-emerald-100 text-emerald-700' :
-            board.status === 'busy' ? 'bg-blue-100 text-blue-700' :
-            'bg-red-100 text-red-700'
+            board.status === 'online' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300' :
+            board.status === 'busy' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300' :
+            'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300'
           }`}>
             {board.status}
           </div>
         </div>
         
         <div className="p-6 space-y-6">
-          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+          {/* RAM / Storage / CPU (from GET /boards/:id/status - existing backend) */}
+          <div className="bg-slate-50 dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+            <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase mb-3">System resources</h3>
+            {statusLoading ? (
+              <div className="text-sm text-slate-500 dark:text-slate-400">กำลังโหลด...</div>
+            ) : (
+              <div className="grid grid-cols-3 gap-3">
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-600 text-center">
+                  <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide">RAM</div>
+                  <div className="text-lg font-bold text-slate-800 dark:text-slate-200 mt-1">
+                    {statusDetail?.ram_usage != null ? `${Math.round(Number(statusDetail.ram_usage))}%` : '—'}
+                  </div>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-600 text-center">
+                  <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide">Storage</div>
+                  <div className="text-lg font-bold text-slate-800 dark:text-slate-200 mt-1">—</div>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-600 text-center">
+                  <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide">CPU</div>
+                  <div className="text-lg font-bold text-slate-800 dark:text-slate-200 mt-1">
+                    {statusDetail?.cpu_load != null ? `${Math.round(Number(statusDetail.cpu_load))}%` : '—'}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-slate-50 dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
             <div className="flex justify-between items-center mb-3">
-              <h3 className="text-sm font-bold text-slate-700">Tag & Connections</h3>
+              <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300">Tag & Connections</h3>
               {!isEditing ? (
                 <button
                   onClick={() => setIsEditing(true)}
@@ -7326,7 +10682,7 @@ const DeviceDetailsPanel = ({ board, onClose, onSSHClick }) => {
               </div>
               <div className="flex justify-between p-3 bg-slate-50 rounded-lg">
                 <span className="text-slate-600">Current Job</span>
-                <span className="font-bold">{board.currentJob || 'Idle'}</span>
+                <span className="font-bold truncate max-w-[70%]" title={currentJobLabel}>{currentJobLabel}</span>
               </div>
             </div>
           </div>

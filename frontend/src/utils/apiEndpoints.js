@@ -28,6 +28,9 @@ export const API_ENDPOINTS = {
   BOARD_DELETE: (id) => `${API_BASE_URL}/boards/${id}`,
   BOARD_TELEMETRY: (id) => `${API_BASE_URL}/boards/${id}/telemetry`,
   BOARD_REBOOT: (id) => `${API_BASE_URL}/boards/${id}/reboot`,
+  BOARD_SHUTDOWN: (id) => `${API_BASE_URL}/boards/${id}/shutdown`,
+  BOARD_PAUSE_QUEUE: (id) => `${API_BASE_URL}/boards/${id}/pause-queue`,
+  BOARD_RESUME_QUEUE: (id) => `${API_BASE_URL}/boards/${id}/resume-queue`,
   BOARD_UPDATE_FIRMWARE: (id) => `${API_BASE_URL}/boards/${id}/firmware`,
   BOARD_SELF_TEST: (id) => `${API_BASE_URL}/boards/${id}/self-test`,
   BOARD_BATCH_ACTIONS: `${API_BASE_URL}/boards/batch`,
@@ -64,7 +67,13 @@ export const API_ENDPOINTS = {
   FILES: `${API_BASE_URL}/files`,
   FILE_BY_ID: (id) => `${API_BASE_URL}/files/${id}`,
   FILE_DELETE: (id) => `${API_BASE_URL}/files/${id}`,
-  
+
+  // Set-scoped files (บันทึก/กู้คืนไฟล์ตาม Set)
+  SETS_SAVE_FILES: (setId) => `${API_BASE_URL}/sets/${setId}/files/save`,
+  SETS_LIST_FILES: (setId) => `${API_BASE_URL}/sets/${setId}/files`,
+  SETS_RESTORE_TO_LIBRARY: (setId) => `${API_BASE_URL}/sets/${setId}/files/restore-to-library`,
+  SETS_DELETE: (setId) => `${API_BASE_URL}/sets/${setId}`,
+
   // Notifications
   NOTIFICATIONS: `${API_BASE_URL}/notifications`,
   NOTIFICATION_MARK_READ: (id) => `${API_BASE_URL}/notifications/${id}/read`,

@@ -48,6 +48,167 @@ const saveTestCommands = (commands) => {
   }
 };
 
+// ============================================
+// PROFILE SYSTEM (no login/logout)
+// ============================================
+const PROFILES_LIST_KEY = 'app_profiles_list';
+const ACTIVE_PROFILE_ID_KEY = 'app_active_profile_id';
+const PROFILE_DATA_PREFIX = 'app_profile_';
+
+// Load profiles list
+const loadProfilesList = () => {
+  try {
+    const saved = localStorage.getItem(PROFILES_LIST_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed : [];
+    }
+  } catch (e) {
+    console.error('Failed to load profiles list', e);
+  }
+  return [];
+};
+
+// Save profiles list
+const saveProfilesList = (list) => {
+  try {
+    localStorage.setItem(PROFILES_LIST_KEY, JSON.stringify(list));
+  } catch (e) {
+    console.error('Failed to save profiles list', e);
+  }
+};
+
+// Load a profile by id
+const loadProfile = (profileId) => {
+  try {
+    const saved = localStorage.getItem(`${PROFILE_DATA_PREFIX}${profileId}`);
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (e) {
+    console.error(`Failed to load profile ${profileId}`, e);
+  }
+  return null;
+};
+
+// Save a profile
+const saveProfile = (profileId, profileData) => {
+  try {
+    const updated = { ...profileData, updatedAt: new Date().toISOString() };
+    localStorage.setItem(`${PROFILE_DATA_PREFIX}${profileId}`, JSON.stringify(updated));
+  } catch (e) {
+    console.error(`Failed to save profile ${profileId}`, e);
+  }
+};
+
+// Get active profile id (or create default)
+const getActiveProfileId = () => {
+  try {
+    const saved = localStorage.getItem(ACTIVE_PROFILE_ID_KEY);
+    if (saved) return saved;
+  } catch (e) {
+    console.error('Failed to get active profile id', e);
+  }
+  // No active profile - check if we have old savedTestCases to migrate
+  const oldData = localStorage.getItem('appSavedTestCases');
+  if (oldData) {
+    try {
+      const oldCases = JSON.parse(oldData);
+      if (Array.isArray(oldCases) && oldCases.length > 0) {
+        // Migrate to default profile
+        const defaultId = 'default';
+        const defaultProfile = {
+          id: defaultId,
+          name: 'Default',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          savedTestCases: oldCases,
+          savedTestCaseSets: [],
+          preferences: {},
+        };
+        saveProfile(defaultId, defaultProfile);
+        saveProfilesList([{ id: defaultId, name: 'Default' }]);
+        localStorage.setItem(ACTIVE_PROFILE_ID_KEY, defaultId);
+        localStorage.removeItem('appSavedTestCases'); // Clean up old data
+        return defaultId;
+      }
+    } catch (e) {
+      console.error('Failed to migrate old test cases', e);
+    }
+  }
+  // Create default profile
+  const defaultId = 'default';
+  const defaultProfile = {
+    id: defaultId,
+    name: 'Default',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    savedTestCases: [],
+    savedTestCaseSets: [],
+    preferences: {},
+  };
+  saveProfile(defaultId, defaultProfile);
+  saveProfilesList([{ id: defaultId, name: 'Default' }]);
+  localStorage.setItem(ACTIVE_PROFILE_ID_KEY, defaultId);
+  return defaultId;
+};
+
+// Load saved test cases from active profile
+const loadSavedTestCases = () => {
+  const activeId = getActiveProfileId();
+  const profile = loadProfile(activeId);
+  return profile?.savedTestCases || [];
+  
+};
+
+// Save saved test cases to active profile
+const saveSavedTestCases = (list) => {
+  const activeId = getActiveProfileId();
+  const profile = loadProfile(activeId);
+  if (profile) {
+    saveProfile(activeId, { ...profile, savedTestCases: list });
+  } else {
+    // Fallback: create profile if missing
+    const newProfile = {
+      id: activeId,
+      name: 'Default',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      savedTestCases: list,
+      savedTestCaseSets: [],
+      preferences: {},
+    };
+    saveProfile(activeId, newProfile);
+  }
+};
+
+// Load saved test case sets (collections) from active profile
+const loadSavedTestCaseSets = () => {
+  const activeId = getActiveProfileId();
+  const profile = loadProfile(activeId);
+  return profile?.savedTestCaseSets || [];
+};
+
+// Save saved test case sets to active profile
+const saveSavedTestCaseSets = (sets) => {
+  const activeId = getActiveProfileId();
+  const profile = loadProfile(activeId);
+  if (profile) {
+    saveProfile(activeId, { ...profile, savedTestCaseSets: sets });
+  } else {
+    const newProfile = {
+      id: activeId,
+      name: 'Default',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      savedTestCases: [],
+      savedTestCaseSets: sets,
+      preferences: {},
+    };
+    saveProfile(activeId, newProfile);
+  }
+};
+
 // Helper function to format file size
 const formatFileSize = (bytes) => {
   if (bytes === 0) return '0 Bytes';
@@ -107,15 +268,26 @@ export const useTestStore = create((set, get) => ({
   uploadedFiles: [],
   vcdFiles: [],
   firmwareFiles: [],
-  
+
+  // Saved Test Cases (library) — store created test cases for selection in Run Set
+  savedTestCases: (() => loadSavedTestCases())(),
+
+  // Saved Test Case Sets — snapshot ของชุด test cases ทั้งตาราง (ไม่ต้องใช้ JSON เอง)
+  savedTestCaseSets: (() => loadSavedTestCaseSets())(),
+
+  // Profile System (no login/logout)
+  profiles: (() => loadProfilesList())(),
+  activeProfileId: (() => getActiveProfileId())(),
+
   // UI State
   theme: (() => {
-    if (typeof window === 'undefined') return 'light';
+    if (typeof window === 'undefined') return 'dark';
     try {
-      const saved = localStorage.getItem('appTheme');
-      return saved === 'dark' || saved === 'light' ? saved : 'light';
+      const KEY = 'appThemeV2';
+      const saved = localStorage.getItem(KEY);
+      return saved === 'dark' || saved === 'light' ? saved : 'dark';
     } catch {
-      return 'light';
+      return 'dark';
     }
   })(),
   fleetViewMode: 'grid', // 'grid' | 'list'
@@ -163,7 +335,7 @@ export const useTestStore = create((set, get) => ({
     const next = theme === 'dark' ? 'dark' : 'light';
     set({ theme: next });
     try {
-      localStorage.setItem('appTheme', next);
+      localStorage.setItem('appThemeV2', next);
     } catch (e) {
       console.error('Failed to persist theme', e);
     }
@@ -172,7 +344,7 @@ export const useTestStore = create((set, get) => ({
     set((state) => {
       const next = state.theme === 'dark' ? 'light' : 'dark';
       try {
-        localStorage.setItem('appTheme', next);
+        localStorage.setItem('appThemeV2', next);
       } catch (e) {
         console.error('Failed to persist theme', e);
       }
@@ -316,6 +488,377 @@ export const useTestStore = create((set, get) => ({
       firmwareFiles: state.firmwareFiles.filter(f => f.id !== id),
     }));
   },
+
+  // Saved Test Cases (library)
+  addSavedTestCase: (tc) => {
+    const id = `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const entry = { ...tc, id };
+    set((state) => {
+      const next = [...state.savedTestCases, entry];
+      saveSavedTestCases(next);
+      return { savedTestCases: next };
+    });
+    return id;
+  },
+  updateSavedTestCase: (id, updates) => set((state) => {
+    const next = state.savedTestCases.map((t) => (t.id === id ? { ...t, ...updates } : t));
+    saveSavedTestCases(next);
+    return { savedTestCases: next };
+  }),
+  removeSavedTestCase: (id) => set((state) => {
+    const next = state.savedTestCases.filter((t) => t.id !== id);
+    saveSavedTestCases(next);
+    return { savedTestCases: next };
+  }),
+  moveSavedTestCaseUp: (id) => set((state) => {
+    const list = state.savedTestCases;
+    const i = list.findIndex((t) => t.id === id);
+    if (i <= 0) return state;
+    const next = [...list];
+    [next[i - 1], next[i]] = [next[i], next[i - 1]];
+    saveSavedTestCases(next);
+    return { savedTestCases: next };
+  }),
+  moveSavedTestCaseDown: (id) => set((state) => {
+    const list = state.savedTestCases;
+    const i = list.findIndex((t) => t.id === id);
+    if (i < 0 || i >= list.length - 1) return state;
+    const next = [...list];
+    [next[i], next[i + 1]] = [next[i + 1], next[i]];
+    saveSavedTestCases(next);
+    return { savedTestCases: next };
+  }),
+  reorderSavedTestCases: (fromIndex, toIndex) => set((state) => {
+    const list = [...state.savedTestCases];
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= list.length || toIndex >= list.length) return state;
+    const [item] = list.splice(fromIndex, 1);
+    const insertAt = fromIndex < toIndex ? toIndex - 1 : toIndex;
+    list.splice(insertAt, 0, item);
+    saveSavedTestCases(list);
+    return { savedTestCases: list };
+  }),
+  duplicateSavedTestCase: (id, overrides = {}) => set((state) => {
+    const tc = state.savedTestCases.find((t) => t.id === id);
+    if (!tc) return state;
+    const newId = `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const commands = (Array.isArray(tc.commands) ? tc.commands : []).map((c, i) => ({
+      ...c,
+      id: `cmd-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 9)}`,
+    }));
+    const newTc = { ...tc, id: newId, commands, ...overrides };
+    const i = state.savedTestCases.findIndex((t) => t.id === id);
+    const next = [...state.savedTestCases];
+    next.splice(i + 1, 0, newTc);
+    saveSavedTestCases(next);
+    return { savedTestCases: next };
+  }),
+  setSavedTestCases: (list) => set((state) => {
+    const next = Array.isArray(list) ? list : [];
+    saveSavedTestCases(next);
+    return { savedTestCases: next };
+  }),
+  bulkUpdateTryCount: (ids, tryCount) => set((state) => {
+    const num = Math.max(1, Math.min(100, parseInt(tryCount, 10) || 1));
+    const next = state.savedTestCases.map((t) => (ids.includes(t.id) ? { ...t, tryCount: num } : t));
+    saveSavedTestCases(next);
+    return { savedTestCases: next };
+  }),
+
+  // Commands/sequences per test case: [{ id, type: 'mdi'|'vcd', file: string }]
+  addTestCaseCommand: (tcId, { type, file = '' }) => set((state) => {
+    const tc = state.savedTestCases.find((t) => t.id === tcId);
+    if (!tc) return state;
+    const commands = Array.isArray(tc.commands) ? tc.commands : [];
+    const id = `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const next = state.savedTestCases.map((t) =>
+      t.id === tcId ? { ...t, commands: [...commands, { id, type, file }] } : t
+    );
+    saveSavedTestCases(next);
+    return { savedTestCases: next };
+  }),
+  updateTestCaseCommand: (tcId, cmdId, updates) => set((state) => {
+    const next = state.savedTestCases.map((t) => {
+      if (t.id !== tcId || !Array.isArray(t.commands)) return t;
+      return {
+        ...t,
+        commands: t.commands.map((c) => (c.id === cmdId ? { ...c, ...updates } : c)),
+      };
+    });
+    saveSavedTestCases(next);
+    return { savedTestCases: next };
+  }),
+  removeTestCaseCommand: (tcId, cmdId) => set((state) => {
+    const next = state.savedTestCases.map((t) => {
+      if (t.id !== tcId || !Array.isArray(t.commands)) return t;
+      return { ...t, commands: t.commands.filter((c) => c.id !== cmdId) };
+    });
+    saveSavedTestCases(next);
+    return { savedTestCases: next };
+  }),
+
+  // Saved Test Case Sets (collections) — เก็บ items + fileLibrarySnapshot (รายชื่อไฟล์ที่ Set ใช้)
+  addSavedTestCaseSet: (name, items, options = {}) => set((state) => {
+    const id = `tcs-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const now = new Date().toISOString();
+    const normalizedItems = (items || []).map((t, idx) => ({
+      name: t.name || `Test case ${idx + 1}`,
+      vcdName: t.vcdName || '',
+      binName: t.binName || '',
+      linName: t.linName || '',
+      boardId: t.boardId || '',
+      tryCount: typeof t.tryCount === 'number' && t.tryCount > 0 ? t.tryCount : 1,
+      extraColumns: t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {},
+    }));
+    const fileLibrarySnapshot = options.fileLibrarySnapshot || [];
+    const entry = { id, name: name || 'Unnamed Set', createdAt: now, updatedAt: now, items: normalizedItems, fileLibrarySnapshot };
+    const next = [...state.savedTestCaseSets, entry];
+    saveSavedTestCaseSets(next);
+    return { savedTestCaseSets: next };
+  }),
+  updateSavedTestCaseSet: (id, updates) => set((state) => {
+    const next = state.savedTestCaseSets.map((s) => (s.id === id ? { ...s, ...updates, updatedAt: new Date().toISOString() } : s));
+    saveSavedTestCaseSets(next);
+    return { savedTestCaseSets: next };
+  }),
+  removeSavedTestCaseSet: (id) => set((state) => {
+    const next = state.savedTestCaseSets.filter((s) => s.id !== id);
+    saveSavedTestCaseSets(next);
+    return { savedTestCaseSets: next };
+  }),
+  reorderSavedTestCaseSets: (fromIndex, toIndex) => set((state) => {
+    const list = [...state.savedTestCaseSets];
+    if (fromIndex < 0 || fromIndex >= list.length || toIndex < 0 || toIndex >= list.length) return state;
+    const [removed] = list.splice(fromIndex, 1);
+    list.splice(toIndex, 0, removed);
+    saveSavedTestCaseSets(list);
+    return { savedTestCaseSets: list };
+  }),
+  moveSavedTestCaseSetUp: (id) => set((state) => {
+    const list = [...state.savedTestCaseSets];
+    const idx = list.findIndex((s) => s.id === id);
+    if (idx <= 0) return state;
+    [list[idx - 1], list[idx]] = [list[idx], list[idx - 1]];
+    saveSavedTestCaseSets(list);
+    return { savedTestCaseSets: list };
+  }),
+  moveSavedTestCaseSetDown: (id) => set((state) => {
+    const list = [...state.savedTestCaseSets];
+    const idx = list.findIndex((s) => s.id === id);
+    if (idx < 0 || idx >= list.length - 1) return state;
+    [list[idx], list[idx + 1]] = [list[idx + 1], list[idx]];
+    saveSavedTestCaseSets(list);
+    return { savedTestCaseSets: list };
+  }),
+  duplicateSavedTestCaseSet: (id) => set((state) => {
+    const original = state.savedTestCaseSets.find((s) => s.id === id);
+    if (!original) return state;
+    const now = new Date().toISOString();
+    const newId = `tcs-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const baseName = original.name || 'Set';
+    const newName = `${baseName} (copy)`;
+    const copy = {
+      ...original,
+      id: newId,
+      name: newName,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const next = [...state.savedTestCaseSets, copy];
+    saveSavedTestCaseSets(next);
+    return { savedTestCaseSets: next };
+  }),
+  applySavedTestCaseSet: (id) => set((state) => {
+    const setEntry = state.savedTestCaseSets.find((s) => s.id === id);
+    if (!setEntry) return state;
+    const existingNames = new Set();
+    const ensureUnique = (baseName) => {
+      const base = (baseName || 'Test case').trim() || 'Test case';
+      if (!existingNames.has(base)) return base;
+      let n = 2;
+      while (existingNames.has(`${base} (${n})`)) n++;
+      return `${base} (${n})`;
+    };
+    const list = (setEntry.items || []).map((t) => {
+      const name = ensureUnique((t.name || '').trim() || 'Test case');
+      existingNames.add(name);
+      return {
+        id: `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        name,
+        vcdName: t.vcdName || '',
+        binName: t.binName || '',
+        linName: t.linName || '',
+        boardId: t.boardId || '',
+        tryCount: typeof t.tryCount === 'number' && t.tryCount > 0 ? t.tryCount : 1,
+        extraColumns: t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {},
+      };
+    });
+    saveSavedTestCases(list);
+    return { savedTestCases: list };
+  }),
+  appendSavedTestCaseSet: (id) => set((state) => {
+    const setEntry = state.savedTestCaseSets.find((s) => s.id === id);
+    if (!setEntry) return state;
+    const existingNames = new Set(state.savedTestCases.map((t) => (t.name || '').trim()).filter(Boolean));
+    const ensureUnique = (baseName) => {
+      const base = (baseName || 'Test case').trim() || 'Test case';
+      if (!existingNames.has(base)) return base;
+      let n = 2;
+      while (existingNames.has(`${base} (${n})`)) n++;
+      return `${base} (${n})`;
+    };
+    const appended = (setEntry.items || []).map((t) => {
+      const name = ensureUnique((t.name || '').trim() || 'Test case');
+      existingNames.add(name);
+      return {
+        id: `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        name,
+        vcdName: t.vcdName || '',
+        binName: t.binName || '',
+        linName: t.linName || '',
+        boardId: t.boardId || '',
+        tryCount: typeof t.tryCount === 'number' && t.tryCount > 0 ? t.tryCount : 1,
+        extraColumns: t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {},
+      };
+    });
+    const next = [...state.savedTestCases, ...appended];
+    saveSavedTestCases(next);
+    return { savedTestCases: next };
+  }),
+
+  // Profile Management (no login/logout)
+  createProfile: (name) => {
+    const id = `profile-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const newProfile = {
+      id,
+      name: name || 'New Profile',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      savedTestCases: [],
+      preferences: {},
+    };
+    saveProfile(id, newProfile);
+    const profiles = loadProfilesList();
+    profiles.push({ id, name: newProfile.name });
+    saveProfilesList(profiles);
+    set({ profiles, activeProfileId: id });
+    // Load the new profile's test cases
+    set({ savedTestCases: [] });
+    return id;
+  },
+  switchProfile: (profileId) => {
+    const profile = loadProfile(profileId);
+    if (!profile) {
+      console.error(`Profile ${profileId} not found`);
+      return false;
+    }
+    localStorage.setItem(ACTIVE_PROFILE_ID_KEY, profileId);
+    set({
+      activeProfileId: profileId,
+      savedTestCases: profile.savedTestCases || [],
+    });
+    return true;
+  },
+  deleteProfile: (profileId) => {
+    if (profileId === 'default') {
+      console.error('Cannot delete default profile');
+      return false;
+    }
+    const profiles = loadProfilesList();
+    const filtered = profiles.filter((p) => p.id !== profileId);
+    saveProfilesList(filtered);
+    localStorage.removeItem(`${PROFILE_DATA_PREFIX}${profileId}`);
+    const currentActive = get().activeProfileId;
+    if (currentActive === profileId) {
+      // Switch to default if deleting active profile
+      const defaultId = 'default';
+      get().switchProfile(defaultId);
+    } else {
+      set({ profiles: filtered });
+    }
+    return true;
+  },
+  updateProfileName: (profileId, newName) => {
+    const profile = loadProfile(profileId);
+    if (!profile) return false;
+    const updated = { ...profile, name: newName };
+    saveProfile(profileId, updated);
+    const profiles = loadProfilesList();
+    const updatedProfiles = profiles.map((p) => (p.id === profileId ? { ...p, name: newName } : p));
+    saveProfilesList(updatedProfiles);
+    set({ profiles: updatedProfiles });
+    return true;
+  },
+  exportProfile: async (profileId, includeHistory = false) => {
+    const targetId = profileId || get().activeProfileId;
+    const profile = loadProfile(targetId);
+    if (!profile) {
+      throw new Error(`Profile ${targetId} not found`);
+    }
+    let exportData = { ...profile };
+    if (includeHistory) {
+      try {
+        // Fetch current jobs from API as history snapshot
+        const jobs = get().jobs || [];
+        exportData.historySnapshot = {
+          exportedAt: new Date().toISOString(),
+          jobs: jobs.map((j) => ({
+            id: j.id,
+            name: j.name,
+            tag: j.tag,
+            status: j.status,
+            progress: j.progress,
+            completedFiles: j.completedFiles,
+            totalFiles: j.totalFiles,
+            firmware: j.firmware,
+            boards: j.boards,
+            createdAt: j.createdAt,
+            startedAt: j.startedAt,
+            completedAt: j.completedAt,
+          })),
+        };
+      } catch (e) {
+        console.error('Failed to fetch history snapshot', e);
+      }
+    }
+    return exportData;
+  },
+  importProfile: (profileData, options = {}) => {
+    const { name: newName, overwriteId } = options;
+    let targetId = overwriteId;
+    if (!targetId) {
+      // Create new profile from imported data
+      targetId = `profile-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    }
+    const importedProfile = {
+      id: targetId,
+      name: newName || profileData.name || 'Imported Profile',
+      createdAt: profileData.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      savedTestCases: profileData.savedTestCases || [],
+      preferences: profileData.preferences || {},
+      historySnapshot: profileData.historySnapshot,
+    };
+    saveProfile(targetId, importedProfile);
+    const profiles = loadProfilesList();
+    const existingIndex = profiles.findIndex((p) => p.id === targetId);
+    if (existingIndex >= 0) {
+      profiles[existingIndex] = { id: targetId, name: importedProfile.name };
+    } else {
+      profiles.push({ id: targetId, name: importedProfile.name });
+    }
+    saveProfilesList(profiles);
+    set({ profiles });
+    if (options.switchToImported) {
+      get().switchProfile(targetId);
+    }
+    return targetId;
+  },
+  getProfileHistorySnapshot: (profileId) => {
+    const targetId = profileId || get().activeProfileId;
+    const profile = loadProfile(targetId);
+    return profile?.historySnapshot || null;
+  },
+
   updateProgress: (id, val) => set((state) => ({
     jobs: state.jobs.map(j => j.id === id ? { ...j, progress: val } : j)
   })),
@@ -584,12 +1127,16 @@ export const useTestStore = create((set, get) => ({
   },
   
   // Job Management Actions
-  createJob: async (jobPayload) => {
+  createJob: async (jobPayload, options = {}) => {
     try {
       const clientId = getClientId();
       const payload = { ...jobPayload, clientId };
       const created = await api.createJob(payload);
       await get().refreshJobs();
+      if (created?.id && options.startImmediately) {
+        await api.startJob(created.id);
+        await get().refreshJobs();
+      }
       return created;
     } catch (error) {
       console.error('Failed to create job', error);
@@ -695,6 +1242,60 @@ export const useTestStore = create((set, get) => ({
       return false;
     }
   },
+
+  /** Create a new batch with only the failed file(s) from a job and start it (moves to Running). */
+  rerunFailedFiles: async (jobId, fileIds = null) => {
+    try {
+      const job = get().jobs.find(j => j.id === jobId);
+      if (!job || !job.files?.length) {
+        get().addToast({ type: 'warning', message: 'Job or files not found.' });
+        return null;
+      }
+      const isFailed = (f) => f.result === 'fail' || f.status === 'error';
+      const failedFiles = fileIds
+        ? job.files.filter(f => fileIds.includes(f.id) && isFailed(f))
+        : job.files.filter(isFailed);
+      if (failedFiles.length === 0) {
+        get().addToast({ type: 'warning', message: 'No failed test cases to re-run.' });
+        return null;
+      }
+      const filesPayload = failedFiles.map((f, i) => ({
+        name: f.name || `test_${i + 1}`,
+        order: i + 1,
+        vcd: f.vcd ?? f.name,
+        erom: f.erom ?? undefined,
+        ulp: f.ulp ?? undefined,
+        try_count: f.try_count ?? f.try ?? 1,
+      }));
+      const baseName = (job.configName || job.name || 'Batch').trim();
+      const payload = {
+        name: `${baseName} (Re-run failed)`,
+        tag: job.tag || undefined,
+        firmware: job.firmware || '',
+        boards: job.boards || [],
+        files: filesPayload,
+        configName: job.configName || baseName,
+        clientId: getClientId(),
+      };
+      const created = await api.createJob(payload);
+      if (!created || !created.id) {
+        get().addToast({ type: 'error', message: 'Failed to create re-run batch.' });
+        return null;
+      }
+      await api.startJob(created.id);
+      await get().refreshJobs();
+      get().addToast({
+        type: 'success',
+        message: `Re-run batch created and started (${failedFiles.length} test case${failedFiles.length > 1 ? 's' : ''}).`,
+      });
+      return created;
+    } catch (error) {
+      console.error('Failed to re-run failed files', error);
+      get().addToast({ type: 'error', message: 'Failed to re-run failed test cases.' });
+      return null;
+    }
+  },
+
   stopFile: (jobId, fileId) => {
     set((state) => ({
       jobs: state.jobs.map(job =>

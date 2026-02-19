@@ -152,6 +152,21 @@ export const getBoardTelemetry = (id) => apiRequest(API_ENDPOINTS.BOARD_TELEMETR
 export const rebootBoard = (id) => apiRequest(API_ENDPOINTS.BOARD_REBOOT(id), { method: 'POST' });
 
 /**
+ * Shutdown board (frontend ready; backend may not implement yet)
+ */
+export const shutdownBoard = (id) => apiRequest(API_ENDPOINTS.BOARD_SHUTDOWN(id), { method: 'POST' });
+
+/**
+ * Pause queue for board (frontend ready; backend may not implement yet)
+ */
+export const pauseBoardQueue = (id) => apiRequest(API_ENDPOINTS.BOARD_PAUSE_QUEUE(id), { method: 'POST' });
+
+/**
+ * Resume queue for board (frontend ready; backend may not implement yet)
+ */
+export const resumeBoardQueue = (id) => apiRequest(API_ENDPOINTS.BOARD_RESUME_QUEUE(id), { method: 'POST' });
+
+/**
  * Update board firmware
  * Body: { firmwareVersion: string, firmwareFile: File }
  * Expected Response: { success: true, message: string }
@@ -425,6 +440,35 @@ export const deleteFile = (id) => {
   return apiRequest(API_ENDPOINTS.FILE_DELETE(id), { method: 'DELETE' });
 };
 
+/**
+ * Save library file IDs into set storage (backend copies files to this set). Body: { file_ids: string[] }
+ */
+export const saveSetFiles = (setId, fileIds) => {
+  return apiRequest(API_ENDPOINTS.SETS_SAVE_FILES(setId), {
+    method: 'POST',
+    body: JSON.stringify({ file_ids: fileIds }),
+  });
+};
+
+/**
+ * List files stored for this set
+ */
+export const listSetFiles = (setId) => apiRequest(API_ENDPOINTS.SETS_LIST_FILES(setId));
+
+/**
+ * Restore all set files into main library (copy to library so they appear in File Library)
+ */
+export const restoreSetFilesToLibrary = (setId) => {
+  return apiRequest(API_ENDPOINTS.SETS_RESTORE_TO_LIBRARY(setId), { method: 'POST' });
+};
+
+/**
+ * Delete set from backend (removes all files stored for this set_id in DB and disk)
+ */
+export const deleteSet = (setId) => {
+  return apiRequest(API_ENDPOINTS.SETS_DELETE(setId), { method: 'DELETE' });
+};
+
 // ============================================
 // RESULTS APIs
 // ============================================
@@ -548,6 +592,9 @@ export default {
   deleteBoard,
   getBoardTelemetry,
   rebootBoard,
+  shutdownBoard,
+  pauseBoardQueue,
+  resumeBoardQueue,
   updateBoardFirmware,
   runBoardSelfTest,
   batchBoardActions,
@@ -583,7 +630,11 @@ export default {
   getFiles,
   getFileById,
   deleteFile,
-  
+  saveSetFiles,
+  listSetFiles,
+  restoreSetFilesToLibrary,
+  deleteSet,
+
   // Results
   getResults,
   getResultById,
