@@ -26,6 +26,7 @@ class JobFileCreate(BaseModel):
     erom: Optional[str] = None  # ERoM (BIN) file name
     ulp: Optional[str] = None   # ULP (LIN) file name
     try_count: Optional[int] = None   # Number of test rounds
+    testCaseName: Optional[str] = None  # Display name for test case (e.g. from set)
 
 
 class JobCreatePayload(BaseModel):
@@ -106,6 +107,7 @@ def _serialize_files(files) -> List[dict]:
             "erom": getattr(file_item, "erom", None),  # ERoM (BIN) file name
             "ulp": getattr(file_item, "ulp", None),   # ULP (LIN) file name
             "try_count": getattr(file_item, "try_count", None),  # Number of test rounds
+            "testCaseName": getattr(file_item, "test_case_name", None),  # Display name from set
         }
         for file_item in sorted(files, key=lambda f: f.order)
     ]

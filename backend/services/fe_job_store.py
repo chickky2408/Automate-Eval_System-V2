@@ -21,6 +21,7 @@ class JobFile:
     erom: Optional[str] = None  # ERoM (BIN) file name
     ulp: Optional[str] = None   # ULP (LIN) file name
     try_count: Optional[int] = None  # Number of test rounds
+    test_case_name: Optional[str] = None  # Display name (e.g. from set)
 
 
 class FEJobStore:
@@ -30,7 +31,16 @@ class FEJobStore:
         self._meta: Dict[str, dict] = {}
         self._file_id = itertools.count(1)
 
-    def _new_file(self, name: str, order: int, vcd: Optional[str] = None, erom: Optional[str] = None, ulp: Optional[str] = None, try_count: Optional[int] = None) -> JobFile:
+    def _new_file(
+        self,
+        name: str,
+        order: int,
+        vcd: Optional[str] = None,
+        erom: Optional[str] = None,
+        ulp: Optional[str] = None,
+        try_count: Optional[int] = None,
+        test_case_name: Optional[str] = None,
+    ) -> JobFile:
         return JobFile(
             id=next(self._file_id),
             name=name,
@@ -41,6 +51,7 @@ class FEJobStore:
             erom=erom,
             ulp=ulp,
             try_count=try_count,
+            test_case_name=test_case_name,
         )
 
     def create_from_payload(
@@ -60,12 +71,14 @@ class FEJobStore:
         for idx, file_info in enumerate(payload_files):
             order = file_info.get("order") or (idx + 1)
             file_name = file_info.get("name", f"file_{order}.vcd")
-            # เก็บข้อมูลไฟล์ทั้งหมด (VCD, ERoM, ULP) ใน JobFile
             vcd = file_info.get("vcd") if isinstance(file_info, dict) else None
             erom = file_info.get("erom") if isinstance(file_info, dict) else None
             ulp = file_info.get("ulp") if isinstance(file_info, dict) else None
             try_count = file_info.get("try_count") or file_info.get("try", 1) if isinstance(file_info, dict) else None
-            job_file = self._new_file(file_name, order, vcd=vcd, erom=erom, ulp=ulp, try_count=try_count)
+            test_case_name = file_info.get("testCaseName") if isinstance(file_info, dict) else None
+            job_file = self._new_file(
+                file_name, order, vcd=vcd, erom=erom, ulp=ulp, try_count=try_count, test_case_name=test_case_name
+            )
             job_files.append(job_file)
 
         if not job_files:

@@ -74,6 +74,11 @@ export const API_ENDPOINTS = {
   SETS_RESTORE_TO_LIBRARY: (setId) => `${API_BASE_URL}/sets/${setId}/files/restore-to-library`,
   SETS_DELETE: (setId) => `${API_BASE_URL}/sets/${setId}`,
 
+  // Profiles (Option B1: no login; profile id = share key)
+  PROFILES: `${API_BASE_URL}/profiles`,
+  PROFILE_BY_ID: (id) => `${API_BASE_URL}/profiles/${id}`,
+  PROFILE_DATA: (id) => `${API_BASE_URL}/profiles/${id}/data`,
+
   // Notifications
   NOTIFICATIONS: `${API_BASE_URL}/notifications`,
   NOTIFICATION_MARK_READ: (id) => `${API_BASE_URL}/notifications/${id}/read`,

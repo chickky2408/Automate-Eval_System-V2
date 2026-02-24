@@ -32,6 +32,9 @@ const App = () => {
   const silentRefreshJobs = useTestStore((state) => state.silentRefreshJobs);
   const silentRefreshNotifications = useTestStore((state) => state.silentRefreshNotifications);
   const silentRefreshFiles = useTestStore((state) => state.silentRefreshFiles);
+  const addSharedProfile = useTestStore((state) => state.addSharedProfile);
+  const setViewingSharedProfile = useTestStore((state) => state.setViewingSharedProfile);
+  const fetchSharedProfileData = useTestStore((state) => state.fetchSharedProfileData);
   const availableBoards = boards.filter(b => b.status === 'online' && !b.currentJob).length;
   const queuedBoardsLeft = availableBoards;
 
@@ -40,6 +43,30 @@ const App = () => {
       document.documentElement.classList.toggle('dark', theme === 'dark');
     }
   }, [theme]);
+
+  // Open shared profile when URL hash is #/shared/<profile_id>
+  useEffect(() => {
+    const applyHash = () => {
+      try {
+        const hash = typeof window !== 'undefined' ? window.location.hash : '';
+        const m = hash.match(/^#?\/?shared\/([^/?#]+)/);
+        if (!m || !m[1]) return;
+        const profileId = (m[1] || '').trim();
+        if (!profileId) return;
+        addSharedProfile(profileId);
+        setViewingSharedProfile(profileId);
+        fetchSharedProfileData(profileId);
+        setActivePage('testCases');
+      } catch (err) {
+        console.warn('[App] hash shared profile apply failed', err);
+      }
+    };
+    applyHash();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('hashchange', applyHash);
+      return () => window.removeEventListener('hashchange', applyHash);
+    }
+  }, [addSharedProfile, setViewingSharedProfile, fetchSharedProfileData]);
 
   useEffect(() => {
     // First run: use normal refresh (with loading state for user)
@@ -205,12 +232,18 @@ const ProfileSwitcher = () => {
   const theme = useTestStore((state) => state.theme);
   const profiles = useTestStore((state) => state.profiles || []);
   const activeProfileId = useTestStore((state) => state.activeProfileId);
+  const sharedProfiles = useTestStore((state) => state.sharedProfiles || []);
+  const isBackendProfileId = useTestStore((state) => state.isBackendProfileId);
   const createProfile = useTestStore((state) => state.createProfile);
   const switchProfile = useTestStore((state) => state.switchProfile);
   const deleteProfile = useTestStore((state) => state.deleteProfile);
   const updateProfileName = useTestStore((state) => state.updateProfileName);
   const exportProfile = useTestStore((state) => state.exportProfile);
   const importProfile = useTestStore((state) => state.importProfile);
+  const addSharedProfile = useTestStore((state) => state.addSharedProfile);
+  const removeSharedProfile = useTestStore((state) => state.removeSharedProfile);
+  const setViewingSharedProfile = useTestStore((state) => state.setViewingSharedProfile);
+  const fetchSharedProfileData = useTestStore((state) => state.fetchSharedProfileData);
   const addToast = useTestStore((state) => state.addToast);
 
   const [isOpen, setIsOpen] = useState(false);
@@ -218,10 +251,15 @@ const ProfileSwitcher = () => {
   const [newProfileName, setNewProfileName] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editingName, setEditingName] = useState('');
+  const [sharedIdInput, setSharedIdInput] = useState('');
+  const [isAddingShared, setIsAddingShared] = useState(false);
+  const [isCreateLoading, setIsCreateLoading] = useState(false);
   const fileInputRef = useRef(null);
   const dropdownRef = useRef(null);
 
   const activeProfile = profiles.find((p) => p.id === activeProfileId) || { id: 'default', name: 'Default' };
+  const canShare = isBackendProfileId && isBackendProfileId(activeProfileId);
+  const shareLink = typeof window !== 'undefined' ? `${window.location.origin}${window.location.pathname}#/shared/${activeProfileId}` : '';
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -236,22 +274,81 @@ const ProfileSwitcher = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleCreateProfile = () => {
+  const handleCreateProfile = async () => {
     if (!newProfileName.trim()) {
       addToast({ type: 'warning', message: 'Please enter a profile name' });
       return;
     }
-    const id = createProfile(newProfileName.trim());
-    addToast({ type: 'success', message: `Created profile "${newProfileName.trim()}"` });
-    setNewProfileName('');
-    setIsCreating(false);
-    setIsOpen(false);
+    setIsCreateLoading(true);
+    try {
+      await createProfile(newProfileName.trim());
+      addToast({ type: 'success', message: `Created profile "${newProfileName.trim()}"` });
+      setNewProfileName('');
+      setIsCreating(false);
+      setIsOpen(false);
+    } catch (e) {
+      addToast({ type: 'error', message: e?.message || 'Failed to create profile' });
+    } finally {
+      setIsCreateLoading(false);
+    }
   };
 
   const handleSwitchProfile = (profileId) => {
     switchProfile(profileId);
     addToast({ type: 'success', message: `Switched to profile "${profiles.find((p) => p.id === profileId)?.name || 'Unknown'}"` });
     setIsOpen(false);
+  };
+
+  const handleShareProfile = async () => {
+    try {
+      await navigator.clipboard.writeText(activeProfileId);
+      addToast({ type: 'success', message: 'Profile ID copied to clipboard' });
+    } catch {
+      addToast({ type: 'info', message: `Profile ID: ${activeProfileId}` });
+    }
+    setIsOpen(false);
+  };
+
+  const handleCopyShareLink = async () => {
+    try {
+      await navigator.clipboard.writeText(shareLink);
+      addToast({ type: 'success', message: 'Share link copied to clipboard' });
+    } catch {
+      addToast({ type: 'info', message: shareLink });
+    }
+    setIsOpen(false);
+  };
+
+  const handleAddSharedProfile = async () => {
+    let id = sharedIdInput.trim();
+    const match = id.match(/#\/shared\/([^/?#]+)/);
+    if (match) id = match[1];
+    if (!id) {
+      addToast({ type: 'warning', message: 'Enter a profile ID or share link' });
+      return;
+    }
+    setIsAddingShared(true);
+    try {
+      const result = await addSharedProfile(id);
+      if (result.ok) {
+        addToast({ type: 'success', message: 'Shared profile added' });
+        setSharedIdInput('');
+        setIsAddingShared(false);
+      } else {
+        addToast({ type: 'error', message: result.error || 'Failed to add' });
+      }
+    } catch (e) {
+      addToast({ type: 'error', message: e?.message || 'Failed to add shared profile' });
+    } finally {
+      setIsAddingShared(false);
+    }
+  };
+
+  const handleViewSharedProfile = async (profileId) => {
+    setViewingSharedProfile(profileId);
+    await fetchSharedProfileData(profileId);
+    setIsOpen(false);
+    addToast({ type: 'info', message: 'Viewing shared profile (read-only). Use "Copy to my profile" to copy.' });
   };
 
   const handleDeleteProfile = (profileId, profileName) => {
@@ -449,6 +546,89 @@ const ProfileSwitcher = () => {
             )}
           </div>
 
+          {canShare && (
+            <div className={`p-3 border-b ${theme === 'dark' ? 'border-slate-700' : 'border-slate-200'}`}>
+              <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2">SHARE</div>
+              <div className="flex flex-col gap-1.5">
+                <button
+                  onClick={handleShareProfile}
+                  className={`w-full flex items-center gap-2 px-3 py-2 rounded text-sm font-medium transition-colors ${
+                    theme === 'dark' ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-50 text-slate-700'
+                  }`}
+                  title="Copy profile ID"
+                >
+                  <Copy size={16} />
+                  <span>Copy profile ID</span>
+                </button>
+                <button
+                  onClick={handleCopyShareLink}
+                  className={`w-full flex items-center gap-2 px-3 py-2 rounded text-sm font-medium transition-colors ${
+                    theme === 'dark' ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-50 text-slate-700'
+                  }`}
+                  title="Copy share link"
+                >
+                  <FolderOpen size={16} />
+                  <span>Copy share link</span>
+                </button>
+              </div>
+            </div>
+          )}
+          <div className={`p-3 border-b ${theme === 'dark' ? 'border-slate-700' : 'border-slate-200'}`}>
+            <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2">SHARED WITH ME</div>
+            {sharedProfiles.length > 0 && (
+              <div className="space-y-1 max-h-32 overflow-y-auto mb-2">
+                {sharedProfiles.map((p) => (
+                  <div
+                    key={p.id}
+                    className={`flex items-center gap-2 p-2 rounded ${theme === 'dark' ? 'hover:bg-slate-700' : 'hover:bg-slate-50'}`}
+                  >
+                    <span className="flex-1 text-sm truncate">{p.name || p.id}</span>
+                    <button
+                      onClick={() => handleViewSharedProfile(p.id)}
+                      className="p-1.5 rounded text-blue-600 dark:text-blue-400 hover:bg-slate-600 dark:hover:bg-slate-600"
+                      title="View (read-only)"
+                    >
+                      <Eye size={14} />
+                    </button>
+                    <button
+                      onClick={() => { removeSharedProfile(p.id); addToast({ type: 'success', message: 'Removed from list' }); }}
+                      className="p-1.5 rounded text-slate-500 hover:text-red-600"
+                      title="Remove from list"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {isAddingShared ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={sharedIdInput}
+                  onChange={(e) => setSharedIdInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleAddSharedProfile(); if (e.key === 'Escape') { setIsAddingShared(false); setSharedIdInput(''); } }}
+                  placeholder="Paste profile ID or link"
+                  className={`flex-1 px-2 py-1.5 text-sm rounded border ${theme === 'dark' ? 'bg-slate-700 border-slate-600 text-slate-200' : 'bg-white border-slate-300 text-slate-900'}`}
+                  autoFocus
+                />
+                <button onClick={handleAddSharedProfile} className="p-1.5 text-emerald-600 hover:text-emerald-700" disabled={!sharedIdInput.trim()}>
+                  <CheckCircle2 size={16} />
+                </button>
+                <button onClick={() => { setIsAddingShared(false); setSharedIdInput(''); }} className="p-1.5 text-slate-500 hover:text-slate-600">
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setIsAddingShared(true)}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded text-sm font-medium transition-colors ${theme === 'dark' ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-50 text-slate-700'}`}
+              >
+                <UserPlus size={16} />
+                <span>Add shared profile</span>
+              </button>
+            )}
+          </div>
           <div className={`p-3 border-b ${theme === 'dark' ? 'border-slate-700' : 'border-slate-200'}`}>
             {isCreating ? (
               <div className="flex items-center gap-2">
@@ -473,7 +653,8 @@ const ProfileSwitcher = () => {
                 />
                 <button
                   onClick={handleCreateProfile}
-                  className="p-1.5 text-emerald-600 hover:text-emerald-700"
+                  disabled={isCreateLoading}
+                  className="p-1.5 text-emerald-600 hover:text-emerald-700 disabled:opacity-50"
                 >
                   <CheckCircle2 size={16} />
                 </button>
@@ -576,230 +757,6 @@ const ToastContainer = () => {
           </button>
         </div>
       ))}
-    </div>
-  );
-};
-
-// Preview page for mapping VCD ↔ BIN 1:1, with save/load JSON
-const ConfigBuilderPage = () => {
-  const vcdFiles = useTestStore((state) => state.vcdFiles);
-  const firmwareFiles = useTestStore((state) => state.firmwareFiles);
-  const [selectedVcdId, setSelectedVcdId] = useState('');
-  const [selectedBinId, setSelectedBinId] = useState('');
-  const [pairs, setPairs] = useState([]);
-  const fileInputRef = useRef(null);
-
-  const getFileLabel = (id, list) => list.find((f) => f.id === id)?.name || '—';
-
-  const addPair = () => {
-    if (!selectedVcdId || !selectedBinId) return;
-    setPairs((prev) => [
-      ...prev,
-      {
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        vcdId: selectedVcdId,
-        binId: selectedBinId,
-      },
-    ]);
-    setSelectedVcdId('');
-    setSelectedBinId('');
-  };
-
-  const removePair = (id) => {
-    setPairs((prev) => prev.filter((p) => p.id !== id));
-  };
-
-  const movePair = (index, direction) => {
-    setPairs((prev) => {
-      const next = [...prev];
-      const target = direction === 'up' ? index - 1 : index + 1;
-      if (target < 0 || target >= next.length) return prev;
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
-  };
-
-  const saveConfig = () => {
-    const data = { pairs };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `config_pairs_${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const handleLoad = (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const parsed = JSON.parse(e.target?.result || '{}');
-        if (!Array.isArray(parsed?.pairs)) throw new Error('Invalid format');
-        setPairs(parsed.pairs.map((p, idx) => ({
-          id: p.id || `loaded-${idx}-${Date.now()}`,
-          vcdId: p.vcdId,
-          binId: p.binId,
-        })));
-      } catch (err) {
-        alert('Load config failed: ' + err?.message);
-      }
-    };
-    reader.readAsText(file);
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Config Builder (beta)</h1>
-          <p className="text-slate-500 text-sm">Pair 1 VCD with 1 BIN and save/load config as .json</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={saveConfig}
-            className="px-4 py-2 rounded-lg bg-slate-900 text-white text-sm font-semibold hover:bg-black"
-          >
-            Save config (.json)
-          </button>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="px-4 py-2 rounded-lg border border-slate-200 text-sm font-semibold hover:border-slate-300"
-          >
-            Load config (.json)
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json,application/json"
-            className="hidden"
-            onChange={handleLoad}
-          />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* Library: VCD */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-lg font-bold text-slate-900">VCD Library</h3>
-            <span className="text-xs text-slate-500">{vcdFiles.length} files</span>
-          </div>
-          <div className="space-y-2 max-h-[360px] overflow-y-auto">
-            {vcdFiles.length === 0 && (
-              <div className="text-sm text-slate-400">No VCD files yet (upload from Files menu)</div>
-            )}
-            {vcdFiles.map((file) => (
-              <label key={file.id} className={`flex items-center gap-3 p-3 rounded-xl border ${
-                selectedVcdId === file.id ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-blue-200'
-              }`}>
-                <input
-                  type="radio"
-                  name="vcd-select"
-                  checked={selectedVcdId === file.id}
-                  onChange={() => setSelectedVcdId(file.id)}
-                />
-                <div className="flex-1">
-                  <div className="font-semibold text-sm text-slate-800">{file.name}</div>
-                  <div className="text-xs text-slate-500">{file.sizeFormatted || ''}</div>
-                </div>
-              </label>
-            ))}
-          </div>
-        </div>
-
-        {/* Library: BIN */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-lg font-bold text-slate-900">BIN Library</h3>
-            <span className="text-xs text-slate-500">{firmwareFiles.length} files</span>
-          </div>
-          <div className="space-y-2 max-h-[360px] overflow-y-auto">
-            {firmwareFiles.length === 0 && (
-              <div className="text-sm text-slate-400">No BIN files yet (upload from Files menu)</div>
-            )}
-            {firmwareFiles.map((file) => (
-              <label key={file.id} className={`flex items-center gap-3 p-3 rounded-xl border ${
-                selectedBinId === file.id ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:border-blue-200'
-              }`}>
-                <input
-                  type="radio"
-                  name="bin-select"
-                  checked={selectedBinId === file.id}
-                  onChange={() => setSelectedBinId(file.id)}
-                />
-                <div className="flex-1">
-                  <div className="font-semibold text-sm text-slate-800">{file.name}</div>
-                  <div className="text-xs text-slate-500">{file.sizeFormatted || ''}</div>
-                </div>
-              </label>
-            ))}
-          </div>
-        </div>
-
-        {/* Selected mapping */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <h3 className="text-lg font-bold text-slate-900">Selected (1 VCD : 1 BIN)</h3>
-              <p className="text-xs text-slate-500">You can reorder (move up/down)</p>
-            </div>
-            <button
-              onClick={addPair}
-              disabled={!selectedVcdId || !selectedBinId}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold ${
-                !selectedVcdId || !selectedBinId
-                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                  : 'bg-blue-600 text-white hover:bg-blue-700'
-              }`}
-            >
-              Add pair
-            </button>
-          </div>
-
-          <div className="border border-slate-200 rounded-xl overflow-x-auto overflow-y-hidden">
-            <div className="grid grid-cols-4 min-w-[320px] bg-slate-50 text-xs font-semibold text-slate-600">
-              <div className="px-3 py-2">#</div>
-              <div className="px-3 py-2">VCD</div>
-              <div className="px-3 py-2">BIN</div>
-              <div className="px-3 py-2 text-right">Actions</div>
-            </div>
-            {pairs.length === 0 ? (
-              <div className="p-4 text-sm text-slate-400">No files selected</div>
-            ) : (
-              pairs.map((pair, idx) => (
-                <div key={pair.id} className="grid grid-cols-4 min-w-[320px] items-center text-sm border-t border-slate-100">
-                  <div className="px-3 py-2 text-slate-500">{idx + 1}</div>
-                  <div className="px-3 py-2">{getFileLabel(pair.vcdId, vcdFiles)}</div>
-                  <div className="px-3 py-2">{getFileLabel(pair.binId, firmwareFiles)}</div>
-                  <div className="px-3 py-2 flex items-center justify-end gap-2">
-                    <button
-                      onClick={() => movePair(idx, 'up')}
-                      className="px-2 py-1 rounded border border-slate-200 text-xs hover:border-slate-300"
-                    >
-                      ↑
-                    </button>
-                    <button
-                      onClick={() => movePair(idx, 'down')}
-                      className="px-2 py-1 rounded border border-slate-200 text-xs hover:border-slate-300"
-                    >
-                      ↓
-                    </button>
-                    <button
-                      onClick={() => removePair(pair.id)}
-                      className="px-2 py-1 rounded border border-red-200 text-xs text-red-600 hover:border-red-300"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
     </div>
   );
 };
@@ -2621,6 +2578,10 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const { uploadedFiles, removeUploadedFile, loading, errors, savedTestCaseSets, savedTestCases, removeSavedTestCase, updateSavedTestCaseSet, removeSavedTestCaseSet } = useTestStore();
   const refreshFiles = useTestStore((s) => s.refreshFiles);
   const addToast = useTestStore((s) => s.addToast);
+  const setLibraryEditContext = useTestStore((s) => s.setLibraryEditContext);
+  const clearLibraryEditContext = useTestStore((s) => s.clearLibraryEditContext);
+  const setLoadedSetId = useTestStore((s) => s.setLoadedSetId);
+  const syncFullLibraryToSavedTestCases = useTestStore((s) => s.syncFullLibraryToSavedTestCases);
   useEffect(() => { refreshFiles(); }, [refreshFiles]);
   const [libraryView, setLibraryView] = useState('rawTestCases'); // 'testCases' | 'rawTestCases' (default) | 'files'
   const [fileFilter, setFileFilter] = useState('all');
@@ -2816,7 +2777,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                   <Trash2 size={18} strokeWidth={2} />
                 </button>
                 {selectedSetKeys.size > 0 && <span className="text-xs text-slate-500">{selectedSetKeys.size} selected</span>}
-                <span className="text-xs text-slate-400">Click, Shift+click range, Ctrl/Cmd+click toggle, or drag to select</span>
+                <span className="text-xs text-slate-400">Click, Shift+click range, Ctrl/Cmd+click toggle, or drag to select. Double-click a row to edit in Test Cases page.</span>
               </div>
               {!savedTestCaseSets?.length ? (
                 <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-8 text-center text-slate-500 dark:text-slate-400">
@@ -2849,7 +2810,8 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                       lastClickedLibrarySetTcRef.current = { setId: set.id, index: rowIndex };
                       return;
                     }
-                    setSelectedLibrarySetTcKeys(selectedSetKeys.has(key) ? [] : [key]);
+                    // Simple click: toggle this row (multi-select — user can tick 3–4 items)
+                    setSelectedLibrarySetTcKeys((prev) => (selectedSetKeys.has(key) ? prev.filter((k) => k !== key) : [...prev, key]));
                     lastClickedLibrarySetTcRef.current = { setId: set.id, index: rowIndex };
                   };
                   const rowKey = (tc) => `${set.id}::${tc._origIndex}`;
@@ -2888,26 +2850,25 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                           </button>
                         </div>
                       </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                      <div className="overflow-x-auto table-scroll-smooth" style={{ scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch' }}>
+                        <table className="w-full text-sm min-w-max">
                           <thead>
                             <tr className="bg-slate-100 dark:bg-slate-800 text-left text-xs font-bold text-slate-600 dark:text-slate-400">
-                              <th className="w-9 px-2 py-2 border-r border-slate-200 dark:border-slate-600">
-                                <input type="checkbox" checked={filteredItems.length > 0 && filteredItems.every((r) => selectedSetKeys.has(rowKey(r)))} onChange={(e) => { if (e.target.checked) setSelectedLibrarySetTcKeys((prev) => [...new Set([...prev, ...filteredItems.map((r) => rowKey(r))])]); else setSelectedLibrarySetTcKeys((prev) => prev.filter((k) => !k.startsWith(set.id + '::'))); }} className="w-4 h-4 rounded cursor-pointer" title="Select all in this set" />
-                              </th>
+                              <th className="w-9 px-2 py-2 border-r border-slate-200 dark:border-slate-600">#</th>
                               <th className="w-8 px-2 py-2 border-r border-slate-200 dark:border-slate-600">#</th>
-                              <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">Name</th>
-                              <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">ERoM </th>
-                              <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">ULP</th>
-                              <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">VCD </th>
-                              {extraCols.map((col) => (<th key={col} className="px-2 py-2 border-r border-slate-200 dark:border-slate-600 min-w-[80px]">{col}</th>))}
+                              <th className="min-w-[120px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">Name</th>
+                              <th className="w-24 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Date</th>
+                              <th className="min-w-[100px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">ERoM</th>
+                              <th className="min-w-[100px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">ULP</th>
+                              <th className="min-w-[100px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">VCD</th>
+                              {extraCols.map((col) => (<th key={col} className="px-2 py-2 border-r border-slate-200 dark:border-slate-600 min-w-[90px] whitespace-nowrap">{col}</th>))}
                               <th className="w-14 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Try</th>
                             </tr>
                           </thead>
                           <tbody>
                             {filteredItems.length === 0 ? (
                               <tr>
-                                <td colSpan={7 + extraCols.length} className="px-2 py-4 text-center text-slate-400 text-xs">No test cases in this set{items.length > 0 ? ' (or no match for filter)' : ''}</td>
+                                <td colSpan={8 + extraCols.length} className="px-2 py-4 text-center text-slate-400 text-xs">No test cases in this set{items.length > 0 ? ' (or no match for filter)' : ''}</td>
                               </tr>
                             ) : (
                               filteredItems.map((tc, idx) => {
@@ -2918,6 +2879,14 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                     key={key}
                                     className={`border-b border-slate-100 dark:border-slate-700 cursor-pointer select-none ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}
                                     onClick={(e) => { if (e.target.closest('input[type="checkbox"]')) return; toggleSetTc(key, idx, e); }}
+                                    onDoubleClick={(e) => {
+                                      if (e.target.closest('input[type="checkbox"]')) return;
+                                      if (onNavigateToTestCases && setLibraryEditContext) {
+                                        setLibraryEditContext({ loadSetId: set.id, focusTcIndex: tc._origIndex });
+                                        onNavigateToTestCases();
+                                      }
+                                    }}
+                                    title="Double-click to edit in Test Cases page"
                                     onMouseDown={(e) => { if (e.target.closest('input[type="checkbox"]')) return; if (e.button === 0) { isDragSelectingLibrarySetRef.current = true; if (!selectedSetKeys.has(key)) setSelectedLibrarySetTcKeys((prev) => [...prev, key]); } }}
                                     onMouseEnter={() => { if (!isDragSelectingLibrarySetRef.current) return; if (!selectedSetKeys.has(key)) setSelectedLibrarySetTcKeys((prev) => [...prev, key]); }}
                                   >
@@ -2926,10 +2895,11 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                     </td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-500">{idx + 1}</td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 font-medium text-slate-800 dark:text-slate-200">{tc.name || '—'}</td>
+                                    <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center text-slate-500 dark:text-slate-400 text-xs">{tc.createdAt ? new Date(tc.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">{tc.binName || '—'}</td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">{tc.linName || '—'}</td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">{tc.vcdName || '—'}</td>
-                                    {extraCols.map((col) => (<td key={col} className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">{tc.extraColumns?.[col] ?? '—'}</td>))}
+                                    {extraCols.map((col) => (<td key={col} className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300 min-w-[90px] truncate max-w-[140px]" title={tc.extraColumns?.[col] || undefined}>{tc.extraColumns?.[col] ?? '—'}</td>))}
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center text-slate-600 dark:text-slate-400">{typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1}</td>
                                   </tr>
                                 );
@@ -2949,7 +2919,39 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
         /* Raw Test Cases — filter name/tag, multi-select (shift/ctrl + drag), delete selected */
         (() => {
           const selectedSet = new Set(selectedLibraryTcKeys);
-          const extraCols = [...new Set(libraryFilteredRows.flatMap((t) => Object.keys(t.extraColumns || {})))].sort();
+          const getExtraColKeys = (t) => {
+            const fromExtra = Object.keys(t.extraColumns || {});
+            const fromCmds = [];
+            (t.commands || []).filter((c) => c.type === 'vcd' && (c.file || '').trim()).forEach((_, i) => fromCmds.push(`VCD${i + 2}`));
+            (t.commands || []).filter((c) => c.type === 'erom' && (c.file || '').trim()).forEach((_, i) => fromCmds.push(`ERoM${i + 2}`));
+            (t.commands || []).filter((c) => c.type === 'ulp' && (c.file || '').trim()).forEach((_, i) => fromCmds.push(`ULP${i + 2}`));
+            return [...fromExtra, ...fromCmds];
+          };
+          const getExtraVal = (t, col) => {
+            const m = col.match(/^VCD(\d+)$/);
+            if (m) {
+              const idx = parseInt(m[1], 10) - 2;
+              const vcds = (t.commands || []).filter((c) => c.type === 'vcd' && (c.file || '').trim());
+              return vcds[idx]?.file ?? t.extraColumns?.[col] ?? '';
+            }
+            const m2 = col.match(/^ERoM(\d+)$/);
+            if (m2) {
+              const idx = parseInt(m2[1], 10) - 2;
+              const eroms = (t.commands || []).filter((c) => c.type === 'erom' && (c.file || '').trim());
+              return eroms[idx]?.file ?? t.extraColumns?.[col] ?? '';
+            }
+            const m3 = col.match(/^ULP(\d+)$/);
+            if (m3) {
+              const idx = parseInt(m3[1], 10) - 2;
+              const ulps = (t.commands || []).filter((c) => c.type === 'ulp' && (c.file || '').trim());
+              return ulps[idx]?.file ?? t.extraColumns?.[col] ?? '';
+            }
+            return t.extraColumns?.[col] ?? '';
+          };
+         const allCols = [...new Set(libraryFilteredRows.flatMap(getExtraColKeys))].sort();
+         const extraCols = allCols
+           .filter((col) => !/^tag(color)?$/i.test(col))
+           .filter((col) => libraryFilteredRows.some((t) => (getExtraVal(t, col) ?? '').toString().trim() !== ''));
           const toggleSelect = (key, idx, e) => {
             if (e.shiftKey) {
               const last = lastClickedLibraryTcIndexRef.current;
@@ -2967,7 +2969,10 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
               lastClickedLibraryTcIndexRef.current = idx;
               return;
             }
-            setSelectedLibraryTcKeys(selectedSet.has(key) ? [] : [key]);
+            // Simple click: toggle this row (multi-select — user can tick 3–4 items)
+            setSelectedLibraryTcKeys((prev) =>
+              selectedSet.has(key) ? prev.filter((k) => k !== key) : [...prev, key]
+            );
             lastClickedLibraryTcIndexRef.current = idx;
           };
           const handleRowMouseDown = (key, idx) => {
@@ -3037,11 +3042,11 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                   <span className="text-xs text-slate-500">{selectedSet.size} selected</span>
                 )}
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+              <div className="overflow-x-auto overflow-y-visible rounded-b-xl table-scroll-smooth" style={{ scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch' }}>
+                <table className="w-full text-sm min-w-max">
                   <thead>
                     <tr className="bg-slate-100 dark:bg-slate-800 text-left text-xs font-bold text-slate-600 dark:text-slate-400">
-                      <th className="w-9 px-2 py-2 border-r border-slate-200 dark:border-slate-600">
+                      <th className="w-9 px-2 py-2 border-r border-slate-200 dark:border-slate-600 sticky left-0 bg-slate-100 dark:bg-slate-800 z-10">
                         <input
                           type="checkbox"
                           checked={libraryFilteredRows.length > 0 && libraryFilteredRows.every((r) => selectedSet.has(r._key))}
@@ -3054,12 +3059,14 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                         />
                       </th>
                       <th className="w-8 px-2 py-2 border-r border-slate-200 dark:border-slate-600">#</th>
-                      <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">Name</th>
-                      <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">ERoM </th>
-                      <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">ULP </th>
-                      <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">VCD </th>
+                      <th className="min-w-[120px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">Name</th>
+                      <th className="w-28 px-2 py-2 border-r border-slate-200 dark:border-slate-600">Tag</th>
+                      <th className="w-24 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Date</th>
+                      <th className="min-w-[100px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">ERoM</th>
+                      <th className="min-w-[100px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">ULP</th>
+                      <th className="min-w-[100px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">VCD</th>
                       {extraCols.map((col) => (
-                        <th key={col} className="px-2 py-2 border-r border-slate-200 dark:border-slate-600 min-w-[80px]">{col}</th>
+                        <th key={col} className="px-2 py-2 border-r border-slate-200 dark:border-slate-600 min-w-[90px] whitespace-nowrap">{col}</th>
                       ))}
                       <th className="w-14 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Try</th>
                     </tr>
@@ -3067,7 +3074,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                   <tbody>
                     {libraryFilteredRows.length === 0 ? (
                       <tr>
-                        <td colSpan={7 + extraCols.length} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400 text-sm">
+                        <td colSpan={9 + extraCols.length} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400 text-sm">
                           No test cases yet — or no match for filter. Create on Test Cases page or clear filters.
                         </td>
                       </tr>
@@ -3083,13 +3090,27 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                               if (e.target.closest('input[type="checkbox"]')) return;
                               toggleSelect(key, idx, e);
                             }}
+                            onDoubleClick={(e) => {
+                              if (e.target.closest('input[type="checkbox"]')) return;
+                              if (onNavigateToTestCases && setLibraryEditContext) {
+                                if (tc._source === 'current' && tc.id) {
+                                  setLibraryEditContext({ focusTcId: tc.id });
+                                } else if (tc._source === 'set' && tc._setId != null && tc._itemIndex != null) {
+                                  setLibraryEditContext({ loadSetId: tc._setId, focusTcIndex: tc._itemIndex });
+                                } else {
+                                  setLibraryEditContext(null);
+                                }
+                                onNavigateToTestCases();
+                              }
+                            }}
+                            title="Double-click to edit in Test Cases page"
                             onMouseDown={(e) => {
                               if (e.target.closest('input[type="checkbox"]')) return;
                               if (e.button === 0) handleRowMouseDown(key, idx);
                             }}
                             onMouseEnter={() => handleRowMouseEnter(key, idx)}
                           >
-                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700" onClick={(e) => e.stopPropagation()}>
+                            <td className={`px-2 py-2 border-r border-slate-100 dark:border-slate-700 sticky left-0 z-[1] ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : 'bg-white dark:bg-slate-900'}`} onClick={(e) => e.stopPropagation()}>
                               <input
                                 type="checkbox"
                                 checked={isSelected}
@@ -3100,8 +3121,75 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                             <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-500">
                               {idx + 1}
                             </td>
-                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 font-medium text-slate-800 dark:text-slate-200">
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 font-medium text-slate-800 dark:text-slate-200 min-w-[120px]">
                               {tc.name || '—'}
+                            </td>
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700">
+                              {(() => {
+                                const rawTag = (tc.extraColumns && (tc.extraColumns.tag || tc.extraColumns.Tag)) || '';
+                                const tagVal = String(rawTag || '').trim();
+                                const paletteMap = {
+                                  mint: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+                                  sky: 'bg-sky-100 text-sky-800 border-sky-200',
+                                  rose: 'bg-rose-100 text-rose-800 border-rose-200',
+                                  amber: 'bg-amber-100 text-amber-800 border-amber-200',
+                                  violet: 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200',
+                                  slate: 'bg-slate-100 text-slate-700 border-slate-200',
+                                };
+                                const colorKeyRaw = tc.extraColumns && (tc.extraColumns.tagColor || tc.extraColumns.tag_color);
+                                const colorKey = paletteMap[colorKeyRaw] ? colorKeyRaw : 'mint';
+                                const palette = paletteMap[colorKey];
+                                const cycleColor = (e) => {
+                                  e.stopPropagation();
+                                  if (!tagVal) return;
+                                  const keys = Object.keys(paletteMap);
+                                  const idx = Math.max(0, keys.indexOf(colorKey));
+                                  const nextKey = keys[(idx + 1) % keys.length];
+                                  const nextExtra = {
+                                    ...(tc.extraColumns || {}),
+                                    tagColor: nextKey,
+                                  };
+                                  if (tc._source === 'current' && tc.id) {
+                                    updateSavedTestCase(tc.id, { extraColumns: nextExtra });
+                                  } else if (tc._source === 'set' && tc._setId != null && tc._itemIndex != null) {
+                                    const set = (savedTestCaseSets || []).find((s) => s.id === tc._setId);
+                                    if (!set || !Array.isArray(set.items)) return;
+                                    const items = [...set.items];
+                                    if (!items[tc._itemIndex]) return;
+                                    items[tc._itemIndex] = {
+                                      ...items[tc._itemIndex],
+                                      extraColumns: nextExtra,
+                                    };
+                                    updateSavedTestCaseSet(tc._setId, { items });
+                                  }
+                                };
+                                if (!tagVal) {
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={cycleColor}
+                                      className="inline-flex items-center px-2 py-0.5 rounded-full border border-dashed border-slate-400/60 text-[11px] text-slate-300 hover:border-slate-300 hover:text-slate-200 transition-colors"
+                                      title="Click to choose tag color"
+                                    >
+                                      No tag
+                                    </button>
+                                  );
+                                }
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={cycleColor}
+                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-medium max-w-[130px] ${palette} hover:brightness-95 transition-colors`}
+                                    title="Click to change tag color"
+                                  >
+                                    <span className="w-2 h-2 rounded-full bg-current/70" />
+                                    <span className="truncate">{tagVal}</span>
+                                  </button>
+                                );
+                              })()}
+                            </td>
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center text-slate-500 dark:text-slate-400 text-xs">
+                              {tc.createdAt ? new Date(tc.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}
                             </td>
                             <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">
                               {tc.binName || '—'}
@@ -3113,8 +3201,8 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                               {tc.vcdName || '—'}
                             </td>
                             {extraCols.map((col) => (
-                              <td key={col} className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">
-                                {tc.extraColumns?.[col] ?? '—'}
+                              <td key={col} className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300 min-w-[90px] truncate max-w-[140px]" title={getExtraVal(tc, col) || undefined}>
+                                {getExtraVal(tc, col) || '—'}
                               </td>
                             ))}
                             <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center text-slate-600 dark:text-slate-400">
@@ -3129,7 +3217,16 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
               </div>
               {onNavigateToTestCases && (
                 <div className="px-4 py-2 border-t border-slate-200 dark:border-slate-600 bg-slate-50/50 dark:bg-slate-800/30">
-                  <button type="button" onClick={onNavigateToTestCases} className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      syncFullLibraryToSavedTestCases();
+                      clearLibraryEditContext();
+                      setLoadedSetId(null);
+                      onNavigateToTestCases();
+                    }}
+                    className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
+                  >
                     Edit test case in Test Cases →
                   </button>
                 </div>
@@ -3277,18 +3374,36 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
 
 // 2a. TEST CASES PAGE — สร้าง/เก็บ test case ไว้ (ฟีเจอร์เทียบเท่า Setup เดิม)
 const TestCasesPage = () => {
+  const viewingSharedProfileId = useTestStore((s) => s.viewingSharedProfileId);
+  const sharedProfileDataCache = useTestStore((s) => s.sharedProfileDataCache);
+  const sharedProfiles = useTestStore((s) => s.sharedProfiles || []);
+  const setViewingSharedProfile = useTestStore((s) => s.setViewingSharedProfile);
+  const copySharedToMyProfile = useTestStore((s) => s.copySharedToMyProfile);
+  const fetchSharedProfileData = useTestStore((s) => s.fetchSharedProfileData);
   const {
     uploadedFiles,
     savedTestCases,
     savedTestCaseSets,
+    workingTestCases,
+    addWorkingTestCase,
+    updateWorkingTestCase,
+    removeWorkingTestCase,
+    moveWorkingTestCaseUp,
+    moveWorkingTestCaseDown,
+    reorderWorkingTestCases,
+    duplicateWorkingTestCase,
+    setWorkingTestCases,
+    bulkUpdateWorkingTryCount,
+    addWorkingTestCaseCommand,
+    updateWorkingTestCaseCommand,
+    removeWorkingTestCaseCommand,
+    saveWorkingToLibrary,
     addSavedTestCase,
     updateSavedTestCase,
     removeSavedTestCase,
-    moveSavedTestCaseUp,
-    moveSavedTestCaseDown,
+    setSavedTestCases,
     reorderSavedTestCases,
     duplicateSavedTestCase,
-    setSavedTestCases,
     bulkUpdateTryCount,
     addTestCaseCommand,
     updateTestCaseCommand,
@@ -3298,6 +3413,9 @@ const TestCasesPage = () => {
     removeSavedTestCaseSet,
     duplicateSavedTestCaseSet,
     applySavedTestCaseSet,
+    loadSetForEditing,
+    restoreSavedTestCasesFromProfile,
+    setLoadedSetId,
     appendSavedTestCaseSet,
     moveSavedTestCaseSetUp,
     moveSavedTestCaseSetDown,
@@ -3308,10 +3426,74 @@ const TestCasesPage = () => {
   } = useTestStore();
   const addToast = useTestStore((s) => s.addToast);
   const refreshFiles = useTestStore((s) => s.refreshFiles);
+  const activeProfileId = useTestStore((s) => s.activeProfileId);
+  const libraryEditContext = useTestStore((s) => s.libraryEditContext);
+  const clearLibraryEditContext = useTestStore((s) => s.clearLibraryEditContext);
   const fileInputRef = useRef(null);
   const csvInputRef = useRef(null);
   const prevUploadedCountRef = useRef(0);
   const justDidStartFreshRef = useRef(false);
+  const loadedSetId = useTestStore((s) => s.loadedSetId);
+  const loadedSetTable = useTestStore((s) => s.loadedSetTable);
+  const [pendingDraftTestCases, setPendingDraftTestCases] = useState([]);
+  const [tableClearedMode, setTableClearedMode] = useState(false);
+
+  const SETUP_CLEARED_KEY = 'app_setup_cleared_';
+  const getSetupClearedPersisted = (profileId) => typeof window !== 'undefined' && localStorage.getItem(SETUP_CLEARED_KEY + (profileId || 'default')) === 'true';
+  const setSetupClearedPersisted = (profileId, value) => { if (typeof window !== 'undefined') localStorage.setItem(SETUP_CLEARED_KEY + (profileId || 'default'), value ? 'true' : 'false'); };
+  useEffect(() => {
+    if (getSetupClearedPersisted(activeProfileId)) {
+      setTableClearedMode(true);
+      setSelectedIds([]);
+      setLocalDroppedFiles([]);
+    }
+  }, [activeProfileId]);
+
+  const displayedSavedTestCases = tableClearedMode
+    ? []
+    : (viewingSharedProfileId && sharedProfileDataCache[viewingSharedProfileId]
+      ? (sharedProfileDataCache[viewingSharedProfileId].savedTestCases ?? [])
+      : loadedSetId
+        ? (loadedSetTable || [])
+        : [...(savedTestCases || []), ...pendingDraftTestCases]);
+  const displayedSavedTestCaseSets = viewingSharedProfileId && sharedProfileDataCache[viewingSharedProfileId]
+    ? (sharedProfileDataCache[viewingSharedProfileId].savedTestCaseSets ?? [])
+    : savedTestCaseSets;
+  const isViewingShared = Boolean(viewingSharedProfileId);
+  const viewingSharedName = isViewingShared ? (sharedProfiles.find((p) => p.id === viewingSharedProfileId)?.name || viewingSharedProfileId) : '';
+
+  useEffect(() => {
+    if (viewingSharedProfileId && !sharedProfileDataCache[viewingSharedProfileId]) {
+      fetchSharedProfileData(viewingSharedProfileId);
+    }
+  }, [viewingSharedProfileId, sharedProfileDataCache, fetchSharedProfileData]);
+
+  // When navigating from Library "edit this test case" → load set and focus row
+  useEffect(() => {
+    if (!libraryEditContext) return;
+    const { loadSetId, focusTcIndex, focusTcId } = libraryEditContext;
+    if (loadSetId) {
+      setSetupClearedPersisted(activeProfileId, false);
+      setTableClearedMode(false);
+      loadSetForEditing(loadSetId);
+      setPendingDraftTestCases([]);
+    }
+    const applyFocus = () => {
+      const state = useTestStore.getState();
+      const list = loadSetId ? (state.loadedSetTable || []) : (state.savedTestCases || []);
+      if (focusTcIndex != null && list[focusTcIndex]) {
+        setSelectedTestCaseIds([list[focusTcIndex].id]);
+      } else if (focusTcId && list.some((t) => t.id === focusTcId)) {
+        setSelectedTestCaseIds([focusTcId]);
+      }
+      clearLibraryEditContext();
+    };
+    if (loadSetId) {
+      setTimeout(applyFocus, 0);
+    } else {
+      applyFocus();
+    }
+  }, [libraryEditContext, loadSetForEditing, clearLibraryEditContext]);
 
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectedTestCaseIds, setSelectedTestCaseIds] = useState([]);
@@ -3325,16 +3507,133 @@ const TestCasesPage = () => {
   const [draggingRowIndex, setDraggingRowIndex] = useState(null);
   const [dropTargetRowIndex, setDropTargetRowIndex] = useState(null);
   const draggingRowIndexRef = useRef(null);
+  // All test case names in Library: current list + every set's items (avoid duplicates when creating names)
+  const getAllLibraryNames = () => {
+    const state = useTestStore.getState();
+    const current = (state.savedTestCases || []).map((t) => (t.name || '').trim()).filter(Boolean);
+    const fromSets = (state.savedTestCaseSets || []).flatMap((set) =>
+      (Array.isArray(set.items) ? set.items : []).map((t) => (t.name || '').trim()).filter(Boolean)
+    );
+    return [...new Set([...current, ...fromSets])];
+  };
+
   const getNextTestCaseName = () => {
-    const list = useTestStore.getState().savedTestCases || [];
-    const nums = list.map((t) => {
-      const m = (t.name || '').match(/^TC(\d+)$/i);
+    const allNames = getAllLibraryNames();
+    const pendingNames = (pendingDraftTestCases || []).map((t) => (t.name || '').trim()).filter(Boolean);
+    const combined = [...new Set([...allNames, ...pendingNames])];
+    const nums = combined.map((name) => {
+      const m = (name || '').match(/^TC(\d+)$/i);
       return m ? parseInt(m[1], 10) : 0;
     });
     const max = Math.max(0, ...nums);
     return 'TC' + String(max + 1).padStart(5, '0');
   };
-  const [loadedSetId, setLoadedSetId] = useState(null);
+
+  const isDraftId = (id) => (pendingDraftTestCases || []).some((t) => t.id === id);
+  const updateDisplayedTestCase = (id, updates) => {
+    if (isDraftId(id)) {
+      setPendingDraftTestCases((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, ...updates } : t))
+      );
+    } else {
+      updateSavedTestCase(id, updates);
+    }
+  };
+  const removeDisplayedTestCase = (id) => {
+    if (isDraftId(id)) {
+      setPendingDraftTestCases((prev) => prev.filter((t) => t.id !== id));
+    } else {
+      removeSavedTestCase(id);
+    }
+  };
+  const addDisplayedTestCaseCommand = (tcId, cmd) => {
+    if (isDraftId(tcId)) {
+      setPendingDraftTestCases((prev) =>
+        prev.map((t) => {
+          if (t.id !== tcId) return t;
+          const commands = Array.isArray(t.commands) ? t.commands : [];
+          const id = `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+          return { ...t, commands: [...commands, { id, ...cmd }] };
+        })
+      );
+    } else {
+      addTestCaseCommand(tcId, cmd);
+    }
+  };
+  const updateDisplayedTestCaseCommand = (tcId, cmdId, updates) => {
+    if (isDraftId(tcId)) {
+      setPendingDraftTestCases((prev) =>
+        prev.map((t) => {
+          if (t.id !== tcId || !Array.isArray(t.commands)) return t;
+          return {
+            ...t,
+            commands: t.commands.map((c) => (c.id === cmdId ? { ...c, ...updates } : c)),
+          };
+        })
+      );
+    } else {
+      updateTestCaseCommand(tcId, cmdId, updates);
+    }
+  };
+  const removeDisplayedTestCaseCommand = (tcId, cmdId) => {
+    if (isDraftId(tcId)) {
+      setPendingDraftTestCases((prev) =>
+        prev.map((t) => {
+          if (t.id !== tcId || !Array.isArray(t.commands)) return t;
+          return { ...t, commands: t.commands.filter((c) => c.id !== cmdId) };
+        })
+      );
+    } else {
+      removeTestCaseCommand(tcId, cmdId);
+    }
+  };
+  const handleExtraColumnChange = (tcId, col, value) => {
+    const m = col.match(/^(VCD|ERoM|ULP)(\d+)$/);
+    if (m) {
+      const type = m[1] === 'VCD' ? 'vcd' : m[1] === 'ERoM' ? 'erom' : 'ulp';
+      const idx = parseInt(m[2], 10) - 2;
+      const tc = displayedSavedTestCases.find((t) => t.id === tcId);
+      if (!tc) return;
+      const cmds = (tc.commands || []).filter((c) => c.type === type && (c.file || '').trim());
+      if (idx < cmds.length) {
+        if (isDraftId(tcId)) {
+          setPendingDraftTestCases((prev) =>
+            prev.map((t) => {
+              if (t.id !== tcId || !Array.isArray(t.commands)) return t;
+              const typed = t.commands.filter((c) => c.type === type);
+              const cmd = typed[idx];
+              if (!cmd) return t;
+              return { ...t, commands: t.commands.map((c) => (c.id === cmd.id ? { ...c, file: value } : c)) };
+            })
+          );
+        } else {
+          updateTestCaseCommand(tcId, cmds[idx].id, { file: value });
+        }
+      } else {
+        addDisplayedTestCaseCommand(tcId, { type, file: value });
+      }
+    } else {
+      updateDisplayedTestCase(tcId, { extraColumns: { ...(displayedSavedTestCases.find((t) => t.id === tcId)?.extraColumns || {}), [col]: value } });
+    }
+  };
+  const duplicateDisplayedTestCase = (id, overrides = {}) => {
+    const list = displayedSavedTestCases;
+    const src = list.find((t) => t.id === id);
+    if (!src) return;
+    const name = overrides.name || getUniqueName((src.name || '').trim(), id);
+    const dup = {
+      ...src,
+      id: `tc-draft-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      name,
+      createdAt: new Date().toISOString(),
+      ...overrides,
+    };
+    if (loadedSetId) {
+      duplicateSavedTestCase(id, overrides);
+    } else {
+      setPendingDraftTestCases((prev) => [...prev, dup]);
+    }
+  };
   const [testCaseTableLayout, setTestCaseTableLayout] = useState('table'); // 'table' | 'step' — ตารางแนวนอน หรือ layout แนวตั้งตามขั้นตอน (ตามภาพ)
   const [localDroppedFiles, setLocalDroppedFiles] = useState([]);
   const [commandMenuTcId, setCommandMenuTcId] = useState(null); // which test case's "Add command" dropdown is open
@@ -3355,10 +3654,18 @@ const TestCasesPage = () => {
     if (['lin', 'txt', 'ulp'].includes(ext)) return 'lin';
     return 'other';
   };
-  const workingFilesList = [
-    ...selectedIds.map((id) => uploadedFiles.find((f) => f.id === id)).filter(Boolean),
-    ...localDroppedFiles.map((f) => ({ id: f.id, name: f.name, sizeFormatted: f.sizeFormatted })),
-  ];
+  const workingFilesList = (() => {
+    const byId = new Map();
+    selectedIds.forEach((id) => {
+      const f = uploadedFiles.find((x) => x.id === id);
+      if (f && !byId.has(f.id)) byId.set(f.id, f);
+    });
+    localDroppedFiles.forEach((f) => {
+      const entry = { id: f.id, name: f.name, sizeFormatted: f.sizeFormatted };
+      if (!byId.has(f.id)) byId.set(f.id, entry);
+    });
+    return [...byId.values()];
+  })();
   const selectedFiles = workingFilesList;
   const vcdFilesList = uploadedFiles.filter((f) => getFileKind(f) === 'vcd');
   const binFilesList = uploadedFiles.filter((f) => getFileKind(f) === 'bin');
@@ -3367,9 +3674,14 @@ const TestCasesPage = () => {
   const binSelected = selectedFiles.filter((f) => getFileKind(f) === 'bin');
   const workingCount = selectedIds.length + localDroppedFiles.length;
 
-  // ชื่อไม่ซ้ำ: สร้างชื่อที่ยังไม่มีในคลัง (excludeId = id ของแถวที่กำลังแก้ ไม่นับเป็นซ้ำ)
+  // ชื่อไม่ซ้ำ: สร้างชื่อที่ยังไม่มีในคลัง (ดึงจาก Library ทั้ง savedTestCases + ทุก set items), excludeId = id ของแถวที่กำลังแก้
   const getUniqueName = (baseName, excludeId = null) => {
-    const existing = savedTestCases.filter((t) => t.id !== excludeId).map((t) => (t.name || '').trim()).filter(Boolean);
+    const currentNames = (savedTestCases || []).filter((t) => t.id !== excludeId).map((t) => (t.name || '').trim()).filter(Boolean);
+    const draftNames = (pendingDraftTestCases || []).filter((t) => t.id !== excludeId).map((t) => (t.name || '').trim()).filter(Boolean);
+    const setNames = (savedTestCaseSets || []).flatMap((set) =>
+      (Array.isArray(set.items) ? set.items : []).map((t) => (t.name || '').trim()).filter(Boolean)
+    );
+    const existing = [...new Set([...currentNames, ...draftNames, ...setNames])];
     const base = (baseName || 'Test case').trim() || 'Test case';
     if (!existing.includes(base)) return base;
     let n = 2;
@@ -3379,19 +3691,29 @@ const TestCasesPage = () => {
 
   const handleNameChange = (tcId, newName, prevName = '') => {
     const trimmed = (newName || '').trim();
-    const isDuplicate = trimmed !== '' && savedTestCases.some((t) => t.id !== tcId && (t.name || '').trim() === trimmed);
+    const inCurrent = (savedTestCases || []).some((t) => t.id !== tcId && (t.name || '').trim() === trimmed);
+    const inDraft = (pendingDraftTestCases || []).some((t) => t.id !== tcId && (t.name || '').trim() === trimmed);
+    const inSets = (savedTestCaseSets || []).some((set) =>
+      (Array.isArray(set.items) ? set.items : []).some((t) => (t.name || '').trim() === trimmed)
+    );
+    const isDuplicate = trimmed !== '' && (inCurrent || inDraft || inSets);
     if (isDuplicate) {
       addToast({ type: 'warning', message: 'Duplicate name — use a unique name for this test case' });
-      updateSavedTestCase(tcId, { name: prevName });
+      updateDisplayedTestCase(tcId, { name: prevName });
       return;
     }
-    updateSavedTestCase(tcId, { name: trimmed });
+    updateDisplayedTestCase(tcId, { name: trimmed });
   };
 
-  // เมื่อมีไฟล์ใหม่จาก Library (refresh): ไม่ overwrite ถ้า Save Set; ถ้า Start fresh ให้เลือกเฉพาะที่เพิ่ม; ถ้า prev===0 และตารางว่าง (กลับมาหลัง Start fresh) ไม่ auto-select เพื่อไม่ให้ test case กลับมา
+  // เมื่อมีไฟล์ใหม่จาก Library (refresh): ไม่ overwrite ถ้า Save Set; ถ้า Start fresh ให้เลือกเฉพาะที่เพิ่ม; ถ้า user เคยกด Start fresh/Clear (persisted) ไม่ auto-select เพื่อไม่ให้ไฟล์กลับมา
   useEffect(() => {
     if (justDidSaveSetRef.current) {
       justDidSaveSetRef.current = false;
+      prevUploadedCountRef.current = uploadedFiles.length;
+      return;
+    }
+    if (getSetupClearedPersisted(activeProfileId)) {
+      setSelectedIds([]);
       prevUploadedCountRef.current = uploadedFiles.length;
       return;
     }
@@ -3405,17 +3727,26 @@ const TestCasesPage = () => {
         prevUploadedCountRef.current = curr;
         return () => clearTimeout(t);
       }
-      // กลับมาหลัง Start fresh (remount): prev ถูก reset เป็น 0, ตารางว่าง — ไม่เลือกไฟล์ทั้งหมด จะได้ไม่ trigger Auto-pair ให้ test case กลับมา
-      if (prev === 0 && savedTestCases.length === 0) {
+      // กลับมาหลัง remount: ถ้า prev === 0 เลือกเฉพาะไฟล์ที่ใช้โดย test cases (ยกเว้นเมื่อ persisted cleared แล้ว)
+      if (prev === 0) {
+        const allCases = [...(savedTestCases || []), ...(pendingDraftTestCases || [])];
+        const usedNames = new Set();
+        allCases.forEach((t) => {
+          if (t.vcdName) usedNames.add(t.vcdName);
+          if (t.binName) usedNames.add(t.binName);
+          if (t.linName) usedNames.add(t.linName);
+        });
+        const matchingIds = (uploadedFiles || []).filter((f) => usedNames.has(f.name)).map((f) => f.id);
+        setSelectedIds(matchingIds.length > 0 ? matchingIds : []);
         prevUploadedCountRef.current = curr;
         return;
       }
       setSelectedIds(uploadedFiles.map((f) => f.id));
     }
     prevUploadedCountRef.current = curr;
-  }, [uploadedFiles.length, savedTestCases.length]);
+  }, [uploadedFiles.length, savedTestCases.length, pendingDraftTestCases.length, activeProfileId]);
 
-  // Auto-pair: เมื่อมีไฟล์ในพื้นที่ทำงาน (จาก Library หรือ drop) มี VCD + ERoM ให้สร้าง test case จากคู่ที่ยังไม่มีในคลัง
+  // Auto-pair: เมื่อเลือกไฟล์ (VCD + ERoM) ให้สร้าง test case อัตโนมัติ — ใส่ draft จนกว่าจะกด Save
   useEffect(() => {
     const orderedFiles = selectedFiles;
     if (orderedFiles.length === 0) return;
@@ -3436,13 +3767,19 @@ const TestCasesPage = () => {
         const d = Math.abs(orderedFiles.findIndex((f) => f.id === linFile.id) - vcdIndexInOrdered);
         if (d < minLin) { minLin = d; nearestLin = linFile; }
       });
-      const exists = savedTestCases.some((t) => t.vcdName === vcdFile.name && t.binName === binFile.name);
-      if (!exists) {
+      const inSaved = (savedTestCases || []).some((t) => t.vcdName === vcdFile.name && t.binName === binFile.name);
+      const inDraft = (pendingDraftTestCases || []).some((t) => t.vcdName === vcdFile.name && t.binName === binFile.name);
+      if (!inSaved && !inDraft) {
         const name = getNextTestCaseName();
-        addSavedTestCase({ name, vcdName: vcdFile.name, binName: binFile.name, linName: nearestLin?.name || '', tryCount: 1 });
+        const entry = { name, vcdName: vcdFile.name, binName: binFile.name, linName: nearestLin?.name || '', tryCount: 1, createdAt: new Date().toISOString() };
+        if (loadedSetId) {
+          addSavedTestCase(entry);
+        } else {
+          setPendingDraftTestCases((prev) => [...prev, { ...entry, id: `tc-draft-${Date.now()}-${Math.random().toString(36).slice(2, 9)}` }]);
+        }
       }
     });
-  }, [selectedIds.join(','), localDroppedFiles.length, localDroppedFiles.map((f) => f.id).join(',')]);
+  }, [selectedIds.join(','), localDroppedFiles.length, localDroppedFiles.map((f) => f.id).join(','), savedTestCases?.length, pendingDraftTestCases?.length, loadedSetId]);
 
   // เมื่อโหลด Set แล้วอัปโหลดไฟล์เพิ่ม — เลือกไฟล์ที่ตรงกับ Set อัตโนมัติ
   useEffect(() => {
@@ -3459,10 +3796,17 @@ const TestCasesPage = () => {
 
   const handleSelectAllFiles = () => {
     if (selectedIds.length === uploadedFiles.length) setSelectedIds([]);
-    else setSelectedIds(uploadedFiles.map((f) => f.id));
+    else {
+      setSetupClearedPersisted(activeProfileId, false);
+      setSelectedIds(uploadedFiles.map((f) => f.id));
+    }
   };
   const toggleFileSelect = (id) => {
-    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setSelectedIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      setSetupClearedPersisted(activeProfileId, false);
+      return [...prev, id];
+    });
   };
   const handleClearAll = () => {
     setSelectedIds([]);
@@ -3482,20 +3826,22 @@ const TestCasesPage = () => {
     setIsDeletingFiles(false);
     addToast({ type: 'success', message: 'Selected files removed and test cases table cleared' });
   };
-  // Start fresh: ล้างตาราง + ไฟล์ในพื้นที่ทำงาน (ยังไม่เก็บเข้า Library จนกว่ากด Save Set)
+  // Start fresh: ล้างเฉพาะ UI/ตาราง ไม่ลบข้อมูลจาก Library (server). Persist so refresh/return keeps empty.
   const handleStartFresh = () => {
-    if (savedTestCases.length === 0 && selectedIds.length === 0 && localDroppedFiles.length === 0) {
+    if (tableClearedMode && selectedIds.length === 0 && localDroppedFiles.length === 0) {
       addToast({ type: 'info', message: 'Table and file selection are already empty' });
       return;
     }
-    if (!window.confirm('Clear Table')) return;
+    if (!window.confirm('Clear table and file selection? (Saved test cases in Library will remain)')) return;
+    setSetupClearedPersisted(activeProfileId, true);
+    setTableClearedMode(true);
     setSelectedIds([]);
     setLocalDroppedFiles([]);
-    setSavedTestCases([]);
+    setPendingDraftTestCases([]);
     setSelectedTestCaseIds([]);
     setLoadedSetId(null);
     justDidStartFreshRef.current = true;
-    addToast({ type: 'success', message: 'Clear Already' });
+    addToast({ type: 'success', message: 'Table cleared — Library unchanged' });
   };
 
   const addToLocalDropped = (file) => {
@@ -3525,7 +3871,10 @@ const TestCasesPage = () => {
       addedInThisBatch.add(file.name);
       added++;
     }
-    if (added > 0) addToast({ type: 'success', message: added === accepted.length && skipped === 0 ? `Added ${added} file(s)` : `Added ${added} file(s)${skipped > 0 ? `, ${skipped} duplicate(s) skipped` : ''}` });
+    if (added > 0) {
+      setSetupClearedPersisted(activeProfileId, false);
+      addToast({ type: 'success', message: added === accepted.length && skipped === 0 ? `Added ${added} file(s)` : `Added ${added} file(s)${skipped > 0 ? `, ${skipped} duplicate(s) skipped` : ''}` });
+    }
     if (skipped > 0 && added === 0) addToast({ type: 'info', message: `${skipped} file(s) already in list (duplicate name), skipped` });
   };
   const handleFileInputChange = (e) => {
@@ -3620,37 +3969,57 @@ const TestCasesPage = () => {
         const d = Math.abs(orderedFiles.findIndex((f) => f.id === linFile.id) - vcdIndexInOrdered);
         if (d < minLin) { minLin = d; nearestLin = linFile; }
       });
-      const exists = savedTestCases.some((t) => t.vcdName === vcdFile.name && t.binName === binFile.name);
-      if (!exists) {
+      const inSaved = (savedTestCases || []).some((t) => t.vcdName === vcdFile.name && t.binName === binFile.name);
+      const inDraft = (pendingDraftTestCases || []).some((t) => t.vcdName === vcdFile.name && t.binName === binFile.name);
+      if (!inSaved && !inDraft) {
         const name = getNextTestCaseName();
-        addSavedTestCase({ name, vcdName: vcdFile.name, binName: binFile.name, linName: nearestLin?.name, tryCount: 1 });
+        const entry = { name, vcdName: vcdFile.name, binName: binFile.name, linName: nearestLin?.name || '', tryCount: 1, createdAt: new Date().toISOString() };
+        if (loadedSetId) {
+          addSavedTestCase(entry);
+        } else {
+          setPendingDraftTestCases((prev) => [...prev, { ...entry, id: `tc-draft-${Date.now()}-${Math.random().toString(36).slice(2, 9)}` }]);
+        }
         added++;
       }
     });
-    if (added > 0) addToast({ type: 'success', message: `Added ${added} test case(s) from selection` });
-    else addToast({ type: 'info', message: 'All possible pairs already in library' });
+    if (added > 0) {
+      setSetupClearedPersisted(activeProfileId, false);
+      setTableClearedMode(false);
+      addToast({ type: 'success', message: `Added ${added} test case(s) from selection` });
+    } else addToast({ type: 'info', message: 'All possible pairs already in library' });
   };
 
   const addOneTestCase = () => {
+    setSetupClearedPersisted(activeProfileId, false);
+    setTableClearedMode(false);
     const name = getNextTestCaseName();
-    addSavedTestCase({ name, vcdName: '', binName: '', linName: '', tryCount: 1 });
+    const entry = { name, vcdName: '', binName: '', linName: '', tryCount: 1, createdAt: new Date().toISOString() };
+    if (loadedSetId) {
+      addSavedTestCase(entry);
+    } else {
+      setPendingDraftTestCases((prev) => [...prev, { ...entry, id: `tc-draft-${Date.now()}-${Math.random().toString(36).slice(2, 9)}` }]);
+    }
     addToast({ type: 'success', message: `Added "${name}" — fill VCD/ERoM below or rename if you like` });
   };
 
+  // Clear: ล้างเฉพาะ UI/ตาราง ไม่ลบข้อมูลจาก Library (server). Persist so refresh/return keeps empty.
   const clearAllTestCases = () => {
-    if (savedTestCases.length === 0 && selectedIds.length === 0) { addToast({ type: 'info', message: 'No test cases or file selection to clear' }); return; }
-    if (window.confirm('Clear all test cases and file selection?')) {
-      setSavedTestCases([]);
+    const total = (savedTestCases?.length || 0) + (pendingDraftTestCases?.length || 0) + selectedIds.length;
+    if (total === 0) { addToast({ type: 'info', message: 'No test cases or file selection to clear' }); return; }
+    if (window.confirm('Clear table and file selection? (Saved test cases in Library will remain)')) {
+      setSetupClearedPersisted(activeProfileId, true);
+      setTableClearedMode(true);
+      setPendingDraftTestCases([]);
       setSelectedTestCaseIds([]);
       setSelectedIds([]);
       setLoadedSetId(null);
-      addToast({ type: 'success', message: 'Test cases and file selection cleared' });
+      addToast({ type: 'success', message: 'Table cleared — Library unchanged' });
     }
   };
 
   const toggleSelectAllTestCases = () => {
-    if (selectedTestCaseIds.length === savedTestCases.length) setSelectedTestCaseIds([]);
-    else setSelectedTestCaseIds(savedTestCases.map((t) => t.id));
+    if (selectedTestCaseIds.length === displayedSavedTestCases.length) setSelectedTestCaseIds([]);
+    else setSelectedTestCaseIds(displayedSavedTestCases.map((t) => t.id));
   };
   const toggleTestCaseSelect = (id) => {
     setSelectedTestCaseIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -3659,9 +4028,22 @@ const TestCasesPage = () => {
     if (selectedTestCaseIds.length === 0) { addToast({ type: 'warning', message: 'Select at least one test case' }); return; }
     const num = parseInt(bulkTryCount, 10);
     if (isNaN(num) || num < 1) { addToast({ type: 'error', message: 'Enter a valid number (min 1)' }); return; }
-    bulkUpdateTryCount(selectedTestCaseIds, num);
+    const draftIds = selectedTestCaseIds.filter((id) => isDraftId(id));
+    const savedIds = selectedTestCaseIds.filter((id) => !isDraftId(id));
+    if (draftIds.length > 0) {
+      setPendingDraftTestCases((prev) =>
+        prev.map((t) => (draftIds.includes(t.id) ? { ...t, tryCount: num } : t))
+      );
+    }
+    if (savedIds.length > 0) bulkUpdateTryCount(savedIds, num);
     setBulkTryCount('');
     addToast({ type: 'success', message: `Set try count to ${num} for ${selectedTestCaseIds.length} test case(s)` });
+  };
+  const handleDeleteSelectedTestCases = () => {
+    if (selectedTestCaseIds.length === 0) { addToast({ type: 'warning', message: 'Select at least one test case to delete' }); return; }
+    selectedTestCaseIds.forEach((id) => removeDisplayedTestCase(id));
+    setSelectedTestCaseIds([]);
+    addToast({ type: 'success', message: `Deleted ${selectedTestCaseIds.length} test case(s)` });
   };
 
   const reorderList = (arr, fromIndex, toIndex) => {
@@ -3676,7 +4058,23 @@ const TestCasesPage = () => {
   const handleRowDrop = (e, toIndex) => {
     e.preventDefault();
     const fromIndex = draggingRowIndexRef.current;
-    if (fromIndex != null && savedTestCases.length > 0) reorderSavedTestCases(fromIndex, toIndex);
+    if (fromIndex == null || isViewingShared) {
+      draggingRowIndexRef.current = null;
+      setDraggingRowIndex(null);
+      setDropTargetRowIndex(null);
+      return;
+    }
+    const list = displayedSavedTestCases;
+    if (list.length === 0) return;
+    const reordered = reorderList([...list], fromIndex, toIndex);
+    if (pendingDraftTestCases.length > 0) {
+      const saved = reordered.filter((t) => !String(t.id || '').startsWith('tc-draft-'));
+      const draft = reordered.filter((t) => String(t.id || '').startsWith('tc-draft-'));
+      setSavedTestCases(saved);
+      setPendingDraftTestCases(draft);
+    } else {
+      reorderSavedTestCases(fromIndex, toIndex);
+    }
     draggingRowIndexRef.current = null;
     setDraggingRowIndex(null);
     setDropTargetRowIndex(null);
@@ -3714,9 +4112,12 @@ const TestCasesPage = () => {
         return;
       }
 
-      const existingNames = new Set(
-        savedTestCases.map((t) => (t.name || '').trim()).filter((n) => n !== '')
+      const currentNames = (savedTestCases || []).map((t) => (t.name || '').trim()).filter((n) => n !== '');
+      const draftNames = (pendingDraftTestCases || []).map((t) => (t.name || '').trim()).filter((n) => n !== '');
+      const setNames = (savedTestCaseSets || []).flatMap((set) =>
+        (Array.isArray(set.items) ? set.items : []).map((t) => (t.name || '').trim()).filter((n) => n !== '')
       );
+      const existingNames = new Set([...currentNames, ...draftNames, ...setNames]);
       const created = [];
 
       const makeUniqueName = (baseRaw) => {
@@ -3755,12 +4156,13 @@ const TestCasesPage = () => {
           if (key) extraColumns[key] = val;
         });
         created.push({
-          id: `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          id: loadedSetId ? `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}` : `tc-draft-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
           name,
           vcdName,
           binName,
           linName: linName || '',
           tryCount,
+          createdAt: new Date().toISOString(),
           ...(Object.keys(extraColumns).length > 0 ? { extraColumns } : {}),
         });
       }
@@ -3770,8 +4172,14 @@ const TestCasesPage = () => {
         return;
       }
 
-      const nextList = [...savedTestCases, ...created];
-      setSavedTestCases(nextList);
+      if (loadedSetId) {
+        const nextList = [...(loadedSetTable || []), ...created];
+        setSavedTestCases(nextList);
+      } else {
+        setPendingDraftTestCases((prev) => [...prev, ...created]);
+      }
+      setSetupClearedPersisted(activeProfileId, false);
+      setTableClearedMode(false);
       let msg = `Imported ${created.length} test case(s) from CSV (names made unique)`;
       if (extraColumnIndices.length > 0) {
         msg += ` — ${extraColumnIndices.length} extra column(s) added: ${extraColumnIndices.map((x) => x.key).join(', ')}`;
@@ -3795,10 +4203,35 @@ const TestCasesPage = () => {
         <p className="text-slate-500 dark:text-slate-400 mt-1 text-sm">Create and Store Test cases </p>
       </div>
 
+      {isViewingShared && (
+        <div className="rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-4 flex flex-wrap items-center justify-between gap-3">
+          <span className="text-sm font-medium text-blue-800 dark:text-blue-200">
+            Viewing shared profile: <strong>{viewingSharedName}</strong> (read-only)
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                copySharedToMyProfile();
+                addToast({ type: 'success', message: 'Copied to your profile' });
+              }}
+              className="px-3 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700"
+            >
+              Copy to my profile
+            </button>
+            <button
+              onClick={() => setViewingSharedProfile(null)}
+              className="px-3 py-1.5 rounded-lg text-sm font-medium border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+            >
+              Stop viewing
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* File Library (เทียบเท่า Setup) — โหลด Set จะเลือกไฟล์ของ Set ใน Library ด้วย */}
       <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
         {loadedSetId && (() => {
-          const loadedSet = savedTestCaseSets?.find((s) => s.id === loadedSetId);
+          const loadedSet = displayedSavedTestCaseSets?.find((s) => s.id === loadedSetId);
           const namesArr = loadedSet?.fileLibrarySnapshot?.length
             ? loadedSet.fileLibrarySnapshot.map((s) => s.name)
             : [...(loadedSet?.items || []).reduce((acc, t) => { if (t.vcdName) acc.add(t.vcdName); if (t.binName) acc.add(t.binName); if (t.linName) acc.add(t.linName); return acc; }, new Set())];
@@ -3817,8 +4250,8 @@ const TestCasesPage = () => {
           </div>
           <div className="flex items-center gap-2">
             {workingCount > 0 && <button onClick={handleClearAll} className="px-3 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-bold hover:bg-slate-200">Un Select All</button>}
-            {workingCount > 0 && <button onClick={handleDeleteSelected} disabled={isDeletingFiles} className="px-3 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-bold hover:bg-red-100 disabled:opacity-60">Delete from Library</button>}
-            {(savedTestCases.length > 0 || workingCount > 0) && <button onClick={handleStartFresh} className="px-3 py-2 bg-amber-50 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-100">Start fresh</button>}
+            {workingCount > 0 && !isViewingShared && <button onClick={handleDeleteSelected} disabled={isDeletingFiles} className="px-3 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-bold hover:bg-red-100 disabled:opacity-60">Delete from Library</button>}
+            {(displayedSavedTestCases.length > 0 || workingCount > 0) && !isViewingShared && <button onClick={handleStartFresh} className="px-3 py-2 bg-amber-50 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-100">Start fresh</button>}
           </div>
         </div>
         <input ref={fileInputRef} type="file" multiple accept=".vcd,.bin,.hex,.elf,.erom,.ulp" onChange={handleFileInputChange} className="hidden" />
@@ -3893,7 +4326,7 @@ const TestCasesPage = () => {
           <div className="flex flex-wrap items-center gap-2">
             <button onClick={pairAll} disabled={vcdSelected.length === 0 || binSelected.length === 0} className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 ${vcdSelected.length === 0 || binSelected.length === 0 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`} title="Pair selected files and add to test cases"><Layers size={14} /> Pair All</button>
             <button onClick={addOneTestCase} className="px-3 py-2 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-2"><Plus size={14} /> Add Test Case</button>
-            <button onClick={clearAllTestCases} disabled={savedTestCases.length === 0 && workingCount === 0} className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 ${savedTestCases.length === 0 && workingCount === 0 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-red-600 text-white hover:bg-red-700'}`}><X size={14} /> Clear</button>
+            <button onClick={clearAllTestCases} disabled={(savedTestCases.length === 0 && workingCount === 0) || isViewingShared} className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 ${(savedTestCases.length === 0 && workingCount === 0) || isViewingShared ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-red-600 text-white hover:bg-red-700'}`}><X size={14} /> Clear</button>
             <div className="h-6 w-px bg-slate-300 dark:bg-slate-600 mx-1" />
             <button
               onClick={() => csvInputRef.current?.click()}
@@ -3911,46 +4344,81 @@ const TestCasesPage = () => {
             />
             <button
               onClick={() => {
-                if (savedTestCases.length === 0) {
+                const mergeCommandsIntoExtraForSave = (tc) => {
+                  const extra = tc.extraColumns && typeof tc.extraColumns === 'object' ? { ...tc.extraColumns } : {};
+                  const cmds = Array.isArray(tc.commands) ? tc.commands : [];
+                  const vcdCmds = cmds.filter((c) => c.type === 'vcd' && (c.file || '').trim());
+                  const eromCmds = cmds.filter((c) => c.type === 'erom' && (c.file || '').trim());
+                  const ulpCmds = cmds.filter((c) => c.type === 'ulp' && (c.file || '').trim());
+                  vcdCmds.forEach((c, i) => { extra[`VCD${i + 2}`] = c.file || ''; });
+                  eromCmds.forEach((c, i) => { extra[`ERoM${i + 2}`] = c.file || ''; });
+                  ulpCmds.forEach((c, i) => { extra[`ULP${i + 2}`] = c.file || ''; });
+                  return Object.fromEntries(Object.entries(extra).filter(([, v]) => (v ?? '').toString().trim() !== ''));
+                };
+                const toSave = pendingDraftTestCases || [];
+                if (toSave.length === 0 && (savedTestCases?.length || 0) === 0) {
                   addToast({ type: 'warning', message: 'No test cases to save' });
                   return;
                 }
-                addToast({ type: 'success', message: `Test cases saved to library (${savedTestCases.length} case(s))` });
+                if (toSave.length > 0) {
+                  toSave.forEach((tc) => {
+                    const { id, commands, ...rest } = tc;
+                    const extraColumns = mergeCommandsIntoExtraForSave(tc);
+                    addSavedTestCase({ ...rest, extraColumns: Object.keys(extraColumns).length ? extraColumns : undefined });
+                  });
+                  setPendingDraftTestCases([]);
+                }
+                const total = useTestStore.getState().savedTestCases?.length || 0;
+                addToast({ type: 'success', message: `Test cases saved to library (${total} case(s))` });
               }}
               className="px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5"
-              title="Save current test cases to library (table is already the library)"
+              title="Save draft test cases to library — จะแสดงใน Library หลังกด Save"
             >
               <Save size={14} />
               <span>Save to library</span>
             </button>
           </div>
         </div>
-        {loadedSetId && savedTestCaseSets?.find((s) => s.id === loadedSetId) && (
+        {loadedSetId && displayedSavedTestCaseSets?.find((s) => s.id === loadedSetId) && !isViewingShared && (
           <div className="mb-3 flex flex-wrap items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700">
             <span className="text-xs font-semibold text-amber-800 dark:text-amber-200">
-              Editing set: {savedTestCaseSets.find((s) => s.id === loadedSetId)?.name}
+              Editing set: {displayedSavedTestCaseSets.find((s) => s.id === loadedSetId)?.name}
             </span>
             <button
               onClick={() => {
-                const normalized = savedTestCases.map((t) => ({
+                const mergeCommandsIntoExtra = (tc) => {
+                  const extra = tc.extraColumns && typeof tc.extraColumns === 'object' ? { ...tc.extraColumns } : {};
+                  const cmds = Array.isArray(tc.commands) ? tc.commands : [];
+                  const vcdCmds = cmds.filter((c) => c.type === 'vcd' && (c.file || '').trim());
+                  const eromCmds = cmds.filter((c) => c.type === 'erom' && (c.file || '').trim());
+                  const ulpCmds = cmds.filter((c) => c.type === 'ulp' && (c.file || '').trim());
+                  vcdCmds.forEach((c, i) => { extra[`VCD${i + 2}`] = c.file || ''; });
+                  eromCmds.forEach((c, i) => { extra[`ERoM${i + 2}`] = c.file || ''; });
+                  ulpCmds.forEach((c, i) => { extra[`ULP${i + 2}`] = c.file || ''; });
+                  return Object.fromEntries(Object.entries(extra).filter(([, v]) => (v ?? '').toString().trim() !== ''));
+                };
+                const normalized = displayedSavedTestCases.map((t) => ({
                   name: t.name || '',
                   vcdName: t.vcdName || '',
                   binName: t.binName || '',
                   linName: t.linName || '',
                   boardId: t.boardId || '',
                   tryCount: typeof t.tryCount === 'number' && t.tryCount > 0 ? t.tryCount : 1,
-                  extraColumns: t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {},
+                  extraColumns: mergeCommandsIntoExtra(t),
+                  createdAt: t.createdAt || new Date().toISOString(),
                 }));
                 const fileNames = new Set();
-                savedTestCases.forEach((t) => {
+                displayedSavedTestCases.forEach((t) => {
                   if (t.vcdName) fileNames.add(t.vcdName);
                   if (t.binName) fileNames.add(t.binName);
                   if (t.linName) fileNames.add(t.linName);
+                  const ec = mergeCommandsIntoExtra(t);
+                  Object.values(ec).forEach((v) => { if ((v ?? '').toString().trim()) fileNames.add(String(v).trim()); });
                 });
                 const fileLibrarySnapshot = [...fileNames].map((n) => ({ name: n }));
                 updateSavedTestCaseSet(loadedSetId, { items: normalized, fileLibrarySnapshot });
-                const setName = savedTestCaseSets.find((s) => s.id === loadedSetId)?.name || 'Set';
-                setLoadedSetId(null);
+                const setName = displayedSavedTestCaseSets.find((s) => s.id === loadedSetId)?.name || 'Set';
+                restoreSavedTestCasesFromProfile();
                 addToast({ type: 'success', message: `Updated set "${setName}"` });
               }}
               className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-600 text-white hover:bg-amber-700"
@@ -3958,14 +4426,16 @@ const TestCasesPage = () => {
               Update set
             </button>
             <button
-              onClick={() => setLoadedSetId(null)}
+              onClick={() => {
+                restoreSavedTestCasesFromProfile();
+              }}
               className="px-2 py-1 rounded text-xs text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
             >
               Cancel
             </button>
           </div>
         )}
-        {savedTestCases.length > 0 && (
+        {displayedSavedTestCases.length > 0 && !isViewingShared && (
           <div className="mb-3 flex items-center gap-2 flex-wrap">
             <span className="text-xs font-bold text-slate-600 dark:text-slate-400">Bulk try:</span>
             {selectedTestCaseIds.length > 0 && (
@@ -3973,34 +4443,53 @@ const TestCasesPage = () => {
                 <span className="text-xs text-slate-500">{selectedTestCaseIds.length} selected</span>
                 <input type="number" min={1} value={bulkTryCount} onChange={(e) => setBulkTryCount(e.target.value)} placeholder="Try" className="w-16 px-2 py-1 text-xs border border-slate-300 dark:border-slate-500 rounded bg-white dark:bg-slate-800" onKeyDown={(e) => e.key === 'Enter' && handleBulkSetTryCount()} />
                 <button onClick={handleBulkSetTryCount} className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700">Apply</button>
+                <button onClick={handleDeleteSelectedTestCases} className="px-3 py-1 bg-red-600 text-white rounded text-xs font-semibold hover:bg-red-700 flex items-center gap-1" title="Delete selected test cases">
+                  <Trash2 size={12} />
+                  Delete
+                </button>
               </>
             )}
           </div>
         )}
-        {/* Tab switcher: Table (horizontal) | Step (vertical layout per image) */}
-        <div className="mb-3 flex items-center gap-2 border-b border-slate-200 dark:border-slate-600">
-          <button
-            type="button"
-            onClick={() => setTestCaseTableLayout('table')}
-            className={`px-3 py-1.5 text-xs font-semibold border-b-2 transition-colors ${
-              testCaseTableLayout === 'table'
-                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
-            }`}
-          >
-            Table
-          </button>
-          <button
-            type="button"
-            onClick={() => setTestCaseTableLayout('step')}
-            className={`px-3 py-1.5 text-xs font-semibold border-b-2 transition-colors ${
-              testCaseTableLayout === 'step'
-                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
-            }`}
-          >
-            Vertical
-          </button>
+        {/* Tab switcher: Table (horizontal) | Step (vertical layout per image) + Select all when Step */}
+        <div className="mb-3 flex items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-600">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setTestCaseTableLayout('table')}
+              className={`px-3 py-1.5 text-xs font-semibold border-b-2 transition-colors ${
+                testCaseTableLayout === 'table'
+                  ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                  : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+              }`}
+            >
+              Table
+            </button>
+            <button
+              type="button"
+              onClick={() => setTestCaseTableLayout('step')}
+              className={`px-3 py-1.5 text-xs font-semibold border-b-2 transition-colors ${
+                testCaseTableLayout === 'step'
+                  ? 'border-blue-600 text-blue-600 dark:text-blue-400'
+                  : 'border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
+              }`}
+            >
+              Vertical
+            </button>
+          </div>
+          {testCaseTableLayout === 'step' && displayedSavedTestCases.length > 0 && (
+            <label className={`flex items-center gap-2 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-400 ${isViewingShared ? 'pointer-events-none opacity-70' : 'cursor-pointer'}`}>
+              <input
+                type="checkbox"
+                checked={selectedTestCaseIds.length === displayedSavedTestCases.length}
+                disabled={isViewingShared}
+                onChange={toggleSelectAllTestCases}
+                className="w-4 h-4 rounded cursor-pointer"
+                title="Select all"
+              />
+              Select all
+            </label>
+          )}
         </div>
         {testCaseTableLayout === 'table' ? (
           /* Tab 1: Table layout (horizontal) — original */
@@ -4011,19 +4500,54 @@ const TestCasesPage = () => {
                 <th className="w-10 px-2 py-2 border-r border-slate-200 dark:border-slate-600">
                   <input
                     type="checkbox"
-                    checked={savedTestCases.length > 0 && selectedTestCaseIds.length === savedTestCases.length}
+                    checked={displayedSavedTestCases.length > 0 && selectedTestCaseIds.length === displayedSavedTestCases.length}
                     onChange={toggleSelectAllTestCases}
+                    disabled={isViewingShared}
                     className="w-4 h-4 rounded cursor-pointer"
                     title="Select all"
                   />
                 </th>
                 <th className="w-8 px-2 py-2 border-r border-slate-200 dark:border-slate-600">#</th>
                 <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">Name</th>
+                <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">Tag</th>
+                <th className="w-28 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Date</th>
                 <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">ERoM</th>
                 <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">ULP</th>
                 <th className="px-2 py-2 border-r border-slate-200 dark:border-slate-600">VCD</th>
                 {(() => {
-                  const extraCols = [...new Set(savedTestCases.flatMap((t) => Object.keys(t.extraColumns || {})))].sort();
+                  const getExtraColKeys = (t) => {
+                    const fromExtra = Object.keys(t.extraColumns || {});
+                    const fromCmds = [];
+                    (t.commands || []).filter((c) => c.type === 'vcd' && (c.file || '').trim()).forEach((_, i) => fromCmds.push(`VCD${i + 2}`));
+                    (t.commands || []).filter((c) => c.type === 'erom' && (c.file || '').trim()).forEach((_, i) => fromCmds.push(`ERoM${i + 2}`));
+                    (t.commands || []).filter((c) => c.type === 'ulp' && (c.file || '').trim()).forEach((_, i) => fromCmds.push(`ULP${i + 2}`));
+                    return [...fromExtra, ...fromCmds];
+                  };
+                  const getExtraVal = (tc, col) => {
+                    const m = col.match(/^VCD(\d+)$/);
+                    if (m) {
+                      const idx = parseInt(m[1], 10) - 2;
+                      const vcds = (tc.commands || []).filter((c) => c.type === 'vcd' && (c.file || '').trim());
+                      return vcds[idx]?.file ?? tc.extraColumns?.[col] ?? '';
+                    }
+                    const m2 = col.match(/^ERoM(\d+)$/);
+                    if (m2) {
+                      const idx = parseInt(m2[1], 10) - 2;
+                      const eroms = (tc.commands || []).filter((c) => c.type === 'erom' && (c.file || '').trim());
+                      return eroms[idx]?.file ?? tc.extraColumns?.[col] ?? '';
+                    }
+                    const m3 = col.match(/^ULP(\d+)$/);
+                    if (m3) {
+                      const idx = parseInt(m3[1], 10) - 2;
+                      const ulps = (tc.commands || []).filter((c) => c.type === 'ulp' && (c.file || '').trim());
+                      return ulps[idx]?.file ?? tc.extraColumns?.[col] ?? '';
+                    }
+                    return tc.extraColumns?.[col] ?? '';
+                  };
+                  const allCols = [...new Set(displayedSavedTestCases.flatMap(getExtraColKeys))].sort();
+                  const extraCols = allCols
+                    .filter((col) => !/^tag$/i.test(col))
+                    .filter((col) => displayedSavedTestCases.some((t) => (getExtraVal(t, col) ?? '').toString().trim() !== ''));
                   return extraCols.map((col) => (
                     <th key={col} className="px-2 py-2 border-r border-slate-200 dark:border-slate-600 min-w-[80px]" title="Extra column from CSV">{col}</th>
                   ));
@@ -4033,14 +4557,49 @@ const TestCasesPage = () => {
               </tr>
             </thead>
             <tbody>
-              {savedTestCases.length === 0 ? (
+              {displayedSavedTestCases.length === 0 ? (
                 <tr>
-                  <td colSpan={7 + [...new Set(savedTestCases.flatMap((t) => Object.keys(t.extraColumns || {})))].length} className="py-8 text-center text-slate-400">
+                  <td colSpan={9 + (() => {
+                    const getKeys = (t) => {
+                      const fromExtra = Object.keys(t.extraColumns || {});
+                      const fromCmds = [];
+                      (t.commands || []).filter((c) => c.type === 'vcd' && (c.file || '').trim()).forEach((_, i) => fromCmds.push(`VCD${i + 2}`));
+                      (t.commands || []).filter((c) => c.type === 'erom' && (c.file || '').trim()).forEach((_, i) => fromCmds.push(`ERoM${i + 2}`));
+                      (t.commands || []).filter((c) => c.type === 'ulp' && (c.file || '').trim()).forEach((_, i) => fromCmds.push(`ULP${i + 2}`));
+                      return [...fromExtra, ...fromCmds];
+                    };
+                    const getVal = (t, col) => {
+                      const m = col.match(/^VCD(\d+)$/);
+                      if (m) {
+                        const idx = parseInt(m[1], 10) - 2;
+                        const vcds = (t.commands || []).filter((x) => x.type === 'vcd' && (x.file || '').trim());
+                        return vcds[idx]?.file ?? t.extraColumns?.[col] ?? '';
+                      }
+                      const m2 = col.match(/^ERoM(\d+)$/);
+                      if (m2) {
+                        const idx = parseInt(m2[1], 10) - 2;
+                        const eroms = (t.commands || []).filter((x) => x.type === 'erom' && (x.file || '').trim());
+                        return eroms[idx]?.file ?? t.extraColumns?.[col] ?? '';
+                      }
+                      const m3 = col.match(/^ULP(\d+)$/);
+                      if (m3) {
+                        const idx = parseInt(m3[1], 10) - 2;
+                        const ulps = (t.commands || []).filter((x) => x.type === 'ulp' && (x.file || '').trim());
+                        return ulps[idx]?.file ?? t.extraColumns?.[col] ?? '';
+                      }
+                      return t.extraColumns?.[col] ?? '';
+                    };
+                    const allCols = [...new Set(displayedSavedTestCases.flatMap(getKeys))].sort();
+                    const extraCols = allCols
+                      .filter((col) => !/^tag$/i.test(col))
+                      .filter((col) => displayedSavedTestCases.some((t) => (getVal(t, col) ?? '').toString().trim() !== ''));
+                    return extraCols.length;
+                  })()} className="py-8 text-center text-slate-400">
                     No test cases — use Pair All or Add Test Case
                   </td>
                 </tr>
               ) : (
-                savedTestCases.map((tc, idx) => (
+                displayedSavedTestCases.map((tc, idx) => (
                   <tr
                     key={tc.id}
                     onDragEnter={(e) => e.preventDefault()}
@@ -4082,10 +4641,23 @@ const TestCasesPage = () => {
                       />
                     </td>
                     <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700">
+                      <input
+                        type="text"
+                        value={(tc.extraColumns && (tc.extraColumns.tag || tc.extraColumns.Tag)) || ''}
+                        onChange={(e) => handleExtraColumnChange(tc.id, 'tag', e.target.value)}
+                        className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                        placeholder="tag"
+                        title="Tag for grouping or filtering"
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs text-center whitespace-nowrap">
+                      {tc.createdAt ? new Date(tc.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}
+                    </td>
+                    <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700">
                       <select
                         value={tc.binName || ''}
                         onChange={(e) =>
-                          updateSavedTestCase(tc.id, { binName: e.target.value })
+                          updateDisplayedTestCase(tc.id, { binName: e.target.value })
                         }
                         className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
                       >
@@ -4105,7 +4677,7 @@ const TestCasesPage = () => {
                       <select
                         value={tc.linName || ''}
                         onChange={(e) =>
-                          updateSavedTestCase(tc.id, {
+                          updateDisplayedTestCase(tc.id, {
                             linName: e.target.value || undefined,
                           })
                         }
@@ -4127,7 +4699,7 @@ const TestCasesPage = () => {
                       <select
                         value={tc.vcdName || ''}
                         onChange={(e) =>
-                          updateSavedTestCase(tc.id, { vcdName: e.target.value })
+                          updateDisplayedTestCase(tc.id, { vcdName: e.target.value })
                         }
                         className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
                       >
@@ -4143,21 +4715,69 @@ const TestCasesPage = () => {
                           )}
                       </select>
                     </td>
-                    {[...new Set(savedTestCases.flatMap((t) => Object.keys(t.extraColumns || {})))].sort().map((col) => (
-                      <td key={col} className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700">
-                        <input
-                          type="text"
-                          value={tc.extraColumns?.[col] ?? ''}
-                          onChange={(e) =>
-                            updateSavedTestCase(tc.id, {
-                              extraColumns: { ...(tc.extraColumns || {}), [col]: e.target.value },
-                            })
-                          }
-                          className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
-                          placeholder="—"
-                        />
-                      </td>
-                    ))}
+                    {(() => {
+                      const getExtraColKeys = (t) => {
+                        const fromExtra = Object.keys(t.extraColumns || {});
+                        const fromCmds = [];
+                        (t.commands || []).filter((c) => c.type === 'vcd' && (c.file || '').trim()).forEach((_, i) => fromCmds.push(`VCD${i + 2}`));
+                        (t.commands || []).filter((c) => c.type === 'erom' && (c.file || '').trim()).forEach((_, i) => fromCmds.push(`ERoM${i + 2}`));
+                        (t.commands || []).filter((c) => c.type === 'ulp' && (c.file || '').trim()).forEach((_, i) => fromCmds.push(`ULP${i + 2}`));
+                        return [...fromExtra, ...fromCmds];
+                      };
+                      const getExtraVal = (t, c) => {
+                        const m = c.match(/^VCD(\d+)$/);
+                        if (m) {
+                          const idx = parseInt(m[1], 10) - 2;
+                          const vcds = (t.commands || []).filter((x) => x.type === 'vcd' && (x.file || '').trim());
+                          return vcds[idx]?.file ?? t.extraColumns?.[c] ?? '';
+                        }
+                        const m2 = c.match(/^ERoM(\d+)$/);
+                        if (m2) {
+                          const idx = parseInt(m2[1], 10) - 2;
+                          const eroms = (t.commands || []).filter((x) => x.type === 'erom' && (x.file || '').trim());
+                          return eroms[idx]?.file ?? t.extraColumns?.[c] ?? '';
+                        }
+                        const m3 = c.match(/^ULP(\d+)$/);
+                        if (m3) {
+                          const idx = parseInt(m3[1], 10) - 2;
+                          const ulps = (t.commands || []).filter((x) => x.type === 'ulp' && (x.file || '').trim());
+                          return ulps[idx]?.file ?? t.extraColumns?.[c] ?? '';
+                        }
+                        return t.extraColumns?.[c] ?? '';
+                      };
+                      const allCols = [...new Set(displayedSavedTestCases.flatMap(getExtraColKeys))].sort();
+                    const extraCols = allCols
+                      .filter((col) => !/^tag$/i.test(col))
+                      .filter((col) => displayedSavedTestCases.some((t) => (getExtraVal(t, col) ?? '').toString().trim() !== ''));
+                      const isFileCol = (c) => /^(VCD|ERoM|ULP)\d+$/.test(c);
+                      return extraCols.map((col) => (
+                        <td key={col} className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700">
+                          {isFileCol(col) ? (
+                            <select
+                              value={getExtraVal(tc, col)}
+                              onChange={(e) => handleExtraColumnChange(tc.id, col, e.target.value)}
+                              className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                            >
+                              <option value="">— {col} —</option>
+                              {(col.startsWith('VCD') ? vcdFilesList : col.startsWith('ERoM') ? binFilesList : linFilesList).map((f) => (
+                                <option key={f.id} value={f.name}>{f.name}</option>
+                              ))}
+                              {getExtraVal(tc, col) && !(col.startsWith('VCD') ? vcdFilesList : col.startsWith('ERoM') ? binFilesList : linFilesList).some((f) => f.name === getExtraVal(tc, col)) && (
+                                <option value={getExtraVal(tc, col)}>{getExtraVal(tc, col)}</option>
+                              )}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={getExtraVal(tc, col)}
+                              onChange={(e) => handleExtraColumnChange(tc.id, col, e.target.value)}
+                              className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                              placeholder="—"
+                            />
+                          )}
+                        </td>
+                      ));
+                    })()}
                     <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700">
                       <input
                         type="number"
@@ -4165,7 +4785,7 @@ const TestCasesPage = () => {
                         max={100}
                         value={tc.tryCount ?? 1}
                         onChange={(e) =>
-                          updateSavedTestCase(tc.id, {
+                          updateDisplayedTestCase(tc.id, {
                             tryCount: Math.max(
                               1,
                               Math.min(100, parseInt(e.target.value, 10) || 1),
@@ -4188,7 +4808,7 @@ const TestCasesPage = () => {
                       <button
                         type="button"
                         onClick={() => {
-                          duplicateSavedTestCase(tc.id, {
+                          duplicateDisplayedTestCase(tc.id, {
                             name: getNextTestCaseName(),
                           });
                           addToast({ type: 'success', message: 'Duplicated with unique name' });
@@ -4210,7 +4830,7 @@ const TestCasesPage = () => {
                       <button
                         type="button"
                         onClick={() => moveSavedTestCaseDown(tc.id)}
-                        disabled={idx === savedTestCases.length - 1}
+                        disabled={idx === displayedSavedTestCases.length - 1 || isViewingShared}
                         className="p-1 text-slate-500 hover:text-slate-700 disabled:opacity-30"
                         title="Move down"
                       >
@@ -4219,7 +4839,7 @@ const TestCasesPage = () => {
                       <button
                         type="button"
                         onClick={() => {
-                          removeSavedTestCase(tc.id);
+                          removeDisplayedTestCase(tc.id);
                           addToast({ type: 'success', message: 'Removed' });
                         }}
                         className="p-1 text-red-500 hover:text-red-700 rounded"
@@ -4235,14 +4855,14 @@ const TestCasesPage = () => {
           </table>
         </div>
         ) : (
-          /* Tab 2: Step layout (vertical): move handle, EROM/ULP/VCD rows, command section */
-          <div className="space-y-3">
-            {savedTestCases.length === 0 ? (
-              <div className="py-8 text-center text-slate-400 text-sm border border-slate-200 dark:border-slate-600 rounded-lg">
+          /* Tab 2: Step layout — 2 columns so more test cases visible */
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {displayedSavedTestCases.length === 0 ? (
+              <div className="col-span-2 py-8 text-center text-slate-400 text-sm border border-slate-200 dark:border-slate-600 rounded-lg">
                 No test cases — use Pair All or Add Test Case
               </div>
             ) : (
-              savedTestCases.map((tc, idx) => (
+              displayedSavedTestCases.map((tc, idx) => (
                 <div
                   key={tc.id}
                   onDragEnter={(e) => e.preventDefault()}
@@ -4278,6 +4898,7 @@ const TestCasesPage = () => {
                           placeholder="Test case name"
                           title="Use a unique name"
                         />
+                        <span className="text-xs text-slate-400">Date: {tc.createdAt ? new Date(tc.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</span>
                         <span className="text-xs text-slate-500">Try: {tc.tryCount ?? 1}</span>
                       </div>
                     </div>
@@ -4291,7 +4912,7 @@ const TestCasesPage = () => {
                       <button
                         type="button"
                         onClick={() => {
-                          duplicateSavedTestCase(tc.id, { name: getNextTestCaseName() });
+                          duplicateDisplayedTestCase(tc.id, { name: getNextTestCaseName() });
                           addToast({ type: 'success', message: 'Duplicated with unique name' });
                         }}
                         className="p-1 text-slate-500 hover:text-blue-600 rounded"
@@ -4302,7 +4923,7 @@ const TestCasesPage = () => {
                       <button
                         type="button"
                         onClick={() => {
-                          removeSavedTestCase(tc.id);
+                          removeDisplayedTestCase(tc.id);
                           addToast({ type: 'success', message: 'Removed' });
                         }}
                         className="p-1 text-red-500 hover:text-red-700 rounded"
@@ -4312,92 +4933,137 @@ const TestCasesPage = () => {
                       </button>
                     </div>
                   </div>
-                  {/* Files: vertical EROM, ULP, VCD rows */}
-                  <div className="px-3 py-2 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold text-slate-500 w-12 shrink-0">EROM:</span>
-                      <select
-                        value={tc.binName || ''}
-                        onChange={(e) => updateSavedTestCase(tc.id, { binName: e.target.value })}
-                        className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
-                      >
-                        <option value="">— ERoM —</option>
-                        {binFilesList.map((f) => (
-                          <option key={f.id} value={f.name}>
-                            {f.name}
-                          </option>
-                        ))}
-                        {tc.binName && !binFilesList.some((f) => f.name === tc.binName) && (
-                          <option value={tc.binName}>{tc.binName}</option>
-                        )}
-                      </select>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold text-slate-500 w-12 shrink-0">ULP:</span>
-                      <select
-                        value={tc.linName || ''}
-                        onChange={(e) => updateSavedTestCase(tc.id, { linName: e.target.value || undefined })}
-                        className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
-                      >
-                        <option value="">— ULP —</option>
-                        {linFilesList.map((f) => (
-                          <option key={f.id} value={f.name}>
-                            {f.name}
-                          </option>
-                        ))}
-                        {tc.linName && !linFilesList.some((f) => f.name === tc.linName) && (
-                          <option value={tc.linName}>{tc.linName}</option>
-                        )}
-                      </select>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold text-slate-500 w-12 shrink-0">VCD:</span>
-                      <select
-                        value={tc.vcdName || ''}
-                        onChange={(e) => updateSavedTestCase(tc.id, { vcdName: e.target.value })}
-                        className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
-                      >
-                        <option value="">— VCD —</option>
-                        {vcdFilesList.map((f) => (
-                          <option key={f.id} value={f.name}>
-                            {f.name}
-                          </option>
-                        ))}
-                        {tc.vcdName && !vcdFilesList.some((f) => f.name === tc.vcdName) && (
-                          <option value={tc.vcdName}>{tc.vcdName}</option>
-                        )}
-                      </select>
-                    </div>
-                    {tc.extraColumns && Object.keys(tc.extraColumns).length > 0 && (
-                      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2">
-                        {Object.entries(tc.extraColumns).map(([col, val]) => (
-                          <div key={col} className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-slate-500 shrink-0">{col}:</span>
-                            <input
-                              type="text"
-                              value={val ?? ''}
-                              onChange={(e) =>
-                                updateSavedTestCase(tc.id, {
-                                  extraColumns: { ...tc.extraColumns, [col]: e.target.value },
-                                })
-                              }
-                              className="min-w-[80px] px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
-                              placeholder="—"
-                            />
-                          </div>
-                        ))}
+                  {/* Files: 2-column layout — EROM | ULP, VCD | extra */}
+                  <div className="px-3 py-1.5">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-xs font-semibold text-slate-500 w-12 shrink-0">EROM:</span>
+                        <select
+                          value={tc.binName || ''}
+                          onChange={(e) => updateDisplayedTestCase(tc.id, { binName: e.target.value })}
+                          className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                        >
+                          <option value="">— ERoM —</option>
+                          {binFilesList.map((f) => (
+                            <option key={f.id} value={f.name}>
+                              {f.name}
+                            </option>
+                          ))}
+                          {tc.binName && !binFilesList.some((f) => f.name === tc.binName) && (
+                            <option value={tc.binName}>{tc.binName}</option>
+                          )}
+                        </select>
                       </div>
-                    )}
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-xs font-semibold text-slate-500 w-12 shrink-0">ULP:</span>
+                        <select
+                          value={tc.linName || ''}
+                          onChange={(e) => updateDisplayedTestCase(tc.id, { linName: e.target.value || undefined })}
+                          className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                        >
+                          <option value="">— ULP —</option>
+                          {linFilesList.map((f) => (
+                            <option key={f.id} value={f.name}>
+                              {f.name}
+                            </option>
+                          ))}
+                          {tc.linName && !linFilesList.some((f) => f.name === tc.linName) && (
+                            <option value={tc.linName}>{tc.linName}</option>
+                          )}
+                        </select>
+                      </div>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-xs font-semibold text-slate-500 w-12 shrink-0">VCD:</span>
+                        <select
+                          value={tc.vcdName || ''}
+                          onChange={(e) => updateDisplayedTestCase(tc.id, { vcdName: e.target.value })}
+                          className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                        >
+                          <option value="">— VCD —</option>
+                          {vcdFilesList.map((f) => (
+                            <option key={f.id} value={f.name}>
+                              {f.name}
+                            </option>
+                          ))}
+                          {tc.vcdName && !vcdFilesList.some((f) => f.name === tc.vcdName) && (
+                            <option value={tc.vcdName}>{tc.vcdName}</option>
+                          )}
+                        </select>
+                      </div>
+                      {tc.extraColumns && Object.keys(tc.extraColumns).length > 0 ? (
+                        Object.entries(tc.extraColumns)
+                          .filter(([col]) => {
+                            const m = col.match(/^(VCD|ERoM|ULP)(\d+)$/);
+                            if (!m) return true;
+                            const type = m[1] === 'VCD' ? 'vcd' : m[1] === 'ERoM' ? 'erom' : 'ulp';
+                            const idx = parseInt(m[2], 10) - 2;
+                            const cmds = (tc.commands || []).filter((c) => c.type === type && (c.file || '').trim());
+                            return idx >= cmds.length;
+                          })
+                          .map(([col, val]) => {
+                          const isFileCol = /^(VCD|ERoM|ULP)\d+$/.test(col);
+                          const fileList = col.startsWith('VCD') ? vcdFilesList : col.startsWith('ERoM') ? binFilesList : linFilesList;
+                          const displayVal = (() => {
+                            const m = col.match(/^VCD(\d+)$/);
+                            if (m) {
+                              const idx = parseInt(m[1], 10) - 2;
+                              const vcds = (tc.commands || []).filter((c) => c.type === 'vcd' && (c.file || '').trim());
+                              return vcds[idx]?.file ?? val ?? '';
+                            }
+                            const m2 = col.match(/^ERoM(\d+)$/);
+                            if (m2) {
+                              const idx = parseInt(m2[1], 10) - 2;
+                              const eroms = (tc.commands || []).filter((c) => c.type === 'erom' && (c.file || '').trim());
+                              return eroms[idx]?.file ?? val ?? '';
+                            }
+                            const m3 = col.match(/^ULP(\d+)$/);
+                            if (m3) {
+                              const idx = parseInt(m3[1], 10) - 2;
+                              const ulps = (tc.commands || []).filter((c) => c.type === 'ulp' && (c.file || '').trim());
+                              return ulps[idx]?.file ?? val ?? '';
+                            }
+                            return val ?? '';
+                          })();
+                          return (
+                            <div key={col} className="flex items-center gap-2 min-w-0">
+                              <span className="text-xs font-semibold text-slate-500 shrink-0">{col}:</span>
+                              {isFileCol ? (
+                                <select
+                                  value={displayVal}
+                                  onChange={(e) => handleExtraColumnChange(tc.id, col, e.target.value)}
+                                  className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                                >
+                                  <option value="">— {col} —</option>
+                                  {fileList.map((f) => (
+                                    <option key={f.id} value={f.name}>{f.name}</option>
+                                  ))}
+                                  {displayVal && !fileList.some((f) => f.name === displayVal) && (
+                                    <option value={displayVal}>{displayVal}</option>
+                                  )}
+                                </select>
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={displayVal}
+                                  onChange={(e) => handleExtraColumnChange(tc.id, col, e.target.value)}
+                                  className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                                  placeholder="—"
+                                />
+                              )}
+                            </div>
+                          );
+                        })
+                      ) : null}
+                    </div>
                   </div>
-                  {/* Command section: MDI (text file) + sequences (e.g. extra VCD) */}
-                  <div className="px-3 py-2 border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-semibold text-slate-600 dark:text-slate-400">(command)</span>
+                  {/* Command section: compact — only + button when empty; list when commands exist */}
+                  <div className="px-3 py-1 border-t border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/30">
+                    <div className="flex items-center justify-end">
                       <div className="relative">
                         <button
                           type="button"
                           onClick={() => setCommandMenuTcId(commandMenuTcId === tc.id ? null : tc.id)}
-                          className="p-1.5 rounded border border-slate-200 dark:border-slate-600 text-blue-600 hover:text-blue-800 hover:bg-slate-100 dark:hover:bg-slate-700"
+                          className="p-1 rounded border border-slate-200 dark:border-slate-600 text-blue-600 hover:text-blue-800 hover:bg-slate-100 dark:hover:bg-slate-700"
                           title="Add command"
                         >
                           <Plus size={14} />
@@ -4408,7 +5074,7 @@ const TestCasesPage = () => {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  addTestCaseCommand(tc.id, { type: 'mdi', file: '' });
+                                  addDisplayedTestCaseCommand(tc.id, { type: 'mdi', file: '' });
                                   setCommandMenuTcId(null);
                                 }}
                                 className="w-full text-left px-3 py-2 text-xs hover:bg-slate-100 dark:hover:bg-slate-700"
@@ -4418,12 +5084,32 @@ const TestCasesPage = () => {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  addTestCaseCommand(tc.id, { type: 'vcd', file: '' });
+                                  addDisplayedTestCaseCommand(tc.id, { type: 'vcd', file: '' });
                                   setCommandMenuTcId(null);
                                 }}
                                 className="w-full text-left px-3 py-2 text-xs hover:bg-slate-100 dark:hover:bg-slate-700"
                               >
                                 Add VCD
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  addDisplayedTestCaseCommand(tc.id, { type: 'erom', file: '' });
+                                  setCommandMenuTcId(null);
+                                }}
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-slate-100 dark:hover:bg-slate-700"
+                              >
+                                Add EROM
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  addDisplayedTestCaseCommand(tc.id, { type: 'ulp', file: '' });
+                                  setCommandMenuTcId(null);
+                                }}
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-slate-100 dark:hover:bg-slate-700"
+                              >
+                                Add ULP
                               </button>
                             </div>
                             <div className="fixed inset-0 z-[5]" aria-hidden onClick={() => setCommandMenuTcId(null)} />
@@ -4432,57 +5118,40 @@ const TestCasesPage = () => {
                       </div>
                     </div>
                     {(tc.commands && tc.commands.length > 0) ? (
-                      <div className="space-y-2">
-                        {(tc.commands || []).map((cmd) => (
-                          <div key={cmd.id} className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-slate-500 w-14 shrink-0">
-                              {cmd.type === 'mdi' ? 'MDI:' : 'VCD:'}
-                            </span>
-                            {cmd.type === 'mdi' ? (
+                      <div className="space-y-1 mt-1">
+                        {(tc.commands || []).map((cmd) => {
+                          const label = cmd.type === 'mdi' ? 'MDI:' : cmd.type === 'vcd' ? 'VCD:' : cmd.type === 'erom' ? 'EROM:' : 'ULP:';
+                          const fileList = cmd.type === 'mdi' ? linFilesList : cmd.type === 'vcd' ? vcdFilesList : cmd.type === 'erom' ? binFilesList : linFilesList;
+                          const placeholder = cmd.type === 'mdi' ? '— Text file —' : cmd.type === 'vcd' ? '— VCD —' : cmd.type === 'erom' ? '— EROM —' : '— ULP —';
+                          return (
+                            <div key={cmd.id} className="flex items-center gap-2 min-h-[28px]">
+                              <span className="text-xs font-medium text-slate-500 w-12 shrink-0">{label}</span>
                               <select
                                 value={cmd.file || ''}
-                                onChange={(e) => updateTestCaseCommand(tc.id, cmd.id, { file: e.target.value })}
-                                className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                                onChange={(e) => updateDisplayedTestCaseCommand(tc.id, cmd.id, { file: e.target.value })}
+                                className="flex-1 min-w-0 px-2 py-0.5 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
                               >
-                                <option value="">— Text file —</option>
-                                {linFilesList.map((f) => (
+                                <option value="">{placeholder}</option>
+                                {fileList.map((f) => (
                                   <option key={f.id} value={f.name}>{f.name}</option>
                                 ))}
-                                {cmd.file && !linFilesList.some((f) => f.name === cmd.file) && (
+                                {cmd.file && !fileList.some((f) => f.name === cmd.file) && (
                                   <option value={cmd.file}>{cmd.file}</option>
                                 )}
                               </select>
-                            ) : (
-                              <select
-                                value={cmd.file || ''}
-                                onChange={(e) => updateTestCaseCommand(tc.id, cmd.id, { file: e.target.value })}
-                                className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                              <button
+                                type="button"
+                                onClick={() => removeDisplayedTestCaseCommand(tc.id, cmd.id)}
+                                className="p-0.5 text-red-500 hover:text-red-700 rounded shrink-0 flex items-center justify-center"
+                                title="Remove"
                               >
-                                <option value="">— VCD —</option>
-                                {vcdFilesList.map((f) => (
-                                  <option key={f.id} value={f.name}>{f.name}</option>
-                                ))}
-                                {cmd.file && !vcdFilesList.some((f) => f.name === cmd.file) && (
-                                  <option value={cmd.file}>{cmd.file}</option>
-                                )}
-                              </select>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => removeTestCaseCommand(tc.id, cmd.id)}
-                              className="p-1 text-red-500 hover:text-red-700 rounded shrink-0"
-                              title="Remove"
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          </div>
-                        ))}
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          );
+                        })}
                       </div>
-                    ) : (
-                      <div className="text-xs text-slate-500 dark:text-slate-400 italic">
-                        Add MDI (text file) or extra VCD via + Add command
-                      </div>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               ))
@@ -4491,25 +5160,25 @@ const TestCasesPage = () => {
         )}
 
         {/* Saved Test Case Sets (collections) */}
-        {savedTestCaseSets && savedTestCaseSets.length > 0 && (
+        {displayedSavedTestCaseSets && displayedSavedTestCaseSets.length > 0 && (
           <div className="mt-4 border-t border-slate-200 dark:border-slate-700 pt-3">
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wide">
                 Saved 
               </h3>
               <span className="text-[11px] text-slate-400 dark:text-slate-500">
-                {savedTestCaseSets.length} set(s)
+                {displayedSavedTestCaseSets.length} set(s)
               </span>
             </div>
             <div className="space-y-1 max-h-52 overflow-y-auto">
-              {savedTestCaseSets.map((set, index) => (
+              {displayedSavedTestCaseSets.map((set, index) => (
                 <div
                   key={set.id}
                   className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700"
                 >
                   <div className="flex flex-col gap-0 shrink-0">
-                    <button type="button" onClick={() => moveSavedTestCaseSetUp(set.id)} disabled={index === 0} className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30" title="Move up"><ArrowUp size={12} className="text-slate-500" /></button>
-                    <button type="button" onClick={() => moveSavedTestCaseSetDown(set.id)} disabled={index === savedTestCaseSets.length - 1} className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30" title="Move down"><ArrowDown size={12} className="text-slate-500" /></button>
+                    <button type="button" onClick={() => moveSavedTestCaseSetUp(set.id)} disabled={index === 0 || isViewingShared} className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30" title="Move up"><ArrowUp size={12} className="text-slate-500" /></button>
+                    <button type="button" onClick={() => moveSavedTestCaseSetDown(set.id)} disabled={index === displayedSavedTestCaseSets.length - 1 || isViewingShared} className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30" title="Move down"><ArrowDown size={12} className="text-slate-500" /></button>
                   </div>
                   <span className="text-[10px] text-slate-400 w-4 shrink-0">#{index + 1}</span>
                   <div className="flex-1 min-w-0">
@@ -4536,9 +5205,11 @@ const TestCasesPage = () => {
                           // Set อาจยังไม่มีไฟล์เก็บใน backend (บันทึกก่อน backend) — ไม่เป็นไร
                         }
                         await refreshFiles();
-                        applySavedTestCaseSet(set.id);
+                        setSetupClearedPersisted(activeProfileId, false);
+                        setTableClearedMode(false);
+                        setPendingDraftTestCases([]);
+                        loadSetForEditing(set.id);
                         setSelectedTestCaseIds([]);
-                        setLoadedSetId(set.id);
                         const fileNames = set.fileLibrarySnapshot?.length
                           ? set.fileLibrarySnapshot.map((s) => s.name)
                           : (() => {
@@ -4547,6 +5218,8 @@ const TestCasesPage = () => {
                                 if (t.vcdName) n.add(t.vcdName);
                                 if (t.binName) n.add(t.binName);
                                 if (t.linName) n.add(t.linName);
+                                const ec = t.extraColumns || {};
+                                Object.values(ec).forEach((v) => { if ((v ?? '').toString().trim()) n.add(String(v).trim()); });
                               });
                               return [...n];
                             })();
@@ -4557,17 +5230,21 @@ const TestCasesPage = () => {
                         }
                         addToast({ type: 'success', message: `Loaded set "${set.name}" — files restored to Library, table and selection updated` });
                       }}
-                      className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white font-semibold"
+                      disabled={isViewingShared}
+                      className={`px-2 py-1 rounded font-semibold ${isViewingShared ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
                     >
                       Load
                     </button>
                     <button
                       onClick={() => {
+                        setSetupClearedPersisted(activeProfileId, false);
+                        setTableClearedMode(false);
                         appendSavedTestCaseSet(set.id);
                         setSelectedTestCaseIds([]);
                         addToast({ type: 'success', message: `Appended set "${set.name}" to table` });
                       }}
-                      className="px-2 py-1 rounded bg-slate-600 hover:bg-slate-700 text-white font-semibold"
+                      disabled={isViewingShared}
+                      className={`px-2 py-1 rounded font-semibold ${isViewingShared ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-slate-600 hover:bg-slate-700 text-white'}`}
                       title="Append this set to table (without replacing)"
                     >
                       +Append
@@ -4577,7 +5254,8 @@ const TestCasesPage = () => {
                         duplicateSavedTestCaseSet(set.id);
                         addToast({ type: 'success', message: `Duplicated set "${set.name}"` });
                       }}
-                      className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300"
+                      disabled={isViewingShared}
+                      className={`p-1 rounded ${isViewingShared ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300'}`}
                       title="Clone set"
                     >
                       <Copy size={14} />
@@ -4593,7 +5271,8 @@ const TestCasesPage = () => {
                         removeSavedTestCaseSet(set.id);
                         addToast({ type: 'success', message: `Deleted set "${set.name}"` });
                       }}
-                      className="p-1 rounded hover:bg-red-600/10 text-red-600"
+                      disabled={isViewingShared}
+                      className={`p-1 rounded ${isViewingShared ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-600/10 text-red-600'}`}
                       title="Delete set (from library and database)"
                     >
                       <Trash2 size={14} />
@@ -4611,8 +5290,21 @@ const TestCasesPage = () => {
 
 // 2b. RUN SET PAGE — เลือก Set ที่สร้างไว้แล้วรัน (หลาย Set รันพร้อมกันได้) + Browse เลือก test case เป็นรายตัว
 const RunSetPage = ({ onNavigateJobs }) => {
-  const { savedTestCaseSets, savedTestCases, uploadedFiles, boards, createJob, refreshJobs, moveSavedTestCaseSetUp, moveSavedTestCaseSetDown, addSavedTestCaseSet } = useTestStore();
+  const savedTestCaseSets = useTestStore((s) => s.savedTestCaseSets);
+  const savedTestCases = useTestStore((s) => s.savedTestCases);
+  const uploadedFiles = useTestStore((s) => s.uploadedFiles);
+  const boards = useTestStore((s) => s.boards);
+  const createJob = useTestStore((s) => s.createJob);
+  const refreshJobs = useTestStore((s) => s.refreshJobs);
+  const moveSavedTestCaseSetUp = useTestStore((s) => s.moveSavedTestCaseSetUp);
+  const moveSavedTestCaseSetDown = useTestStore((s) => s.moveSavedTestCaseSetDown);
+  const duplicateSavedTestCaseSet = useTestStore((s) => s.duplicateSavedTestCaseSet);
+  const removeSavedTestCaseSet = useTestStore((s) => s.removeSavedTestCaseSet);
   const addToast = useTestStore((s) => s.addToast);
+  const safeSets = Array.isArray(savedTestCaseSets) ? savedTestCaseSets : [];
+  const safeCases = Array.isArray(savedTestCases) ? savedTestCases : [];
+  const safeFiles = Array.isArray(uploadedFiles) ? uploadedFiles : [];
+  const safeBoards = Array.isArray(boards) ? boards : [];
   const [runSelectionMode, setRunSelectionMode] = useState('browse');
   const [showBrowseModal, setShowBrowseModal] = useState(false); // Finder-like: click Browse opens modal to pick test cases
   const [selectedSetIds, setSelectedSetIds] = useState([]);
@@ -4623,23 +5315,24 @@ const RunSetPage = ({ onNavigateJobs }) => {
   const [selectedBoardIds, setSelectedBoardIds] = useState([]);
   const [prioritize, setPrioritize] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [runPreview, setRunPreview] = useState([]);
 
   const toggleSet = (id) => setSelectedSetIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
-  const selectAllSets = () => setSelectedSetIds((savedTestCaseSets || []).map((s) => s.id));
+  const selectAllSets = () => setSelectedSetIds(safeSets.map((s) => s.id));
   const clearAllSets = () => setSelectedSetIds([]);
   const toggleBoard = (boardId) => setSelectedBoardIds((prev) => prev.includes(boardId) ? prev.filter((x) => x !== boardId) : [...prev, boardId]);
-  const selectAllBoards = () => setSelectedBoardIds(boards.filter((b) => b.status === 'online').map((b) => b.id));
+  const selectAllBoards = () => setSelectedBoardIds(safeBoards.filter((b) => b.status === 'online').map((b) => b.id));
   const clearBoards = () => setSelectedBoardIds([]);
 
   // Flow: drop → match → raw page → select for run. Include current table (savedTestCases) so user can run without Save Set.
   const browsedRows = [
-    ...(savedTestCases || []).map((tc) => ({
+    ...safeCases.map((tc) => ({
       setId: '__current__',
-      set: { id: '__current__', name: 'Current (from table)', items: savedTestCases },
+      set: { id: '__current__', name: 'Current (from table)', items: safeCases },
       tc,
       key: `current-${tc.id}`,
     })),
-    ...(savedTestCaseSets || []).flatMap((set) =>
+    ...safeSets.flatMap((set) =>
       (Array.isArray(set.items) ? set.items : []).map((tc, tcIdx) => ({
         setId: set.id,
         set,
@@ -4659,6 +5352,46 @@ const RunSetPage = ({ onNavigateJobs }) => {
   const selectAllBrowsed = () => setSelectedBrowsedKeys(new Set(browsedRows.map((r) => r.key)));
   const clearAllBrowsed = () => setSelectedBrowsedKeys(new Set());
 
+  // Build preview run order (flattened test cases) based on current selection
+  useEffect(() => {
+    let items = [];
+    if (runSelectionMode === 'browse') {
+      const selectedRows = browsedRows.filter((r) => selectedBrowsedKeys.has(r.key));
+      items = selectedRows.map((row, idx) => ({
+        key: row.key,
+        setId: row.setId,
+        set: row.set,
+        tc: row.tc,
+        order: idx + 1,
+      }));
+    } else {
+      const setsToRun = safeSets.filter((s) => selectedSetIds.includes(s.id));
+      setsToRun.forEach((set) => {
+        (set.items || []).forEach((tc, idx) => {
+          items.push({
+            key: `${set.id}-${idx}-${tc.id || tc.name || tc.vcdName || ''}`,
+            setId: set.id,
+            set,
+            tc,
+            order: items.length + 1,
+          });
+        });
+      });
+    }
+    setRunPreview(items);
+  }, [runSelectionMode, selectedBrowsedKeys, selectedSetIds, browsedRows, safeSets]);
+
+  const moveRunPreviewItem = (index, direction) => {
+    setRunPreview((prev) => {
+      const next = [...prev];
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= next.length) return prev;
+      const [item] = next.splice(index, 1);
+      next.splice(targetIndex, 0, item);
+      return next.map((it, idx) => ({ ...it, order: idx + 1 }));
+    });
+  };
+
   const buildJobFromSet = (set, testCasesOverride = null) => {
     const items = testCasesOverride != null ? testCasesOverride : (set.items || []);
     const missingNames = new Set(); // ชื่อไฟล์ที่ไม่พบใน Library (ไม่ซ้ำ)
@@ -4666,12 +5399,12 @@ const RunSetPage = ({ onNavigateJobs }) => {
     let firstBinName = '';
     for (let i = 0; i < items.length; i++) {
       const tc = items[i];
-      const vcdFile = uploadedFiles.find((f) => f.name === (tc.vcdName || ''));
-      const binFile = uploadedFiles.find((f) => f.name === (tc.binName || ''));
-      const linFile = (tc.linName && uploadedFiles.find((f) => f.name === tc.linName)) || null;
+      const vcdFile = safeFiles.find((f) => f.name === (tc.vcdName || ''));
+      const binFile = safeFiles.find((f) => f.name === (tc.binName || ''));
+      const linFile = (tc.linName && safeFiles.find((f) => f.name === tc.linName)) || null;
       if (!vcdFile || !binFile) {
-        if (tc.vcdName && !uploadedFiles.find((f) => f.name === tc.vcdName)) missingNames.add(tc.vcdName);
-        if (tc.binName && !uploadedFiles.find((f) => f.name === tc.binName)) missingNames.add(tc.binName);
+        if (tc.vcdName && !safeFiles.find((f) => f.name === tc.vcdName)) missingNames.add(tc.vcdName);
+        if (tc.binName && !safeFiles.find((f) => f.name === tc.binName)) missingNames.add(tc.binName);
         continue;
       }
       if (!firstBinName) firstBinName = tc.binName || '';
@@ -4682,13 +5415,14 @@ const RunSetPage = ({ onNavigateJobs }) => {
         erom: binFile.name,
         ulp: linFile?.name || null,
         try_count: typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1,
+        testCaseName: (tc.name || '').trim() || vcdFile.name,
       });
     }
     const missing = [...missingNames];
     const pairsData = items.map((tc) => {
-      const vcdFile = uploadedFiles.find((f) => f.name === (tc.vcdName || ''));
-      const binFile = uploadedFiles.find((f) => f.name === (tc.binName || ''));
-      const linFile = (tc.linName && uploadedFiles.find((f) => f.name === tc.linName)) || null;
+      const vcdFile = safeFiles.find((f) => f.name === (tc.vcdName || ''));
+      const binFile = safeFiles.find((f) => f.name === (tc.binName || ''));
+      const linFile = (tc.linName && safeFiles.find((f) => f.name === tc.linName)) || null;
       return {
         vcdId: vcdFile?.id,
         binId: binFile?.id,
@@ -4698,17 +5432,15 @@ const RunSetPage = ({ onNavigateJobs }) => {
         linName: tc.linName || null,
         try: typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1,
         boardId: tc.boardId || null,
-        boardName: tc.boardId ? (boards.find((b) => b.id === tc.boardId)?.name) : null,
+        boardName: tc.boardId ? (safeBoards.find((b) => b.id === tc.boardId)?.name) : null,
       };
     });
     return { missing, filesPayload, firstBinName, pairsData };
   };
 
   const runSelected = async () => {
-    const useBrowsedSelection = runSelectionMode === 'browse' ? selectedBrowsedKeys.size > 0 : false;
-    const useSetSelection = runSelectionMode === 'set' && selectedSetIds.length > 0;
-    if (!useBrowsedSelection && !useSetSelection) {
-      addToast({ type: 'warning', message: 'Select at least one Set or browse and select at least one test case' });
+    if (runPreview.length === 0) {
+      addToast({ type: 'warning', message: 'Select test cases to run first' });
       return;
     }
     if (boardSelectionMode === 'manual' && selectedBoardIds.length === 0) {
@@ -4717,67 +5449,43 @@ const RunSetPage = ({ onNavigateJobs }) => {
     }
     const boardNames = boardSelectionMode === 'auto'
       ? []
-      : boards.filter((b) => selectedBoardIds.includes(b.id)).map((b) => b.name);
+      : safeBoards.filter((b) => selectedBoardIds.includes(b.id)).map((b) => b.name);
 
     const jobsToCreate = [];
     const errorsPerSet = [];
 
-    if (useBrowsedSelection) {
-      const bySet = new Map();
-      browsedRows.forEach((row) => {
-        if (!selectedBrowsedKeys.has(row.key)) return;
-        if (!bySet.has(row.setId)) bySet.set(row.setId, { set: row.set, cases: [] });
-        bySet.get(row.setId).cases.push(row.tc);
-      });
-      bySet.forEach(({ set, cases }) => {
-        const { missing, filesPayload, firstBinName, pairsData } = buildJobFromSet(set, cases);
-        if (missing.length > 0) {
-          const list = missing.slice(0, 5).join(', ') + (missing.length > 5 ? ` +${missing.length - 5} files` : '');
-          errorsPerSet.push(`${set.name}: Files not found in Library — ${list}`);
-          return;
-        }
-        if (filesPayload.length === 0) {
-          errorsPerSet.push(`${set.name}: No test cases with both VCD and ERoM`);
-          return;
-        }
-        const jobName = (runSetName || '').trim() || set.name;
-        jobsToCreate.push({
-          name: jobName,
-          tag: tag || undefined,
-          firmware: firstBinName,
-          boards: boardNames,
-          priority: prioritize ? 'high' : undefined,
-          files: filesPayload,
-          configName: jobName,
-          pairsData,
-        });
-      });
-    } else {
-      const setsToRun = (savedTestCaseSets || []).filter((s) => selectedSetIds.includes(s.id));
-      for (const set of setsToRun) {
-        const { missing, filesPayload, firstBinName, pairsData } = buildJobFromSet(set);
-        if (missing.length > 0) {
-          const list = missing.slice(0, 5).join(', ') + (missing.length > 5 ? ` +${missing.length - 5} files` : '');
-          errorsPerSet.push(`${set.name}: Files not found in Library — ${list}`);
-          continue;
-        }
-        if (filesPayload.length === 0) {
-          errorsPerSet.push(`${set.name}: No test cases with both VCD and ERoM`);
-          continue;
-        }
-        const jobName = (runSetName || '').trim() || set.name;
-        jobsToCreate.push({
-          name: jobName,
-          tag: tag || undefined,
-          firmware: firstBinName,
-          boards: boardNames,
-          priority: prioritize ? 'high' : undefined,
-          files: filesPayload,
-          configName: jobName,
-          pairsData,
-        });
+    // Group selected test cases by set, preserving the order inside each set
+    const bySet = new Map();
+    runPreview.forEach((item) => {
+      const set = item.set;
+      if (!set || !set.id) return;
+      if (!bySet.has(set.id)) bySet.set(set.id, { set, cases: [] });
+      bySet.get(set.id).cases.push(item.tc);
+    });
+
+    bySet.forEach(({ set, cases }) => {
+      const { missing, filesPayload, firstBinName, pairsData } = buildJobFromSet(set, cases);
+      if (missing.length > 0) {
+        const list = missing.slice(0, 5).join(', ') + (missing.length > 5 ? ` +${missing.length - 5} files` : '');
+        errorsPerSet.push(`${set.name}: Files not found in Library — ${list}`);
+        return;
       }
-    }
+      if (filesPayload.length === 0) {
+        errorsPerSet.push(`${set.name}: No test cases with both VCD and ERoM`);
+        return;
+      }
+      const jobName = (runSetName || '').trim() || set.name;
+      jobsToCreate.push({
+        name: jobName,
+        tag: tag || undefined,
+        firmware: firstBinName,
+        boards: boardNames,
+        priority: prioritize ? 'high' : undefined,
+        files: filesPayload,
+        configName: jobName,
+        pairsData,
+      });
+    });
 
     if (errorsPerSet.length > 0) {
       const msg = errorsPerSet.join(' | ') + ' — Upload files on Test Cases → File Library first';
@@ -4821,7 +5529,7 @@ const RunSetPage = ({ onNavigateJobs }) => {
     if (useBrowsedSelection) {
       items = browsedRows.filter((r) => selectedBrowsedKeys.has(r.key)).map((r) => r.tc);
     } else {
-      const setsToSave = (savedTestCaseSets || []).filter((s) => selectedSetIds.includes(s.id));
+      const setsToSave = safeSets.filter((s) => selectedSetIds.includes(s.id));
       const seen = new Set();
       items = setsToSave.flatMap((set) => (set.items || []).filter((tc) => {
         const key = [tc.name, tc.vcdName, tc.binName, tc.linName].join('\0');
@@ -4834,7 +5542,7 @@ const RunSetPage = ({ onNavigateJobs }) => {
       addToast({ type: 'warning', message: 'No test cases to save' });
       return;
     }
-    const name = (runSetName || '').trim() || `Set ${(savedTestCaseSets || []).length + 1}`;
+    const name = (runSetName || '').trim() || `Set ${safeSets.length + 1}`;
     const fileNames = new Set();
     items.forEach((t) => {
       if (t.vcdName) fileNames.add(t.vcdName);
@@ -4844,9 +5552,9 @@ const RunSetPage = ({ onNavigateJobs }) => {
     const fileLibrarySnapshot = [...fileNames].map((n) => ({ name: n }));
     addSavedTestCaseSet(name, items, { fileLibrarySnapshot });
     const sets = useTestStore.getState().savedTestCaseSets;
-    const newSetId = sets[sets.length - 1]?.id;
-    if (newSetId && uploadedFiles?.length > 0) {
-      const fileIds = uploadedFiles.filter((f) => fileNames.has(f.name)).map((f) => f.id);
+    const newSetId = Array.isArray(sets) && sets.length ? sets[sets.length - 1]?.id : null;
+    if (newSetId && safeFiles.length > 0) {
+      const fileIds = safeFiles.filter((f) => fileNames.has(f.name)).map((f) => f.id);
       if (fileIds.length > 0) {
         api.saveSetFiles(newSetId, fileIds).catch((err) => console.error('Save set files failed', err));
       }
@@ -4907,8 +5615,166 @@ const RunSetPage = ({ onNavigateJobs }) => {
                   ))}
                 </div>
               )}
+              {runPreview.length > 0 && (
+                <div className="mt-3 border border-slate-200 dark:border-slate-600 rounded-lg max-h-56 overflow-y-auto">
+                  <div className="px-3 py-2 text-xs font-bold text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between">
+                    <span>Run order (top = first)</span>
+                    <span className="font-normal text-slate-500 dark:text-slate-400">{runPreview.length} test case(s)</span>
+                  </div>
+                  <div className="divide-y divide-slate-100 dark:divide-slate-700">
+                    {runPreview.map((item, idx) => (
+                      <div key={item.key} className="flex items-center gap-3 px-3 py-2 bg-white dark:bg-slate-900">
+                        <div className="w-7 text-xs font-bold text-slate-500 text-center">{idx + 1}</div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate" title={item.tc.name || item.tc.vcdName || '—'}>
+                            {item.tc.name || item.tc.vcdName || '—'}
+                          </div>
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                            {item.tc.vcdName || '—'}{item.tc.binName ? ` · ${item.tc.binName}` : ''}{item.tc.linName ? ` · ${item.tc.linName}` : ''}
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => moveRunPreviewItem(idx, -1)}
+                            disabled={idx === 0}
+                            className={`p-1.5 rounded border text-xs ${idx === 0 ? 'opacity-30 cursor-not-allowed border-slate-200' : 'border-slate-200 hover:bg-slate-50'}`}
+                            title="Move up"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => moveRunPreviewItem(idx, 1)}
+                            disabled={idx === runPreview.length - 1}
+                            className={`p-1.5 rounded border text-xs ${idx === runPreview.length - 1 ? 'opacity-30 cursor-not-allowed border-slate-200' : 'border-slate-200 hover:bg-slate-50'}`}
+                            title="Move down"
+                          >
+                            ↓
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </>
           )}
+          {/* Saved sets list embedded under Set for run */}
+          <div className="mt-4 border-t border-slate-100 dark:border-slate-700 pt-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <h4 className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase">Saved sets</h4>
+                <span className="text-[11px] text-slate-400 dark:text-slate-500">
+                  {safeSets.length} set(s)
+                </span>
+              </div>
+            </div>
+            {safeSets.length === 0 ? (
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                No saved sets yet — create and save on the Test Cases page.
+              </p>
+            ) : (
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {safeSets.map((set, index) => (
+                  <div
+                    key={set.id}
+                    className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700"
+                  >
+                    <div className="flex flex-col gap-0 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => moveSavedTestCaseSetUp(set.id)}
+                        disabled={index === 0}
+                        className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-30"
+                        title="Move up"
+                      >
+                        <ArrowUp size={12} className="text-slate-500" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveSavedTestCaseSetDown(set.id)}
+                        disabled={index === safeSets.length - 1}
+                        className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-30"
+                        title="Move down"
+                      >
+                        <ArrowDown size={12} className="text-slate-500" />
+                      </button>
+                    </div>
+                    <span className="text-[10px] text-slate-400 w-4 shrink-0">#{index + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-700 dark:text-slate-200 truncate">
+                          {set.name}
+                        </span>
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                          {Array.isArray(set.items) ? `${set.items.length} cases` : ''}
+                        </span>
+                      </div>
+                      {set.createdAt && (
+                        <div className="text-[10px] text-slate-400 dark:text-slate-500">
+                          {new Date(set.createdAt).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRunSelectionMode('set');
+                          setSelectedSetIds([set.id]);
+                          addToast({ type: 'success', message: `Loaded set "${set.name}" for run` });
+                        }}
+                        className="px-2 py-1 rounded font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+                      >
+                        Load
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRunSelectionMode('set');
+                          setSelectedSetIds((prev) => (prev.includes(set.id) ? prev : [...prev, set.id]));
+                          addToast({ type: 'success', message: `Appended set "${set.name}" to run selection` });
+                        }}
+                        className="px-2 py-1 rounded font-semibold bg-slate-600 hover:bg-slate-700 text-white"
+                        title="Append this set to run selection (without replacing)"
+                      >
+                        +Append
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          duplicateSavedTestCaseSet(set.id);
+                          addToast({ type: 'success', message: `Duplicated set "${set.name}"` });
+                        }}
+                        className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300"
+                        title="Clone set"
+                      >
+                        <Copy size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!window.confirm(`Delete set "${set.name}"? This will remove it from the library and from the database.`)) return;
+                          try {
+                            await api.deleteSet(set.id);
+                          } catch (e) {
+                            if (!String(e?.message || '').includes('404')) addToast({ type: 'warning', message: `Backend: ${e?.message || 'Delete failed'}` });
+                          }
+                          removeSavedTestCaseSet(set.id);
+                          addToast({ type: 'success', message: `Deleted set "${set.name}"` });
+                        }}
+                        className="p-1 rounded hover:bg-red-600/10 text-red-600 dark:text-red-400"
+                        title="Delete set (from library and database)"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Alternative: Run by Set (whole set) */}
@@ -4920,11 +5786,11 @@ const RunSetPage = ({ onNavigateJobs }) => {
             <span className="text-xs text-slate-500">{selectedSetIds.length} set(s) selected</span>
           </div>
           <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900">
-            {!savedTestCaseSets || savedTestCaseSets.length === 0 ? (
+            {safeSets.length === 0 ? (
               <div className="p-3 text-center text-slate-400 text-xs">No sets yet — create on Test Cases page (Save Set)</div>
             ) : (
               <ul className="divide-y divide-slate-100 dark:divide-slate-700">
-                {savedTestCaseSets.map((set, index) => (
+                {safeSets.map((set, index) => (
                   <li key={set.id} className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50">
                     <input type="checkbox" checked={selectedSetIds.includes(set.id)} onChange={() => toggleSet(set.id)} className="w-4 h-4 rounded border-slate-400 text-blue-600 shrink-0" />
                     <span className="flex-1 text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{set.name}</span>
@@ -4985,10 +5851,10 @@ const RunSetPage = ({ onNavigateJobs }) => {
                 <button type="button" onClick={selectAllBoards} className="text-xs font-bold text-blue-600 hover:text-blue-800">Select all online</button>
                 <button type="button" onClick={clearBoards} className="text-xs font-bold text-slate-600 hover:text-slate-800">Clear</button>
                 <div className="flex flex-wrap gap-2 mt-1">
-                  {boards.length === 0 ? (
+                  {safeBoards.length === 0 ? (
                     <span className="text-xs text-slate-500">No boards loaded</span>
                   ) : (
-                    boards.map((b) => (
+                    safeBoards.map((b) => (
                       <label key={b.id} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium cursor-pointer transition-colors ${selectedBoardIds.includes(b.id) ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-300 dark:border-blue-700 text-blue-800 dark:text-blue-200' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:border-slate-300'}`}>
                         <input type="checkbox" checked={selectedBoardIds.includes(b.id)} onChange={() => toggleBoard(b.id)} className="w-3.5 h-3.5 rounded border-slate-400 text-blue-600" />
                         <span>{b.name || b.id}</span>
@@ -5001,6 +5867,7 @@ const RunSetPage = ({ onNavigateJobs }) => {
             )}
           </div>
         </div>
+
 
         {/* Run & Save (not run) */}
         <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -7691,7 +8558,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
       <div 
         key={job.id} 
         id={`job-${job.id}`} 
-        className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all ${getCardStatusStyle(job)} ${
+        className={`bg-white text-slate-900 rounded-xl border shadow-sm overflow-hidden transition-all ${getCardStatusStyle(job)} ${
           selectedJobIds.includes(job.id) ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200'
         } ${draggingJobId === job.id ? 'opacity-50' : ''}`}
         onClick={(e) => {
@@ -7743,7 +8610,9 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                     <span className="px-2 py-0.5 bg-slate-200 text-slate-500 rounded text-xs font-semibold">Demo</span>
                   )}
                   <span className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
-                    <h3 className="text-lg font-bold text-slate-800 truncate" title={`Batch #${job.id}`}>Batch #{job.id}</h3>
+                    <h3 className="text-lg font-bold text-slate-900 truncate" title={(job.name || job.configName || '').trim() || `Batch #${job.id}`}>
+                      {(job.name || job.configName || '').trim() || `Batch #${job.id}`}
+                    </h3>
                     <span className={`px-2 py-0.5 rounded-full text-xs font-bold uppercase shrink-0 ${
                     job.status === 'running' ? 'bg-blue-100 text-blue-700' :
                     job.status === 'pending' ? 'bg-amber-100 text-amber-700' :
@@ -7777,7 +8646,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                     <span
                       onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleEditTag(job); }}
                       onMouseDown={(e) => e.stopPropagation()}
-                      className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-700 flex items-center gap-1 shrink-0 cursor-pointer hover:bg-purple-200 transition-colors"
+                      className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-800 flex items-center gap-1 shrink-0 cursor-pointer hover:bg-purple-200 transition-colors"
                       title={job.tag ? 'Click to edit tag' : 'Click to add tag'}
                     >
                       <Tag size={12} />
@@ -7786,7 +8655,6 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                   ))}
                   </span>
                 </div>
-                <p className="text-slate-600 text-sm line-clamp-2 break-words" title={job.name}>{job.name || '—'}</p>
               </div>
               
               {/* Reorder: Drag handle + Up/Down (hidden for demo job และ Running column) */}
@@ -7843,7 +8711,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                 type="button"
                 onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleDetails(job.id); }}
                 onMouseDown={(e) => e.stopPropagation()}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors shrink-0"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors shrink-0"
                 title="Show all details, progress and test cases"
               >
                 {showDetails ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -7881,7 +8749,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                   )}
             </div>
             {showDetails && (
-              <div className="mt-2 pt-2 border-t border-slate-100 space-y-2 text-xs text-slate-500">
+              <div className="mt-2 pt-2 border-t border-slate-100 space-y-2 text-xs text-slate-600">
                 {/* Summary line */}
                 <div className="flex items-center gap-3 flex-wrap">
                   <span>Firmware: <strong className="text-slate-700">{job.firmware}</strong></span>
@@ -9633,14 +10501,15 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
   const filteredFiles = files.filter(file => {
     // Status filter
     if (filter !== 'all' && file.status !== filter) return false;
-    // Search filter - search in VCD, ERoM, ULP file names
+    // Search filter - search in test case name, VCD, ERoM, ULP file names
     if (search) {
       const searchLower = search.toLowerCase();
+      const testCaseNameMatch = file.testCaseName?.toLowerCase().includes(searchLower);
       const vcdMatch = file.vcd?.toLowerCase().includes(searchLower);
       const eromMatch = file.erom?.toLowerCase().includes(searchLower);
       const ulpMatch = file.ulp?.toLowerCase().includes(searchLower);
       const nameMatch = file.name?.toLowerCase().includes(searchLower);
-      if (!vcdMatch && !eromMatch && !ulpMatch && !nameMatch) return false;
+      if (!testCaseNameMatch && !vcdMatch && !eromMatch && !ulpMatch && !nameMatch) return false;
     }
     return true;
   });
@@ -9908,34 +10777,29 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                         {/* File Info */}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1 flex-wrap min-w-0">
-                            {/* VCD File */}
-                            {file.vcd && (
-                              <div className="flex items-center gap-1 min-w-0 max-w-full">
-                                <FileCode size={18} className="text-blue-500 shrink-0" />
-                                <span className="font-bold text-slate-800 text-sm truncate" title={file.vcd}>{file.vcd}</span>
+                            {/* Test case display name (from set) or file name */}
+                            <div className="flex items-center gap-1 min-w-0 max-w-full">
+                              <FileCode size={18} className="text-blue-500 shrink-0" />
+                              <span className="font-bold text-slate-800 text-sm truncate" title={file.testCaseName || file.vcd || file.name}>
+                                {file.testCaseName || file.vcd || file.name}
+                              </span>
+                            </div>
+                            {/* VCD/ERoM/ULP as secondary when different from display name */}
+                            {file.vcd && (file.testCaseName !== file.vcd) && (
+                              <div className="flex items-center gap-1 min-w-0 max-w-full text-xs text-slate-500">
+                                <span>VCD: {file.vcd}</span>
                               </div>
                             )}
-                            {/* ERoM File */}
                             {file.erom && (
-                              <div className="flex items-center gap-1 min-w-0 max-w-full">
+                              <div className="flex items-center gap-1 min-w-0 max-w-full text-xs text-slate-500">
                                 <span className="text-slate-400 shrink-0">+</span>
-                                <FileCode size={16} className="text-orange-500 shrink-0" />
-                                <span className="font-semibold text-slate-700 text-sm truncate" title={file.erom}>{file.erom}</span>
+                                <span title={file.erom}>{file.erom}</span>
                               </div>
                             )}
-                            {/* ULP File */}
                             {file.ulp && (
-                              <div className="flex items-center gap-1 min-w-0 max-w-full">
+                              <div className="flex items-center gap-1 min-w-0 max-w-full text-xs text-slate-500">
                                 <span className="text-slate-400 shrink-0">+</span>
-                                <FileCode size={16} className="text-purple-500 shrink-0" />
-                                <span className="font-semibold text-slate-700 text-sm truncate" title={file.ulp}>{file.ulp}</span>
-                              </div>
-                            )}
-                            {/* Fallback to file.name if no vcd/erom/ulp */}
-                            {!file.vcd && !file.erom && !file.ulp && (
-                              <div className="flex items-center gap-1 min-w-0 max-w-full">
-                                <FileCode size={18} className="text-slate-400 shrink-0" />
-                                <span className="font-bold text-slate-800 truncate" title={file.name}>{file.name}</span>
+                                <span title={file.ulp}>{file.ulp}</span>
                               </div>
                             )}
                             {isRunning && (
@@ -10017,8 +10881,8 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
           <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
             <div className="flex items-center gap-2 text-sm min-w-0">
               <Activity size={16} className="text-blue-600 animate-pulse shrink-0" />
-              <span className="font-bold text-blue-700 min-w-0 truncate" title={filteredFiles[currentRunningIndex].name}>
-                Currently running: Test Case #{filteredFiles[currentRunningIndex].order || currentRunningIndex + 1} — {filteredFiles[currentRunningIndex].name}
+              <span className="font-bold text-blue-700 min-w-0 truncate" title={filteredFiles[currentRunningIndex].testCaseName || filteredFiles[currentRunningIndex].name}>
+                Currently running: Test Case #{filteredFiles[currentRunningIndex].order || currentRunningIndex + 1} — {filteredFiles[currentRunningIndex].testCaseName || filteredFiles[currentRunningIndex].name}
               </span>
             </div>
           </div>
@@ -10132,8 +10996,8 @@ ${file.notes || 'No additional notes available.'}
       <div className="flex-1 flex items-center gap-3 min-w-0">
         <FileCode size={20} className={`shrink-0 ${isFailed ? 'text-red-500' : 'text-slate-400'}`} />
         <div className="flex-1 min-w-0">
-          <div className={`font-bold truncate ${isFailed ? 'text-red-800' : 'text-slate-700'}`} title={file.name}>{file.name}</div>
-          <div className="text-xs text-slate-400">Order: {file.order || index + 1}</div>
+          <div className={`font-bold truncate ${isFailed ? 'text-red-800' : 'text-slate-700'}`} title={file.testCaseName || file.name}>{file.testCaseName || file.name}</div>
+          <div className="text-xs text-slate-400">Order: {file.order || index + 1}{file.vcd && file.testCaseName ? ` · ${file.vcd}` : ''}</div>
           {isFailed && file.errorMessage && (
             <div className="text-xs text-red-600 mt-1 font-medium truncate" title={file.errorMessage}>⚠ {file.errorMessage}</div>
           )}
@@ -10263,7 +11127,7 @@ const BatchDetailsModal = ({ batch, onClose }) => (
                   <div key={file.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
                     <div className="flex items-center gap-3">
                       <FileCode size={18} className="text-slate-400" />
-                      <span className="text-sm font-bold">{file.name}</span>
+                      <span className="text-sm font-bold">{file.testCaseName || file.name}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className={`text-xs font-bold px-2 py-1 rounded ${

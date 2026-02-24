@@ -470,6 +470,50 @@ export const deleteSet = (setId) => {
 };
 
 // ============================================
+// PROFILES APIs (Option B1: no login)
+// ============================================
+
+/**
+ * Create profile on server. Returns { id, name }. id is the share key.
+ */
+export const createProfileApi = (name) => {
+  return apiRequest(API_ENDPOINTS.PROFILES, {
+    method: 'POST',
+    body: JSON.stringify({ name: name || 'Unnamed' }),
+  });
+};
+
+/**
+ * Get profile metadata (id, name, updatedAt)
+ */
+export const getProfile = (profileId) => apiRequest(API_ENDPOINTS.PROFILE_BY_ID(profileId));
+
+/**
+ * Get profile data (savedTestCases, savedTestCaseSets) — read-only for shared view
+ */
+export const getProfileData = (profileId) => apiRequest(API_ENDPOINTS.PROFILE_DATA(profileId));
+
+/**
+ * Put profile data (sync from this device)
+ */
+export const putProfileData = (profileId, data) => {
+  return apiRequest(API_ENDPOINTS.PROFILE_DATA(profileId), {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+};
+
+/**
+ * Update profile name on server
+ */
+export const updateProfileNameApi = (profileId, name) => {
+  return apiRequest(API_ENDPOINTS.PROFILE_BY_ID(profileId), {
+    method: 'PUT',
+    body: JSON.stringify({ name }),
+  });
+};
+
+// ============================================
 // RESULTS APIs
 // ============================================
 
@@ -634,6 +678,13 @@ export default {
   listSetFiles,
   restoreSetFilesToLibrary,
   deleteSet,
+
+  // Profiles
+  createProfileApi,
+  getProfile,
+  getProfileData,
+  putProfileData,
+  updateProfileNameApi,
 
   // Results
   getResults,

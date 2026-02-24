@@ -1,5 +1,6 @@
 """
 File Store Service with PostgreSQL and Disk persistence.
+Supports main library (set_id=None) and per-set storage (set_id=set_id).
 """
 from __future__ import annotations
 from typing import List, Optional
@@ -8,7 +9,7 @@ import os
 import uuid
 import hashlib
 import aiofiles
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import async_session
@@ -32,6 +33,10 @@ class FileStore:
         safe_filename = "".join(c for c in filename if c.isalnum() or c in "._-")
         return os.path.join(directory, f"{file_uuid}_{safe_filename}")
 
+    def _checksum_bytes(self, content: bytes) -> str:
+        """Calculate SHA256 checksum of content in memory."""
+        return hashlib.sha256(content).hexdigest()
+
     async def calculate_checksum(self, file_path: str) -> str:
         """Calculate SHA256 checksum of a file asynchronously."""
         sha256 = hashlib.sha256()
@@ -40,27 +45,77 @@ class FileStore:
                 sha256.update(chunk)
         return sha256.hexdigest()
 
-    async def add_file(self, name: str, file_type: str, content: bytes) -> dict:
-        """Save file to disk and DB."""
+    async def find_by_checksum(self, checksum: str, set_id: Optional[str] = None) -> Optional[dict]:
+        """Find an existing file with the same content (checksum) in the same scope (library or set)."""
+        async with async_session() as session:
+            q = select(FileORM).where(FileORM.checksum_sha256 == checksum)
+            if set_id is None:
+                q = q.where(FileORM.set_id.is_(None))
+            else:
+                q = q.where(FileORM.set_id == set_id)
+            result = await session.execute(q)
+            f = result.scalars().first()
+            if not f:
+                return None
+            return {
+                "id": f.id,
+                "name": f.filename,
+                "size": f.size_bytes,
+                "type": f.file_type.value,
+                "uploadDate": f.uploaded_at.isoformat() + "Z",
+                "checksum": f.checksum_sha256,
+                "set_id": f.set_id,
+            }
+
+    async def find_by_name(self, name: str, set_id: Optional[str] = None) -> List[dict]:
+        """Find existing file(s) with the same name in the same scope. Returns list (may be multiple)."""
+        async with async_session() as session:
+            q = select(FileORM).where(FileORM.filename == name)
+            if set_id is None:
+                q = q.where(FileORM.set_id.is_(None))
+            else:
+                q = q.where(FileORM.set_id == set_id)
+            result = await session.execute(q)
+            files = result.scalars().all()
+            return [
+                {"id": f.id, "name": f.filename, "size": f.size_bytes, "type": f.file_type.value, "uploadDate": f.uploaded_at.isoformat() + "Z"}
+                for f in files
+            ]
+
+    async def add_file(self, name: str, file_type: str, content: bytes, set_id: Optional[str] = None) -> dict:
+        """Save file to disk and DB. set_id=None for main library; set_id=id for set storage.
+        Detects duplicates: by content (checksum) returns existing record without saving;
+        by name sets duplicateByName in response if same name already exists."""
+        checksum = self._checksum_bytes(content)
+        size = len(content)
+
+        # Duplicate by content: return existing file (no new save)
+        existing_by_content = await self.find_by_checksum(checksum, set_id)
+        if existing_by_content:
+            return {
+                "id": existing_by_content["id"],
+                "name": existing_by_content["name"],
+                "size": existing_by_content["size"],
+                "type": existing_by_content["type"],
+                "uploadDate": existing_by_content["uploadDate"],
+                "checksum": existing_by_content["checksum"],
+                "set_id": existing_by_content.get("set_id"),
+                "duplicateByContent": True,
+            }
+
+        # Check duplicate by name (before adding; we will still save if content is new)
+        existing_by_name = await self.find_by_name(name, set_id)
+
         file_uuid = str(uuid.uuid4())
-        
-        # Determine paths
         try:
             ftype = FileType(file_type.upper())
         except ValueError:
             ftype = FileType.OTHER
-            
         storage_path = self._get_storage_path(ftype.value, name, file_uuid)
-        
-        # Write to disk
+
         async with aiofiles.open(storage_path, "wb") as f:
             await f.write(content)
-            
-        # Calculate Checksum
-        checksum = await self.calculate_checksum(storage_path)
-        size = len(content)
-        
-        # Save to DB
+
         async with async_session() as session:
             orm = FileORM(
                 id=file_uuid,
@@ -69,25 +124,35 @@ class FileStore:
                 storage_path=storage_path,
                 checksum_sha256=checksum,
                 size_bytes=size,
-                uploaded_at=datetime.utcnow()
+                uploaded_at=datetime.utcnow(),
+                set_id=set_id,
             )
             session.add(orm)
             await session.commit()
             await session.refresh(orm)
-            
-            return {
+
+            out = {
                 "id": orm.id,
                 "name": orm.filename,
                 "size": orm.size_bytes,
                 "type": orm.file_type.value,
                 "uploadDate": orm.uploaded_at.isoformat() + "Z",
-                "checksum": orm.checksum_sha256
+                "checksum": orm.checksum_sha256,
+                "set_id": orm.set_id,
             }
+            if existing_by_name:
+                out["duplicateByName"] = True
+            return out
 
-    async def list_files(self) -> List[dict]:
-        """List all files from DB."""
+    async def list_files(self, set_id: Optional[str] = None) -> List[dict]:
+        """List files from DB. set_id=None => main library only (set_id IS NULL); set_id=x => files for that set."""
         async with async_session() as session:
-            result = await session.execute(select(FileORM).order_by(FileORM.uploaded_at.desc()))
+            q = select(FileORM).order_by(FileORM.uploaded_at.desc())
+            if set_id is None:
+                q = q.where(FileORM.set_id.is_(None))
+            else:
+                q = q.where(FileORM.set_id == set_id)
+            result = await session.execute(q)
             files = result.scalars().all()
             return [
                 {
@@ -96,7 +161,7 @@ class FileStore:
                     "size": f.size_bytes,
                     "type": f.file_type.value,
                     "uploadDate": f.uploaded_at.isoformat() + "Z",
-                    "checksum": f.checksum_sha256
+                    "checksum": f.checksum_sha256,
                 }
                 for f in files
             ]
@@ -137,5 +202,66 @@ class FileStore:
                 except OSError:
                     pass # Log warning
             return True
+
+    async def get_file_content(self, file_id: str) -> Optional[bytes]:
+        """Read file content from disk. Returns None if not found."""
+        rec = await self.get_file(file_id)
+        if not rec or not rec.get("path"):
+            return None
+        path = rec["path"]
+        if not os.path.exists(path):
+            return None
+        async with aiofiles.open(path, "rb") as f:
+            return await f.read()
+
+    async def delete_files_by_set_id(self, set_id: str) -> int:
+        """Delete all files for this set (from DB and disk). Returns count deleted."""
+        async with async_session() as session:
+            result = await session.execute(select(FileORM).where(FileORM.set_id == set_id))
+            files = result.scalars().all()
+            count = 0
+            for f in files:
+                if os.path.exists(f.storage_path):
+                    try:
+                        os.remove(f.storage_path)
+                    except OSError:
+                        pass
+                await session.delete(f)
+                count += 1
+            await session.commit()
+            return count
+
+    async def save_set_files(self, set_id: str, file_ids: List[str]) -> List[dict]:
+        """Copy given library files (by id) into set storage. Replaces any existing set files. Returns list of new file records."""
+        await self.delete_files_by_set_id(set_id)
+        out = []
+        for fid in file_ids:
+            content = await self.get_file_content(fid)
+            if content is None:
+                continue
+            rec = await self.get_file(fid)
+            if not rec:
+                continue
+            name = rec["name"]
+            ftype = rec.get("type", "OTHER") or "OTHER"
+            new_rec = await self.add_file(name=name, file_type=ftype, content=content, set_id=set_id)
+            out.append({"id": new_rec["id"], "name": new_rec["name"], "size": new_rec["size"], "type": new_rec["type"], "uploadDate": new_rec["uploadDate"]})
+        return out
+
+    async def list_set_files(self, set_id: str) -> List[dict]:
+        """List files stored for this set."""
+        return await self.list_files(set_id=set_id)
+
+    async def restore_set_files_to_library(self, set_id: str) -> List[dict]:
+        """Copy all set files into main library (set_id=None). Returns new file list (id, name, size, type, uploadDate)."""
+        set_files = await self.list_set_files(set_id)
+        out = []
+        for f in set_files:
+            content = await self.get_file_content(f["id"])
+            if content is None:
+                continue
+            new_rec = await self.add_file(name=f["name"], file_type=f.get("type", "OTHER") or "OTHER", content=content, set_id=None)
+            out.append({"id": new_rec["id"], "name": new_rec["name"], "size": new_rec["size"], "type": new_rec["type"], "uploadDate": new_rec["uploadDate"]})
+        return out
 
 file_store = FileStore()

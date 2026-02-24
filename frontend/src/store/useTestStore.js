@@ -54,6 +54,10 @@ const saveTestCommands = (commands) => {
 const PROFILES_LIST_KEY = 'app_profiles_list';
 const ACTIVE_PROFILE_ID_KEY = 'app_active_profile_id';
 const PROFILE_DATA_PREFIX = 'app_profile_';
+const SHARED_PROFILES_KEY = 'app_shared_profiles';
+
+// True if profile id is a backend UUID (can sync / share)
+const isBackendProfileId = (id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(id || ''));
 
 // Load profiles list
 const loadProfilesList = () => {
@@ -75,6 +79,28 @@ const saveProfilesList = (list) => {
     localStorage.setItem(PROFILES_LIST_KEY, JSON.stringify(list));
   } catch (e) {
     console.error('Failed to save profiles list', e);
+  }
+};
+
+// Load shared profiles list [{ id, name? }]
+const loadSharedProfilesList = () => {
+  try {
+    const saved = localStorage.getItem(SHARED_PROFILES_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed : [];
+    }
+  } catch (e) {
+    console.error('Failed to load shared profiles list', e);
+  }
+  return [];
+};
+
+const saveSharedProfilesList = (list) => {
+  try {
+    localStorage.setItem(SHARED_PROFILES_KEY, JSON.stringify(list));
+  } catch (e) {
+    console.error('Failed to save shared profiles list', e);
   }
 };
 
@@ -161,14 +187,13 @@ const loadSavedTestCases = () => {
   
 };
 
-// Save saved test cases to active profile
+// Save saved test cases to active profile (and sync to backend if profile is backend UUID)
 const saveSavedTestCases = (list) => {
   const activeId = getActiveProfileId();
   const profile = loadProfile(activeId);
   if (profile) {
     saveProfile(activeId, { ...profile, savedTestCases: list });
   } else {
-    // Fallback: create profile if missing
     const newProfile = {
       id: activeId,
       name: 'Default',
@@ -180,6 +205,10 @@ const saveSavedTestCases = (list) => {
     };
     saveProfile(activeId, newProfile);
   }
+  if (isBackendProfileId(activeId)) {
+    const p = loadProfile(activeId);
+    void api.putProfileData(activeId, { savedTestCases: list, savedTestCaseSets: p?.savedTestCaseSets ?? [] }).catch(() => {});
+  }
 };
 
 // Load saved test case sets (collections) from active profile
@@ -189,7 +218,7 @@ const loadSavedTestCaseSets = () => {
   return profile?.savedTestCaseSets || [];
 };
 
-// Save saved test case sets to active profile
+// Save saved test case sets to active profile (and sync to backend if profile is backend UUID)
 const saveSavedTestCaseSets = (sets) => {
   const activeId = getActiveProfileId();
   const profile = loadProfile(activeId);
@@ -206,6 +235,10 @@ const saveSavedTestCaseSets = (sets) => {
       preferences: {},
     };
     saveProfile(activeId, newProfile);
+  }
+  if (isBackendProfileId(activeId)) {
+    const p = loadProfile(activeId);
+    void api.putProfileData(activeId, { savedTestCases: p?.savedTestCases ?? [], savedTestCaseSets: sets }).catch(() => {});
   }
 };
 
@@ -269,8 +302,11 @@ export const useTestStore = create((set, get) => ({
   vcdFiles: [],
   firmwareFiles: [],
 
-  // Saved Test Cases (library) — store created test cases for selection in Run Set
+  // Saved Test Cases (library) — persisted; only shown in Library after "Save to library"
   savedTestCases: (() => loadSavedTestCases())(),
+
+  // Working Test Cases (draft) — table content; NOT in Library until user clicks "Save to library"
+  workingTestCases: [],
 
   // Saved Test Case Sets — snapshot ของชุด test cases ทั้งตาราง (ไม่ต้องใช้ JSON เอง)
   savedTestCaseSets: (() => loadSavedTestCaseSets())(),
@@ -278,6 +314,18 @@ export const useTestStore = create((set, get) => ({
   // Profile System (no login/logout)
   profiles: (() => loadProfilesList())(),
   activeProfileId: (() => getActiveProfileId())(),
+  sharedProfiles: (() => loadSharedProfilesList())(),
+  viewingSharedProfileId: null,
+  sharedProfileDataCache: {}, // { [profileId]: { savedTestCases, savedTestCaseSets } }
+
+  // When editing a set (Load): table shows only set items; library (savedTestCases) is never touched
+  loadedSetId: null,
+  loadedSetTable: [], // test cases in table when editing a set (only set's items)
+
+  // When Library triggers "edit this test case" → Test Cases page loads this set and focuses row
+  libraryEditContext: null, // { loadSetId: string, focusTcIndex?: number } | null
+  setLibraryEditContext: (ctx) => set({ libraryEditContext: ctx }),
+  clearLibraryEditContext: () => set({ libraryEditContext: null }),
 
   // UI State
   theme: (() => {
@@ -450,6 +498,12 @@ export const useTestStore = create((set, get) => ({
 
     try {
       const uploaded = await api.uploadFile(uploadTarget);
+      if (uploaded.duplicateByContent) {
+        get().addToast({ type: 'info', message: `"${uploaded.name}" has the same content as an existing file — reusing existing file` });
+      }
+      if (uploaded.duplicateByName && !uploaded.duplicateByContent) {
+        get().addToast({ type: 'info', message: `Another file named "${uploaded.name}" already exists in the library` });
+      }
       const mapped = {
         id: uploaded.id,
         name: uploaded.name,
@@ -461,15 +515,18 @@ export const useTestStore = create((set, get) => ({
         file: null,
         uploadDate: uploaded.uploadDate,
       };
-      set((prev) => ({
-        uploadedFiles: [...prev.uploadedFiles, mapped],
-        vcdFiles: inferFileType(mapped.name, mapped.type) === 'vcd'
-          ? [...prev.vcdFiles, mapped]
-          : prev.vcdFiles,
-        firmwareFiles: inferFileType(mapped.name, mapped.type) !== 'vcd'
-          ? [...prev.firmwareFiles, mapped]
-          : prev.firmwareFiles,
-      }));
+      set((prev) => {
+        const alreadyInList = prev.uploadedFiles.some((f) => f.id === uploaded.id);
+        const nextFiles = alreadyInList ? prev.uploadedFiles : [...prev.uploadedFiles, mapped];
+        const isVcd = inferFileType(mapped.name, mapped.type) === 'vcd';
+        const nextVcd = !alreadyInList && isVcd ? [...prev.vcdFiles, mapped] : prev.vcdFiles;
+        const nextFw = !alreadyInList && !isVcd ? [...prev.firmwareFiles, mapped] : prev.firmwareFiles;
+        return {
+          uploadedFiles: nextFiles,
+          vcdFiles: nextVcd,
+          firmwareFiles: nextFw,
+        };
+      });
       return uploaded;
     } catch (error) {
       console.error('Failed to upload file', error);
@@ -492,8 +549,11 @@ export const useTestStore = create((set, get) => ({
   // Saved Test Cases (library)
   addSavedTestCase: (tc) => {
     const id = `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    const entry = { ...tc, id };
+    const entry = { ...tc, id, createdAt: tc.createdAt || new Date().toISOString() };
     set((state) => {
+      if (state.loadedSetId) {
+        return { loadedSetTable: [...(state.loadedSetTable || []), entry] };
+      }
       const next = [...state.savedTestCases, entry];
       saveSavedTestCases(next);
       return { savedTestCases: next };
@@ -501,97 +561,216 @@ export const useTestStore = create((set, get) => ({
     return id;
   },
   updateSavedTestCase: (id, updates) => set((state) => {
+    if (state.loadedSetId) {
+      const next = (state.loadedSetTable || []).map((t) => (t.id === id ? { ...t, ...updates } : t));
+      return { loadedSetTable: next };
+    }
     const next = state.savedTestCases.map((t) => (t.id === id ? { ...t, ...updates } : t));
     saveSavedTestCases(next);
     return { savedTestCases: next };
   }),
   removeSavedTestCase: (id) => set((state) => {
+    if (state.loadedSetId) {
+      const next = (state.loadedSetTable || []).filter((t) => t.id !== id);
+      return { loadedSetTable: next };
+    }
     const next = state.savedTestCases.filter((t) => t.id !== id);
     saveSavedTestCases(next);
     return { savedTestCases: next };
   }),
   moveSavedTestCaseUp: (id) => set((state) => {
-    const list = state.savedTestCases;
+    const list = state.loadedSetId ? (state.loadedSetTable || []) : state.savedTestCases;
     const i = list.findIndex((t) => t.id === id);
     if (i <= 0) return state;
     const next = [...list];
     [next[i - 1], next[i]] = [next[i], next[i - 1]];
+    if (state.loadedSetId) return { loadedSetTable: next };
     saveSavedTestCases(next);
     return { savedTestCases: next };
   }),
   moveSavedTestCaseDown: (id) => set((state) => {
-    const list = state.savedTestCases;
+    const list = state.loadedSetId ? (state.loadedSetTable || []) : state.savedTestCases;
     const i = list.findIndex((t) => t.id === id);
     if (i < 0 || i >= list.length - 1) return state;
     const next = [...list];
     [next[i], next[i + 1]] = [next[i + 1], next[i]];
+    if (state.loadedSetId) return { loadedSetTable: next };
     saveSavedTestCases(next);
     return { savedTestCases: next };
   }),
   reorderSavedTestCases: (fromIndex, toIndex) => set((state) => {
-    const list = [...state.savedTestCases];
-    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= list.length || toIndex >= list.length) return state;
-    const [item] = list.splice(fromIndex, 1);
+    const list = state.loadedSetId ? (state.loadedSetTable || []) : state.savedTestCases;
+    const arr = [...list];
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= arr.length || toIndex >= arr.length) return state;
+    const [item] = arr.splice(fromIndex, 1);
     const insertAt = fromIndex < toIndex ? toIndex - 1 : toIndex;
-    list.splice(insertAt, 0, item);
-    saveSavedTestCases(list);
-    return { savedTestCases: list };
+    arr.splice(insertAt, 0, item);
+    if (state.loadedSetId) return { loadedSetTable: arr };
+    saveSavedTestCases(arr);
+    return { savedTestCases: arr };
   }),
   duplicateSavedTestCase: (id, overrides = {}) => set((state) => {
-    const tc = state.savedTestCases.find((t) => t.id === id);
+    const list = state.loadedSetId ? (state.loadedSetTable || []) : state.savedTestCases;
+    const tc = list.find((t) => t.id === id);
     if (!tc) return state;
     const newId = `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const commands = (Array.isArray(tc.commands) ? tc.commands : []).map((c, i) => ({
       ...c,
       id: `cmd-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 9)}`,
     }));
-    const newTc = { ...tc, id: newId, commands, ...overrides };
-    const i = state.savedTestCases.findIndex((t) => t.id === id);
-    const next = [...state.savedTestCases];
+    const newTc = { ...tc, id: newId, commands, createdAt: new Date().toISOString(), ...overrides };
+    const i = list.findIndex((t) => t.id === id);
+    const next = [...list];
     next.splice(i + 1, 0, newTc);
+    if (state.loadedSetId) return { loadedSetTable: next };
     saveSavedTestCases(next);
     return { savedTestCases: next };
   }),
   setSavedTestCases: (list) => set((state) => {
     const next = Array.isArray(list) ? list : [];
-    saveSavedTestCases(next);
-    return { savedTestCases: next };
-  }),
-  bulkUpdateTryCount: (ids, tryCount) => set((state) => {
-    const num = Math.max(1, Math.min(100, parseInt(tryCount, 10) || 1));
-    const next = state.savedTestCases.map((t) => (ids.includes(t.id) ? { ...t, tryCount: num } : t));
+    if (state.loadedSetId) return { loadedSetTable: next };
     saveSavedTestCases(next);
     return { savedTestCases: next };
   }),
 
-  // Commands/sequences per test case: [{ id, type: 'mdi'|'vcd', file: string }]
-  addTestCaseCommand: (tcId, { type, file = '' }) => set((state) => {
-    const tc = state.savedTestCases.find((t) => t.id === tcId);
+  // Working Test Cases (draft) — table only; save to library explicitly
+  addWorkingTestCase: (tc) => {
+    const id = `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const entry = { ...tc, id, createdAt: tc.createdAt || new Date().toISOString() };
+    set((state) => ({ workingTestCases: [...state.workingTestCases, entry] }));
+    return id;
+  },
+  updateWorkingTestCase: (id, updates) => set((state) => ({
+    workingTestCases: state.workingTestCases.map((t) => (t.id === id ? { ...t, ...updates } : t)),
+  })),
+  removeWorkingTestCase: (id) => set((state) => ({
+    workingTestCases: state.workingTestCases.filter((t) => t.id !== id),
+  })),
+  setWorkingTestCases: (list) => set({ workingTestCases: Array.isArray(list) ? list : [] }),
+  moveWorkingTestCaseUp: (id) => set((state) => {
+    const list = state.workingTestCases;
+    const i = list.findIndex((t) => t.id === id);
+    if (i <= 0) return state;
+    const next = [...list];
+    [next[i - 1], next[i]] = [next[i], next[i - 1]];
+    return { workingTestCases: next };
+  }),
+  moveWorkingTestCaseDown: (id) => set((state) => {
+    const list = state.workingTestCases;
+    const i = list.findIndex((t) => t.id === id);
+    if (i < 0 || i >= list.length - 1) return state;
+    const next = [...list];
+    [next[i], next[i + 1]] = [next[i + 1], next[i]];
+    return { workingTestCases: next };
+  }),
+  reorderWorkingTestCases: (fromIndex, toIndex) => set((state) => {
+    const list = [...state.workingTestCases];
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0 || fromIndex >= list.length || toIndex >= list.length) return state;
+    const [item] = list.splice(fromIndex, 1);
+    const insertAt = fromIndex < toIndex ? toIndex - 1 : toIndex;
+    list.splice(insertAt, 0, item);
+    return { workingTestCases: list };
+  }),
+  duplicateWorkingTestCase: (id, overrides = {}) => set((state) => {
+    const tc = state.workingTestCases.find((t) => t.id === id);
+    if (!tc) return state;
+    const newId = `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const commands = (Array.isArray(tc.commands) ? tc.commands : []).map((c, i) => ({
+      ...c,
+      id: `cmd-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 9)}`,
+    }));
+    const newTc = { ...tc, id: newId, commands, createdAt: new Date().toISOString(), ...overrides };
+    const i = state.workingTestCases.findIndex((t) => t.id === id);
+    const next = [...state.workingTestCases];
+    next.splice(i + 1, 0, newTc);
+    return { workingTestCases: next };
+  }),
+  bulkUpdateWorkingTryCount: (ids, tryCount) => set((state) => {
+    const num = Math.max(1, Math.min(100, parseInt(tryCount, 10) || 1));
+    return {
+      workingTestCases: state.workingTestCases.map((t) => (ids.includes(t.id) ? { ...t, tryCount: num } : t)),
+    };
+  }),
+  addWorkingTestCaseCommand: (tcId, { type, file = '' }) => set((state) => {
+    const tc = state.workingTestCases.find((t) => t.id === tcId);
     if (!tc) return state;
     const commands = Array.isArray(tc.commands) ? tc.commands : [];
     const id = `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    const next = state.savedTestCases.map((t) =>
+    return {
+      workingTestCases: state.workingTestCases.map((t) =>
+        t.id === tcId ? { ...t, commands: [...commands, { id, type, file }] } : t
+      ),
+    };
+  }),
+  updateWorkingTestCaseCommand: (tcId, cmdId, updates) => set((state) => ({
+    workingTestCases: state.workingTestCases.map((t) => {
+      if (t.id !== tcId || !Array.isArray(t.commands)) return t;
+      return {
+        ...t,
+        commands: t.commands.map((c) => (c.id === cmdId ? { ...c, ...updates } : c)),
+      };
+    }),
+  })),
+  removeWorkingTestCaseCommand: (tcId, cmdId) => set((state) => ({
+    workingTestCases: state.workingTestCases.map((t) => {
+      if (t.id !== tcId || !Array.isArray(t.commands)) return t;
+      return { ...t, commands: t.commands.filter((c) => c.id !== cmdId) };
+    }),
+  })),
+  saveWorkingToLibrary: () => {
+    const state = get();
+    const list = state.workingTestCases || [];
+    saveSavedTestCases(list);
+    set({ savedTestCases: list });
+    if (isBackendProfileId(getActiveProfileId())) {
+      const p = loadProfile(getActiveProfileId());
+      void api.putProfileData(getActiveProfileId(), { savedTestCases: list, savedTestCaseSets: p?.savedTestCaseSets ?? [] }).catch(() => {});
+    }
+  },
+
+  bulkUpdateTryCount: (ids, tryCount) => set((state) => {
+    const num = Math.max(1, Math.min(100, parseInt(tryCount, 10) || 1));
+    const list = state.loadedSetId ? (state.loadedSetTable || []) : state.savedTestCases;
+    const next = list.map((t) => (ids.includes(t.id) ? { ...t, tryCount: num } : t));
+    if (state.loadedSetId) return { loadedSetTable: next };
+    saveSavedTestCases(next);
+    return { savedTestCases: next };
+  }),
+
+  // Commands/sequences per test case: [{ id, type: 'mdi'|'vcd'|'erom'|'ulp', file: string }]
+  addTestCaseCommand: (tcId, { type, file = '' }) => set((state) => {
+    const list = state.loadedSetId ? (state.loadedSetTable || []) : state.savedTestCases;
+    const tc = list.find((t) => t.id === tcId);
+    if (!tc) return state;
+    const commands = Array.isArray(tc.commands) ? tc.commands : [];
+    const id = `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const next = list.map((t) =>
       t.id === tcId ? { ...t, commands: [...commands, { id, type, file }] } : t
     );
+    if (state.loadedSetId) return { loadedSetTable: next };
     saveSavedTestCases(next);
     return { savedTestCases: next };
   }),
   updateTestCaseCommand: (tcId, cmdId, updates) => set((state) => {
-    const next = state.savedTestCases.map((t) => {
+    const list = state.loadedSetId ? (state.loadedSetTable || []) : state.savedTestCases;
+    const next = list.map((t) => {
       if (t.id !== tcId || !Array.isArray(t.commands)) return t;
       return {
         ...t,
         commands: t.commands.map((c) => (c.id === cmdId ? { ...c, ...updates } : c)),
       };
     });
+    if (state.loadedSetId) return { loadedSetTable: next };
     saveSavedTestCases(next);
     return { savedTestCases: next };
   }),
   removeTestCaseCommand: (tcId, cmdId) => set((state) => {
-    const next = state.savedTestCases.map((t) => {
+    const list = state.loadedSetId ? (state.loadedSetTable || []) : state.savedTestCases;
+    const next = list.map((t) => {
       if (t.id !== tcId || !Array.isArray(t.commands)) return t;
       return { ...t, commands: t.commands.filter((c) => c.id !== cmdId) };
     });
+    if (state.loadedSetId) return { loadedSetTable: next };
     saveSavedTestCases(next);
     return { savedTestCases: next };
   }),
@@ -608,6 +787,7 @@ export const useTestStore = create((set, get) => ({
       boardId: t.boardId || '',
       tryCount: typeof t.tryCount === 'number' && t.tryCount > 0 ? t.tryCount : 1,
       extraColumns: t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {},
+      createdAt: t.createdAt || now,
     }));
     const fileLibrarySnapshot = options.fileLibrarySnapshot || [];
     const entry = { id, name: name || 'Unnamed Set', createdAt: now, updatedAt: now, items: normalizedItems, fileLibrarySnapshot };
@@ -681,6 +861,16 @@ export const useTestStore = create((set, get) => ({
     const list = (setEntry.items || []).map((t) => {
       const name = ensureUnique((t.name || '').trim() || 'Test case');
       existingNames.add(name);
+      const extra = t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {};
+      const commands = [];
+      ['VCD2', 'VCD3', 'VCD4', 'ERoM2', 'ERoM3', 'ULP2', 'ULP3'].forEach((col) => {
+        const v = (extra[col] ?? '').toString().trim();
+        if (v) {
+          const type = col.startsWith('VCD') ? 'vcd' : col.startsWith('ERoM') ? 'erom' : 'ulp';
+          commands.push({ id: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`, type, file: v });
+          delete extra[col];
+        }
+      });
       return {
         id: `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         name,
@@ -689,16 +879,92 @@ export const useTestStore = create((set, get) => ({
         linName: t.linName || '',
         boardId: t.boardId || '',
         tryCount: typeof t.tryCount === 'number' && t.tryCount > 0 ? t.tryCount : 1,
-        extraColumns: t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {},
+        extraColumns: extra,
+        commands,
+        createdAt: t.createdAt || new Date().toISOString(),
       };
     });
     saveSavedTestCases(list);
-    return { savedTestCases: list };
+    return { savedTestCases: list, workingTestCases: [] };
   }),
+  /** Load set items into table for editing. Uses loadedSetTable only — savedTestCases (library) is NOT touched. */
+  loadSetForEditing: (id) => set((state) => {
+    const setEntry = state.savedTestCaseSets.find((s) => s.id === id);
+    if (!setEntry) return state;
+    const existingNames = new Set();
+    const ensureUnique = (baseName) => {
+      const base = (baseName || 'Test case').trim() || 'Test case';
+      if (!existingNames.has(base)) return base;
+      let n = 2;
+      while (existingNames.has(`${base} (${n})`)) n++;
+      return `${base} (${n})`;
+    };
+    const list = (setEntry.items || []).map((t) => {
+      const name = ensureUnique((t.name || '').trim() || 'Test case');
+      existingNames.add(name);
+      const extra = t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {};
+      const commands = [];
+      ['VCD2', 'VCD3', 'VCD4', 'ERoM2', 'ERoM3', 'ULP2', 'ULP3'].forEach((col) => {
+        const v = (extra[col] ?? '').toString().trim();
+        if (v) {
+          const type = col.startsWith('VCD') ? 'vcd' : col.startsWith('ERoM') ? 'erom' : 'ulp';
+          commands.push({ id: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`, type, file: v });
+          delete extra[col];
+        }
+      });
+      return {
+        id: `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        name,
+        vcdName: t.vcdName || '',
+        binName: t.binName || '',
+        linName: t.linName || '',
+        boardId: t.boardId || '',
+        tryCount: typeof t.tryCount === 'number' && t.tryCount > 0 ? t.tryCount : 1,
+        extraColumns: extra,
+        commands,
+        createdAt: t.createdAt || new Date().toISOString(),
+      };
+    });
+    return { loadedSetId: id, loadedSetTable: list };
+  }),
+  restoreSavedTestCasesFromProfile: () => set(() => {
+    const list = loadSavedTestCases();
+    return { savedTestCases: list, loadedSetId: null, loadedSetTable: [] };
+  }),
+  setLoadedSetId: (id) => set((state) => ({ loadedSetId: id ?? null, loadedSetTable: id ? state.loadedSetTable : [] })),
+
+  /** Merge full library view (savedTestCases + unique items from sets) into savedTestCases and persist. Use before navigating to Test Cases so the table shows all library rows. */
+  syncFullLibraryToSavedTestCases: () => set((state) => {
+    const contentKey = (tc) => [tc.name ?? '', tc.vcdName ?? '', tc.binName ?? '', tc.linName ?? ''].join('\0');
+    const fromCurrent = state.savedTestCases || [];
+    const seen = new Set(fromCurrent.map(contentKey));
+    const fromSets = (state.savedTestCaseSets || []).flatMap((set) =>
+      (Array.isArray(set.items) ? set.items : []).map((t) => ({
+        ...t,
+        id: t.id || `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      }))
+    );
+    const toAdd = fromSets.filter((tc) => {
+      const key = contentKey(tc);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (toAdd.length === 0) return {};
+    const next = [...fromCurrent, ...toAdd];
+    saveSavedTestCases(next);
+    const activeId = getActiveProfileId();
+    if (isBackendProfileId(activeId)) {
+      const p = loadProfile(activeId);
+      void api.putProfileData(activeId, { savedTestCases: next, savedTestCaseSets: p?.savedTestCaseSets ?? [] }).catch(() => {});
+    }
+    return { savedTestCases: next };
+  }),
+
   appendSavedTestCaseSet: (id) => set((state) => {
     const setEntry = state.savedTestCaseSets.find((s) => s.id === id);
     if (!setEntry) return state;
-    const existingNames = new Set(state.savedTestCases.map((t) => (t.name || '').trim()).filter(Boolean));
+    const existingNames = new Set(state.workingTestCases.map((t) => (t.name || '').trim()).filter(Boolean));
     const ensureUnique = (baseName) => {
       const base = (baseName || 'Test case').trim() || 'Test case';
       if (!existingNames.has(base)) return base;
@@ -718,31 +984,38 @@ export const useTestStore = create((set, get) => ({
         boardId: t.boardId || '',
         tryCount: typeof t.tryCount === 'number' && t.tryCount > 0 ? t.tryCount : 1,
         extraColumns: t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {},
+        createdAt: t.createdAt || new Date().toISOString(),
       };
     });
-    const next = [...state.savedTestCases, ...appended];
-    saveSavedTestCases(next);
-    return { savedTestCases: next };
+    return { workingTestCases: [...state.workingTestCases, ...appended] };
   }),
 
   // Profile Management (no login/logout)
-  createProfile: (name) => {
-    const id = `profile-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  createProfile: async (name) => {
+    const displayName = (name || 'New Profile').trim();
+    let id;
+    try {
+      const res = await api.createProfileApi(displayName);
+      id = res.id;
+      name = res.name || displayName;
+    } catch (e) {
+      id = `profile-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      name = displayName;
+    }
     const newProfile = {
       id,
-      name: name || 'New Profile',
+      name,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       savedTestCases: [],
+      savedTestCaseSets: [],
       preferences: {},
     };
     saveProfile(id, newProfile);
     const profiles = loadProfilesList();
-    profiles.push({ id, name: newProfile.name });
+    profiles.push({ id, name });
     saveProfilesList(profiles);
-    set({ profiles, activeProfileId: id });
-    // Load the new profile's test cases
-    set({ savedTestCases: [] });
+    set({ profiles, activeProfileId: id, savedTestCases: [], savedTestCaseSets: [], workingTestCases: [] });
     return id;
   },
   switchProfile: (profileId) => {
@@ -752,10 +1025,22 @@ export const useTestStore = create((set, get) => ({
       return false;
     }
     localStorage.setItem(ACTIVE_PROFILE_ID_KEY, profileId);
+    const testCases = profile.savedTestCases || [];
+    const sets = profile.savedTestCaseSets || [];
     set({
       activeProfileId: profileId,
-      savedTestCases: profile.savedTestCases || [],
+      savedTestCases: testCases,
+      savedTestCaseSets: sets,
+      workingTestCases: [],
+      viewingSharedProfileId: null,
     });
+    if (isBackendProfileId(profileId)) {
+      void api.getProfileData(profileId).then((data) => {
+        const merged = { savedTestCases: data.savedTestCases ?? testCases, savedTestCaseSets: data.savedTestCaseSets ?? sets };
+        saveProfile(profileId, { ...profile, ...merged });
+        set({ savedTestCases: merged.savedTestCases, savedTestCaseSets: merged.savedTestCaseSets });
+      }).catch(() => {});
+    }
     return true;
   },
   deleteProfile: (profileId) => {
@@ -786,6 +1071,9 @@ export const useTestStore = create((set, get) => ({
     const updatedProfiles = profiles.map((p) => (p.id === profileId ? { ...p, name: newName } : p));
     saveProfilesList(updatedProfiles);
     set({ profiles: updatedProfiles });
+    if (isBackendProfileId(profileId)) {
+      void api.updateProfileNameApi(profileId, newName).catch(() => {});
+    }
     return true;
   },
   exportProfile: async (profileId, includeHistory = false) => {
@@ -835,6 +1123,7 @@ export const useTestStore = create((set, get) => ({
       createdAt: profileData.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       savedTestCases: profileData.savedTestCases || [],
+      savedTestCaseSets: profileData.savedTestCaseSets || [],
       preferences: profileData.preferences || {},
       historySnapshot: profileData.historySnapshot,
     };
@@ -858,6 +1147,72 @@ export const useTestStore = create((set, get) => ({
     const profile = loadProfile(targetId);
     return profile?.historySnapshot || null;
   },
+
+  // Shared profiles (view / copy from teammate)
+  addSharedProfile: async (profileId) => {
+    const id = (profileId || '').trim();
+    if (!id) return { ok: false, error: 'Profile ID required' };
+    if (loadSharedProfilesList().some((p) => p.id === id)) return { ok: true };
+    try {
+      const meta = await api.getProfile(id);
+      const data = await api.getProfileData(id);
+      const list = loadSharedProfilesList();
+      list.push({ id, name: meta.name || id });
+      saveSharedProfilesList(list);
+      set((state) => ({
+        sharedProfiles: list,
+        sharedProfileDataCache: { ...state.sharedProfileDataCache, [id]: data },
+      }));
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e?.message || 'Failed to load profile' };
+    }
+  },
+  removeSharedProfile: (profileId) => {
+    const list = loadSharedProfilesList().filter((p) => p.id !== profileId);
+    saveSharedProfilesList(list);
+    set((state) => {
+      const cache = { ...state.sharedProfileDataCache };
+      delete cache[profileId];
+      return {
+        sharedProfiles: list,
+        sharedProfileDataCache: cache,
+        viewingSharedProfileId: state.viewingSharedProfileId === profileId ? null : state.viewingSharedProfileId,
+      };
+    });
+  },
+  setViewingSharedProfile: (profileId) => {
+    set({ viewingSharedProfileId: profileId || null });
+  },
+  fetchSharedProfileData: async (profileId) => {
+    try {
+      const data = await api.getProfileData(profileId);
+      set((state) => ({ sharedProfileDataCache: { ...state.sharedProfileDataCache, [profileId]: data } }));
+      return data;
+    } catch (e) {
+      return null;
+    }
+  },
+  copySharedToMyProfile: () => {
+    const state = get();
+    const sid = state.viewingSharedProfileId;
+    if (!sid) return false;
+    const data = state.sharedProfileDataCache[sid];
+    if (!data) return false;
+    const cases = Array.isArray(data.savedTestCases) ? data.savedTestCases : [];
+    const sets = Array.isArray(data.savedTestCaseSets) ? data.savedTestCaseSets : [];
+    const activeId = getActiveProfileId();
+    const profile = loadProfile(activeId);
+    const mergedCases = [...(profile?.savedTestCases || []), ...cases];
+    const mergedSets = [...(profile?.savedTestCaseSets || []), ...sets];
+    saveProfile(activeId, { ...profile, savedTestCases: mergedCases, savedTestCaseSets: mergedSets });
+    set({ savedTestCases: mergedCases, savedTestCaseSets: mergedSets, viewingSharedProfileId: null });
+    if (isBackendProfileId(activeId)) {
+      void api.putProfileData(activeId, { savedTestCases: mergedCases, savedTestCaseSets: mergedSets }).catch(() => {});
+    }
+    return true;
+  },
+  isBackendProfileId: (id) => isBackendProfileId(id),
 
   updateProgress: (id, val) => set((state) => ({
     jobs: state.jobs.map(j => j.id === id ? { ...j, progress: val } : j)

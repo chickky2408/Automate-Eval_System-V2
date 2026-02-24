@@ -6,6 +6,7 @@ using a local SQLite file via ``sqlite+aiosqlite``. You can still switch back
 to PostgreSQL later by setting the environment variable
 ``USE_SQLITE_DEMO=0``.
 """
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 import os
@@ -45,16 +46,26 @@ class Base(DeclarativeBase):
 
 
 async def init_db():
-    """Initialize database tables (create if not present).
-
-    For demo (SQLite) this will create all tables on first run.
-    For PostgreSQL, this at least verifies connection; you can still
-    layer Alembic migrations on top later.
-    """
+    """Initialize database tables (create if not present). Runs migration to add set_id to files if needed."""
     try:
         async with engine.begin() as conn:
-            # Create all tables defined in ORM metadata if they do not exist.
             await conn.run_sync(Base.metadata.create_all)
+
+        # Migration: add set_id to files if not present
+        async with engine.begin() as conn:
+            def _add_set_id(sync_conn):
+                if "sqlite" in DATABASE_URL:
+                    cur = sync_conn.execute(text("PRAGMA table_info(files)"))
+                    cols = [row[1] for row in cur.fetchall()]
+                    if "set_id" not in cols:
+                        sync_conn.execute(text("ALTER TABLE files ADD COLUMN set_id VARCHAR(128)"))
+                else:
+                    try:
+                        sync_conn.execute(text("ALTER TABLE files ADD COLUMN set_id VARCHAR(128)"))
+                    except Exception:
+                        pass
+            await conn.run_sync(_add_set_id)
+
         print(f"[DB] Database ready at {DATABASE_URL}")
     except Exception as e:
         print(f"[DB] Connection failed: {e}")

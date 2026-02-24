@@ -14,7 +14,7 @@ class FileType(str, enum.Enum):
     OTHER = "OTHER"
 
 class FileORM(Base):
-    """File registry table."""
+    """File registry table. set_id is null for main library; non-null for files stored with a Set."""
     __tablename__ = "files"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -24,6 +24,7 @@ class FileORM(Base):
     checksum_sha256 = Column(String(64), nullable=True)
     size_bytes = Column(BigInteger, default=0)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
+    set_id = Column(String(128), nullable=True)  # null = main library; set id = stored with that set
 
 
 class JobORM(Base):
@@ -89,6 +90,16 @@ class ResultORM(Base):
     # Hybrid Storage: HDF5 Path instead of JSON blob
     waveform_hdf5_path = Column(String(512), nullable=True) 
     metrics = Column(JSON, nullable=True)
+
+
+class ProfileORM(Base):
+    """Profile table (Option B1: no login). id is the share key; data = { savedTestCases, savedTestCaseSets }."""
+    __tablename__ = "profiles"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String(255), nullable=False)
+    data = Column(JSON, nullable=True)  # { savedTestCases: [], savedTestCaseSets: [] }
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class BoardORM(Base):

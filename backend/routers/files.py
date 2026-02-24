@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi.responses import Response
 from typing import Optional
 from datetime import datetime
 import os
@@ -10,22 +11,38 @@ from services.file_store import file_store
 
 router = APIRouter()
 
+
+@router.get("/{file_id}/content")
+async def get_file_content(file_id: str):
+    """Return raw file content (for copying to set storage or download)."""
+    content = await file_store.get_file_content(file_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    record = await file_store.get_file(file_id)
+    name = record.get("name", "file") if record else "file"
+    return Response(content=content, media_type="application/octet-stream", headers={"Content-Disposition": f"inline; filename={name}"})
+
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...), metadata: Optional[str] = Form(None)):
     content = await file.read()
     filename = file.filename or "upload.bin"
     file_type = (os.path.splitext(filename)[1] or "").lstrip(".") or (file.content_type or "bin")
-    
-    # New logic: Pass content directly to service
+
     record = await file_store.add_file(name=filename, file_type=file_type, content=content)
-    
-    return {
+
+    response = {
         "id": record["id"],
         "name": record["name"],
         "size": record["size"],
         "type": record["type"],
         "uploadDate": record["uploadDate"],
+        # "set_id": record.get["set_id"]
     }
+    if record.get("duplicateByContent"):
+        response["duplicateByContent"] = True
+    if record.get("duplicateByName"):
+        response["duplicateByName"] = True
+    return response
 
 
 @router.get("")
