@@ -2573,6 +2573,25 @@ const getSetNamesUsingFile = (fileName, savedTestCaseSets) => {
   return names;
 };
 
+/** Returns list of { name, set } for each test case that uses this file (vcdName, binName, or linName). */
+const getTestCasesUsingFile = (fileName, savedTestCases, savedTestCaseSets) => {
+  if (!fileName) return [];
+  const out = [];
+  (savedTestCases || []).forEach((tc) => {
+    if (tc.vcdName === fileName || tc.binName === fileName || tc.linName === fileName) {
+      out.push({ name: (tc.name || tc.vcdName || '').trim() || '—', set: 'Current (from table)' });
+    }
+  });
+  (savedTestCaseSets || []).forEach((set) => {
+    (set.items || []).forEach((tc) => {
+      if (tc.vcdName === fileName || tc.binName === fileName || tc.linName === fileName) {
+        out.push({ name: (tc.name || tc.vcdName || '').trim() || '—', set: set.name || set.id });
+      }
+    });
+  });
+  return out;
+};
+
 // FILE LIBRARY PAGE — default: Test Case Library (เรียง set ลงมา แต่ละ set มีตารางแนวนอน + แสดงไฟล์); ปุ่มสลับView files in Library
 const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const { uploadedFiles, removeUploadedFile, loading, errors, savedTestCaseSets, savedTestCases, removeSavedTestCase, updateSavedTestCaseSet, removeSavedTestCaseSet } = useTestStore();
@@ -3298,9 +3317,16 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                         <span className="text-xs text-slate-500">Select all ({filteredFiles.length})</span>
                       </div>
                     )}
-                    {filteredFiles.length === 0 ? <div className="p-8 text-center text-slate-400">No files — upload on the Test Cases page</div> : filteredFiles.map((f, index) => {
+                    {filteredFiles.length === 0 ? (
+                      <div className="p-8 text-center text-slate-400 space-y-2">
+                        <p className="font-medium">No files in library</p>
+                        <p className="text-xs max-w-md mx-auto">Files appear here only after you <strong>upload</strong> them on the Test Cases page (drag & drop or click the upload area). Saving a test case only saves the test case definition (names of VCD/ERoM/ULP); it does not upload files. Upload the files first, then save the test case.</p>
+                      </div>
+                    ) : filteredFiles.map((f, index) => {
                       const setNames = getSetNamesUsingFile(f.name, savedTestCaseSets);
+                      const usedByTcs = getTestCasesUsingFile(f.name, savedTestCases, savedTestCaseSets);
                       const isSelected = selectedFileSet.has(f.id);
+                      const usedByTcsTitle = usedByTcs.length > 0 ? usedByTcs.map((u) => `${u.name}${u.set ? ` (${u.set})` : ''}`).join('\n') : '';
                       return (
                         <div
                           key={f.id}
@@ -3311,7 +3337,12 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                         >
                           <input type="checkbox" checked={isSelected} onChange={() => toggleFileSelect(f.id, index, { shiftKey: false, ctrlKey: false, metaKey: false })} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded cursor-pointer shrink-0" />
                           <span className="flex-1 min-w-0 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
-                          {setNames.length > 0 && <span className="text-[11px] text-blue-600 dark:text-blue-400 shrink-0" title={`Used by Set: ${setNames.join(', ')}`}>Used by Set: {setNames.slice(0, 2).join(', ')}{setNames.length > 2 ? ` +${setNames.length - 2}` : ''}</span>}
+                          {usedByTcs.length > 0 && (
+                            <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0 max-w-[200px] truncate" title={usedByTcsTitle || undefined}>
+                              Test cases: {usedByTcs.slice(0, 2).map((u) => u.name).join(', ')}{usedByTcs.length > 2 ? ` +${usedByTcs.length - 2}` : ''}
+                            </span>
+                          )}
+                          {setNames.length > 0 && <span className="text-[11px] text-blue-600 dark:text-blue-400 shrink-0" title={`In sets: ${setNames.join(', ')}`}>Sets: {setNames.slice(0, 2).join(', ')}{setNames.length > 2 ? ` +${setNames.length - 2}` : ''}</span>}
                           <span className="text-xs text-slate-500 shrink-0">{f.sizeFormatted || f.size}</span>
                         </div>
                       );
@@ -3319,7 +3350,12 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                   </div>
                 ) : (
                   <div className="p-3 space-y-4">
-                    {filteredFiles.length === 0 ? <div className="p-8 text-center text-slate-400">No files — upload on the Test Cases page</div> : filesBySet.length === 0 ? <div className="p-8 text-center text-slate-400">No sets — create a set on the Test Cases page (Save Set)</div> : (
+                    {filteredFiles.length === 0 ? (
+                      <div className="p-8 text-center text-slate-400 space-y-2">
+                        <p className="font-medium">No files in library</p>
+                        <p className="text-xs max-w-md mx-auto">Upload files on the Test Cases page first (drag & drop or click upload). Save test case only saves the test case definition, not the file content.</p>
+                      </div>
+                    ) : filesBySet.length === 0 ? <div className="p-8 text-center text-slate-400">No sets — create a set on the Test Cases page (Save Set)</div> : (
                       <>
                         {filteredFiles.length > 0 && (
                           <div className="flex items-center gap-2 pb-2">
@@ -3342,6 +3378,8 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                 {files.map((f, fileIdx) => {
                                   const isSelected = selectedFileSet.has(f.id);
                                   const globalIndex = filteredFiles.findIndex((x) => x.id === f.id);
+                                  const usedByTcs = getTestCasesUsingFile(f.name, savedTestCases, savedTestCaseSets);
+                                  const usedByTcsTitle = usedByTcs.length > 0 ? usedByTcs.map((u) => `${u.name}${u.set ? ` (${u.set})` : ''}`).join('\n') : '';
                                   return (
                                     <div
                                       key={f.id}
@@ -3352,6 +3390,11 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                     >
                                       <input type="checkbox" checked={isSelected} onChange={() => toggleFileSelect(f.id, globalIndex >= 0 ? globalIndex : fileIdx, { shiftKey: false, ctrlKey: false, metaKey: false })} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded cursor-pointer shrink-0" />
                                       <span className="flex-1 min-w-0 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
+                                      {usedByTcs.length > 0 && (
+                                        <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0 max-w-[180px] truncate" title={usedByTcsTitle || undefined}>
+                                          Test cases: {usedByTcs.slice(0, 2).map((u) => u.name).join(', ')}{usedByTcs.length > 2 ? ` +${usedByTcs.length - 2}` : ''}
+                                        </span>
+                                      )}
                                       <span className="text-xs text-slate-500 shrink-0">{f.sizeFormatted || f.size}</span>
                                     </div>
                                   );
@@ -3687,6 +3730,13 @@ const TestCasesPage = () => {
     let n = 2;
     while (existing.includes(`${base} (${n})`)) n++;
     return `${base} (${n})`;
+  };
+
+  const isTestCaseLocked = (tcId) => {
+    // Locked if this test case is part of any saved set (to avoid surprising changes to sets/runs)
+    return (savedTestCaseSets || []).some((set) =>
+      (Array.isArray(set.items) ? set.items : []).some((t) => t.id === tcId)
+    );
   };
 
   const handleNameChange = (tcId, newName, prevName = '') => {
@@ -4343,7 +4393,7 @@ const TestCasesPage = () => {
               className="hidden"
             />
             <button
-              onClick={() => {
+              onClick={async () => {
                 const mergeCommandsIntoExtraForSave = (tc) => {
                   const extra = tc.extraColumns && typeof tc.extraColumns === 'object' ? { ...tc.extraColumns } : {};
                   const cmds = Array.isArray(tc.commands) ? tc.commands : [];
@@ -4360,6 +4410,18 @@ const TestCasesPage = () => {
                   addToast({ type: 'warning', message: 'No test cases to save' });
                   return;
                 }
+                // Upload any dropped-but-not-yet-uploaded files first so they appear in File in Library
+                const toUpload = (localDroppedFiles || []).filter((f) => f && f.file instanceof File);
+                if (toUpload.length > 0) {
+                  let uploaded = 0;
+                  for (const f of toUpload) {
+                    const result = await addUploadedFile(f.file);
+                    if (result) uploaded++;
+                  }
+                  setLocalDroppedFiles([]);
+                  if (refreshFiles) await refreshFiles();
+                  if (uploaded > 0) addToast({ type: 'success', message: `${uploaded} file(s) uploaded to library` });
+                }
                 if (toSave.length > 0) {
                   toSave.forEach((tc) => {
                     const { id, commands, ...rest } = tc;
@@ -4372,11 +4434,12 @@ const TestCasesPage = () => {
                 addToast({ type: 'success', message: `Test cases saved to library (${total} case(s))` });
               }}
               className="px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5"
-              title="Save draft test cases to library — จะแสดงใน Library หลังกด Save"
+              title="Save test cases. Dropped files will be uploaded to File in Library first."
             >
               <Save size={14} />
               <span>Save to library</span>
             </button>
+            <span className="text-[11px] text-slate-500 dark:text-slate-400" title="Dropped files are uploaded when you click Save to library. Or upload in the File Library area above first.">Dropped files are uploaded when you Save to library.</span>
           </div>
         </div>
         {loadedSetId && displayedSavedTestCaseSets?.find((s) => s.id === loadedSetId) && !isViewingShared && (
@@ -4659,7 +4722,13 @@ const TestCasesPage = () => {
                         onChange={(e) =>
                           updateDisplayedTestCase(tc.id, { binName: e.target.value })
                         }
+                        disabled={isTestCaseLocked(tc.id) || isViewingShared}
                         className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                        title={
+                          isTestCaseLocked(tc.id)
+                            ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
+                            : 'Select ERoM file'
+                        }
                       >
                         <option value="">— ERoM —</option>
                         {binFilesList.map((f) => (
@@ -4681,7 +4750,13 @@ const TestCasesPage = () => {
                             linName: e.target.value || undefined,
                           })
                         }
+                        disabled={isTestCaseLocked(tc.id) || isViewingShared}
                         className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                        title={
+                          isTestCaseLocked(tc.id)
+                            ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
+                            : 'Select ULP file'
+                        }
                       >
                         <option value="">— ULP —</option>
                         {linFilesList.map((f) => (
@@ -4701,7 +4776,13 @@ const TestCasesPage = () => {
                         onChange={(e) =>
                           updateDisplayedTestCase(tc.id, { vcdName: e.target.value })
                         }
+                        disabled={isTestCaseLocked(tc.id) || isViewingShared}
                         className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                        title={
+                          isTestCaseLocked(tc.id)
+                            ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
+                            : 'Select VCD file'
+                        }
                       >
                         <option value="">— VCD —</option>
                         {vcdFilesList.map((f) => (
@@ -4756,7 +4837,13 @@ const TestCasesPage = () => {
                             <select
                               value={getExtraVal(tc, col)}
                               onChange={(e) => handleExtraColumnChange(tc.id, col, e.target.value)}
+                              disabled={isTestCaseLocked(tc.id) || isViewingShared}
                               className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                              title={
+                                isTestCaseLocked(tc.id)
+                                  ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
+                                  : `Select file for ${col}`
+                              }
                             >
                               <option value="">— {col} —</option>
                               {(col.startsWith('VCD') ? vcdFilesList : col.startsWith('ERoM') ? binFilesList : linFilesList).map((f) => (
@@ -4811,10 +4898,10 @@ const TestCasesPage = () => {
                           duplicateDisplayedTestCase(tc.id, {
                             name: getNextTestCaseName(),
                           });
-                          addToast({ type: 'success', message: 'Duplicated with unique name' });
+                          addToast({ type: 'success', message: 'Saved as new test case' });
                         }}
                         className="p-1 text-slate-500 hover:text-blue-600 rounded"
-                        title="Duplicate (auto unique name)"
+                        title="Save as new test case"
                       >
                         <Copy size={14} />
                       </button>
@@ -4898,8 +4985,22 @@ const TestCasesPage = () => {
                           placeholder="Test case name"
                           title="Use a unique name"
                         />
-                        <span className="text-xs text-slate-400">Date: {tc.createdAt ? new Date(tc.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</span>
+                        <span className="text-xs text-slate-400">
+                          Date:{' '}
+                          {tc.createdAt
+                            ? new Date(tc.createdAt).toLocaleDateString(undefined, {
+                                year: 'numeric',
+                                month: 'short',
+                                day: 'numeric',
+                              })
+                            : '—'}
+                        </span>
                         <span className="text-xs text-slate-500">Try: {tc.tryCount ?? 1}</span>
+                        {isTestCaseLocked(tc.id) && (
+                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[10px] font-semibold">
+                            Locked in set
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
@@ -4913,10 +5014,10 @@ const TestCasesPage = () => {
                         type="button"
                         onClick={() => {
                           duplicateDisplayedTestCase(tc.id, { name: getNextTestCaseName() });
-                          addToast({ type: 'success', message: 'Duplicated with unique name' });
+                          addToast({ type: 'success', message: 'Saved as new test case' });
                         }}
                         className="p-1 text-slate-500 hover:text-blue-600 rounded"
-                        title="Duplicate"
+                        title="Save as new test case"
                       >
                         <Copy size={14} />
                       </button>
@@ -4933,15 +5034,21 @@ const TestCasesPage = () => {
                       </button>
                     </div>
                   </div>
-                  {/* Files: 2-column layout — EROM | ULP, VCD | extra */}
+                  {/* Files: single column layout — EROM, ULP, VCD, then extra */}
                   <div className="px-3 py-1.5">
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                    <div className="grid grid-cols-1 gap-y-1.5">
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="text-xs font-semibold text-slate-500 w-12 shrink-0">EROM:</span>
                         <select
                           value={tc.binName || ''}
                           onChange={(e) => updateDisplayedTestCase(tc.id, { binName: e.target.value })}
+                          disabled={isTestCaseLocked(tc.id) || isViewingShared}
                           className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                          title={
+                            isTestCaseLocked(tc.id)
+                              ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
+                              : 'Select ERoM file'
+                          }
                         >
                           <option value="">— ERoM —</option>
                           {binFilesList.map((f) => (
@@ -4959,7 +5066,13 @@ const TestCasesPage = () => {
                         <select
                           value={tc.linName || ''}
                           onChange={(e) => updateDisplayedTestCase(tc.id, { linName: e.target.value || undefined })}
+                          disabled={isTestCaseLocked(tc.id) || isViewingShared}
                           className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                          title={
+                            isTestCaseLocked(tc.id)
+                              ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
+                              : 'Select ULP file'
+                          }
                         >
                           <option value="">— ULP —</option>
                           {linFilesList.map((f) => (
@@ -4977,7 +5090,13 @@ const TestCasesPage = () => {
                         <select
                           value={tc.vcdName || ''}
                           onChange={(e) => updateDisplayedTestCase(tc.id, { vcdName: e.target.value })}
+                          disabled={isTestCaseLocked(tc.id) || isViewingShared}
                           className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                          title={
+                            isTestCaseLocked(tc.id)
+                              ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
+                              : 'Select VCD file'
+                          }
                         >
                           <option value="">— VCD —</option>
                           {vcdFilesList.map((f) => (
@@ -5031,7 +5150,13 @@ const TestCasesPage = () => {
                                 <select
                                   value={displayVal}
                                   onChange={(e) => handleExtraColumnChange(tc.id, col, e.target.value)}
+                                  disabled={isTestCaseLocked(tc.id) || isViewingShared}
                                   className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                                  title={
+                                    isTestCaseLocked(tc.id)
+                                      ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
+                                      : `Select file for ${col}`
+                                  }
                                 >
                                   <option value="">— {col} —</option>
                                   {fileList.map((f) => (
@@ -5305,10 +5430,8 @@ const RunSetPage = ({ onNavigateJobs }) => {
   const safeCases = Array.isArray(savedTestCases) ? savedTestCases : [];
   const safeFiles = Array.isArray(uploadedFiles) ? uploadedFiles : [];
   const safeBoards = Array.isArray(boards) ? boards : [];
-  const [runSelectionMode, setRunSelectionMode] = useState('browse');
-  const [showBrowseModal, setShowBrowseModal] = useState(false); // Finder-like: click Browse opens modal to pick test cases
+  const [showBrowseModal, setShowBrowseModal] = useState(false);
   const [selectedSetIds, setSelectedSetIds] = useState([]);
-  const [selectedBrowsedKeys, setSelectedBrowsedKeys] = useState(new Set());
   const [runSetName, setRunSetName] = useState('');
   const [tag, setTag] = useState('');
   const [boardSelectionMode, setBoardSelectionMode] = useState('auto');
@@ -5316,6 +5439,13 @@ const RunSetPage = ({ onNavigateJobs }) => {
   const [prioritize, setPrioritize] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [runPreview, setRunPreview] = useState([]);
+  const [runListNameFilter, setRunListNameFilter] = useState('');
+  const [runListTagFilter, setRunListTagFilter] = useState('');
+  const [tcClipboard, setTcClipboard] = useState([]);
+  const [selectedLeftKey, setSelectedLeftKey] = useState(null);
+  const [selectedRunIndex, setSelectedRunIndex] = useState(null);
+  const [selectedBrowsedKeys, setSelectedBrowsedKeys] = useState(new Set());
+  const runSetRightRef = useRef(null);
 
   const toggleSet = (id) => setSelectedSetIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   const selectAllSets = () => setSelectedSetIds(safeSets.map((s) => s.id));
@@ -5351,46 +5481,91 @@ const RunSetPage = ({ onNavigateJobs }) => {
   };
   const selectAllBrowsed = () => setSelectedBrowsedKeys(new Set(browsedRows.map((r) => r.key)));
   const clearAllBrowsed = () => setSelectedBrowsedKeys(new Set());
+  const nameFilter = (runListNameFilter || '').trim().toLowerCase();
+  const tagFilter = (runListTagFilter || '').trim().toLowerCase();
+  const filteredLibraryRows = useMemo(() => {
+    return browsedRows.filter((row) => {
+      const name = (row.tc.name || row.tc.vcdName || '').toLowerCase();
+      const tagVal = (row.tc.extraColumns?.tag || '').toString().toLowerCase();
+      if (nameFilter && !name.includes(nameFilter)) return false;
+      if (tagFilter && !tagVal.includes(tagFilter)) return false;
+      return true;
+    });
+  }, [browsedRows, nameFilter, tagFilter]);
 
-  // Build preview run order (flattened test cases) based on current selection
-  useEffect(() => {
-    let items = [];
-    if (runSelectionMode === 'browse') {
-      const selectedRows = browsedRows.filter((r) => selectedBrowsedKeys.has(r.key));
-      items = selectedRows.map((row, idx) => ({
-        key: row.key,
-        setId: row.setId,
-        set: row.set,
-        tc: row.tc,
-        order: idx + 1,
-      }));
-    } else {
-      const setsToRun = safeSets.filter((s) => selectedSetIds.includes(s.id));
-      setsToRun.forEach((set) => {
-        (set.items || []).forEach((tc, idx) => {
-          items.push({
-            key: `${set.id}-${idx}-${tc.id || tc.name || tc.vcdName || ''}`,
-            setId: set.id,
-            set,
-            tc,
-            order: items.length + 1,
-          });
-        });
-      });
-    }
-    setRunPreview(items);
-  }, [runSelectionMode, selectedBrowsedKeys, selectedSetIds, browsedRows, safeSets]);
-
-  const moveRunPreviewItem = (index, direction) => {
+  const addToRunPreview = useCallback((row, atIndex = null) => {
+    const item = {
+      key: `${row.key}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      setId: row.setId,
+      set: row.set,
+      tc: row.tc,
+      order: 0,
+    };
     setRunPreview((prev) => {
-      const next = [...prev];
-      const targetIndex = index + direction;
-      if (targetIndex < 0 || targetIndex >= next.length) return prev;
-      const [item] = next.splice(index, 1);
-      next.splice(targetIndex, 0, item);
+      const next = atIndex != null && atIndex >= 0 && atIndex <= prev.length
+        ? [...prev.slice(0, atIndex), item, ...prev.slice(atIndex)]
+        : [...prev, item];
       return next.map((it, idx) => ({ ...it, order: idx + 1 }));
     });
-  };
+  }, []);
+
+  const removeFromRunPreview = useCallback((index) => {
+    setRunPreview((prev) => prev.filter((_, i) => i !== index).map((it, idx) => ({ ...it, order: idx + 1 })));
+    setSelectedRunIndex((i) => (i === index ? null : i > index ? i - 1 : i));
+  }, []);
+
+  const reorderRunPreview = useCallback((fromIndex, toIndex) => {
+    if (fromIndex === toIndex) return;
+    setRunPreview((prev) => {
+      const next = [...prev];
+      const [item] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, item);
+      return next.map((it, idx) => ({ ...it, order: idx + 1 }));
+    });
+    setSelectedRunIndex((i) => {
+      if (i === fromIndex) return toIndex;
+      if (fromIndex < i && toIndex >= i) return i - 1;
+      if (fromIndex > i && toIndex <= i) return i + 1;
+      return i;
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.target.closest('input, textarea, [contenteditable="true"]')) return;
+      const isCopy = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'c';
+      const isPaste = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v';
+      if (isCopy) {
+        if (selectedRunIndex !== null && runPreview[selectedRunIndex]) {
+          setTcClipboard([{ row: { key: runPreview[selectedRunIndex].key, setId: runPreview[selectedRunIndex].setId, set: runPreview[selectedRunIndex].set, tc: runPreview[selectedRunIndex].tc } }]);
+          addToast({ type: 'info', message: 'Copied test case' });
+        } else if (selectedLeftKey) {
+          const row = filteredLibraryRows.find((r) => r.key === selectedLeftKey);
+          if (row) {
+            setTcClipboard([{ row }]);
+            addToast({ type: 'info', message: 'Copied test case' });
+          }
+        }
+      } else if (isPaste) {
+        const rightEl = runSetRightRef.current;
+        if (rightEl && (document.activeElement === rightEl || rightEl.contains(document.activeElement)) && tcClipboard.length > 0) {
+          setRunPreview((prev) => {
+            const newItems = tcClipboard.map(({ row }) => ({
+              key: `${row.key}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              setId: row.setId,
+              set: row.set,
+              tc: row.tc,
+              order: prev.length + 1,
+            }));
+            return prev.concat(newItems).map((it, idx) => ({ ...it, order: idx + 1 }));
+          });
+          addToast({ type: 'info', message: `Pasted ${tcClipboard.length} test case(s)` });
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedRunIndex, selectedLeftKey, runPreview, filteredLibraryRows, tcClipboard, addToast]);
 
   const buildJobFromSet = (set, testCasesOverride = null) => {
     const items = testCasesOverride != null ? testCasesOverride : (set.items || []);
@@ -5453,28 +5628,14 @@ const RunSetPage = ({ onNavigateJobs }) => {
 
     const jobsToCreate = [];
     const errorsPerSet = [];
-
-    // Group selected test cases by set, preserving the order inside each set
-    const bySet = new Map();
-    runPreview.forEach((item) => {
-      const set = item.set;
-      if (!set || !set.id) return;
-      if (!bySet.has(set.id)) bySet.set(set.id, { set, cases: [] });
-      bySet.get(set.id).cases.push(item.tc);
-    });
-
-    bySet.forEach(({ set, cases }) => {
-      const { missing, filesPayload, firstBinName, pairsData } = buildJobFromSet(set, cases);
-      if (missing.length > 0) {
-        const list = missing.slice(0, 5).join(', ') + (missing.length > 5 ? ` +${missing.length - 5} files` : '');
-        errorsPerSet.push(`${set.name}: Files not found in Library — ${list}`);
-        return;
-      }
-      if (filesPayload.length === 0) {
-        errorsPerSet.push(`${set.name}: No test cases with both VCD and ERoM`);
-        return;
-      }
-      const jobName = (runSetName || '').trim() || set.name;
+    const virtualSet = { id: '__run__', name: (runSetName || '').trim() || 'Run' };
+    const cases = runPreview.map((item) => item.tc);
+    const { missing, filesPayload, firstBinName, pairsData } = buildJobFromSet(virtualSet, cases);
+    if (missing.length > 0) {
+      const list = missing.slice(0, 5).join(', ') + (missing.length > 5 ? ` +${missing.length - 5} files` : '');
+      errorsPerSet.push(`Files not found in Library — ${list}`);
+    } else if (filesPayload.length > 0) {
+      const jobName = (runSetName || '').trim() || virtualSet.name;
       jobsToCreate.push({
         name: jobName,
         tag: tag || undefined,
@@ -5485,7 +5646,10 @@ const RunSetPage = ({ onNavigateJobs }) => {
         configName: jobName,
         pairsData,
       });
-    });
+    }
+    if (filesPayload.length === 0 && missing.length === 0) {
+      errorsPerSet.push('No test cases with both VCD and ERoM');
+    }
 
     if (errorsPerSet.length > 0) {
       const msg = errorsPerSet.join(' | ') + ' — Upload files on Test Cases → File Library first';
@@ -5502,9 +5666,8 @@ const RunSetPage = ({ onNavigateJobs }) => {
       }
       if (created > 0) {
         if (refreshJobs) await refreshJobs();
-        addToast({ type: 'success', message: `${created} set(s) sent to queue — see Jobs Manager (Running)` });
-        setSelectedSetIds([]);
-        setSelectedBrowsedKeys(new Set());
+        addToast({ type: 'success', message: `${created} job(s) sent to queue — see Jobs Manager (Running)` });
+        setRunPreview([]);
         setRunSetName('');
         setTag('');
         setSelectedBoardIds([]);
@@ -5519,25 +5682,11 @@ const RunSetPage = ({ onNavigateJobs }) => {
   };
 
   const saveSelectedNotRun = () => {
-    const useBrowsedSelection = runSelectionMode === 'browse' ? selectedBrowsedKeys.size > 0 : false;
-    const useSetSelection = runSelectionMode === 'set' && selectedSetIds.length > 0;
-    if (!useBrowsedSelection && !useSetSelection) {
-      addToast({ type: 'warning', message: 'Select at least one Set or browse and select test cases first' });
+    if (runPreview.length === 0) {
+      addToast({ type: 'warning', message: 'Add test cases to Set for run first (drag from left or Load a set)' });
       return;
     }
-    let items = [];
-    if (useBrowsedSelection) {
-      items = browsedRows.filter((r) => selectedBrowsedKeys.has(r.key)).map((r) => r.tc);
-    } else {
-      const setsToSave = safeSets.filter((s) => selectedSetIds.includes(s.id));
-      const seen = new Set();
-      items = setsToSave.flatMap((set) => (set.items || []).filter((tc) => {
-        const key = [tc.name, tc.vcdName, tc.binName, tc.linName].join('\0');
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      }));
-    }
+    const items = runPreview.map((item) => item.tc);
     if (items.length === 0) {
       addToast({ type: 'warning', message: 'No test cases to save' });
       return;
@@ -5570,96 +5719,147 @@ const RunSetPage = ({ onNavigateJobs }) => {
       </div>
 
       <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-        {/* Step 1 — Browse (Finder-like): click icon to open picker, optional drop zone */}
-        <div className="mb-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-600">
-          <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">1. Browse — select test cases to run</h3>
-          <div
-            onClick={() => setShowBrowseModal(true)}
-            onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('ring-2', 'ring-blue-400'); }}
-            onDragLeave={(e) => { e.currentTarget.classList.remove('ring-2', 'ring-blue-400'); }}
-            onDrop={(e) => { e.preventDefault(); e.currentTarget.classList.remove('ring-2', 'ring-blue-400'); setShowBrowseModal(true); }}
-            className="flex flex-col items-center justify-center gap-2 py-8 px-4 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 dark:hover:bg-blue-900/20 transition-colors"
-          >
-            <FolderOpen size={40} className="text-slate-500 dark:text-slate-400" />
-            <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Click to browse or drop here</span>
-            <span className="text-xs text-slate-500">Opens test case picker</span>
-          </div>
-        </div>
-
-        {/* Step 2 — Set for run (built on this page, last step before Run) */}
-        <div className="mb-4 p-4 rounded-xl border-2 border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900">
-          <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">2. Set for run</h3>
-          {selectedBrowsedKeys.size === 0 && selectedSetIds.length === 0 ? (
-            <p className="text-sm text-slate-500 dark:text-slate-400 py-2">No test cases selected. Click Browse above or select set(s) below.</p>
-          ) : (
-            <>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                  {runSelectionMode === 'browse' ? `${selectedBrowsedKeys.size} test case(s) selected` : `${selectedSetIds.length} set(s) selected`}
-                </span>
-                {runSelectionMode === 'browse' && selectedBrowsedKeys.size > 0 && (
-                  <button type="button" onClick={() => setShowBrowseModal(true)} className="text-xs text-blue-600 hover:underline">Edit selection</button>
-                )}
-                {runSelectionMode === 'browse' ? (
-                  <button type="button" onClick={clearAllBrowsed} className="text-xs font-bold text-slate-600 hover:text-slate-800">Clear</button>
-                ) : (
-                  <button type="button" onClick={clearAllSets} className="text-xs font-bold text-slate-600 hover:text-slate-800">Clear</button>
-                )}
-              </div>
-              {runSelectionMode === 'browse' && selectedBrowsedKeys.size > 0 && (
-                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-                  {browsedRows.filter((r) => selectedBrowsedKeys.has(r.key)).map((row) => (
-                    <span key={row.key} className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-700 text-xs text-slate-700 dark:text-slate-200">
-                      {row.tc.name || row.tc.vcdName || '—'}
-                    </span>
-                  ))}
-                </div>
+        {/* Two columns: left = Browse test cases, right = Set for run / grouping */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          {/* Left — Library list (filter + scroll, draggable) */}
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-600 flex flex-col h-[420px]">
+            <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">1. Test cases in library</h3>
+            <div className="flex flex-col sm:flex-row gap-2 mb-2 shrink-0">
+              <input
+                type="text"
+                placeholder="Filter by name"
+                value={runListNameFilter}
+                onChange={(e) => setRunListNameFilter(e.target.value)}
+                className="flex-1 min-w-0 px-2.5 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
+              />
+              <input
+                type="text"
+                placeholder="Filter by tag"
+                value={runListTagFilter}
+                onChange={(e) => setRunListTagFilter(e.target.value)}
+                className="flex-1 min-w-0 px-2.5 py-1.5 text-sm border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
+              />
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 shadow-inner scroll-smooth" style={{ scrollBehavior: 'smooth' }}>
+              {filteredLibraryRows.length === 0 ? (
+                <div className="p-6 text-center text-slate-500 dark:text-slate-400 text-sm">No test cases match filters</div>
+              ) : (
+                <ul className="divide-y divide-slate-200 dark:divide-slate-600">
+                  {filteredLibraryRows.map((row) => {
+                    const tagVal = row.tc.extraColumns?.tag ?? '';
+                    const tagColor = row.tc.extraColumns?.tagColor ?? '';
+                    const isSelected = selectedLeftKey === row.key;
+                    return (
+                      <li
+                        key={row.key}
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('application/json', JSON.stringify({ type: 'library', row }));
+                          e.dataTransfer.effectAllowed = 'copy';
+                        }}
+                        onClick={() => setSelectedLeftKey(row.key)}
+                        className={`flex items-center gap-3 px-3 min-h-[56px] cursor-grab active:cursor-grabbing hover:bg-slate-100 dark:hover:bg-slate-800/50 transition-colors ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20 ring-inset ring-1 ring-blue-300 dark:ring-blue-600' : ''}`}
+                      >
+                        <GripVertical size={16} className="text-slate-400 shrink-0 flex-shrink-0" />
+                        <div className="flex-1 min-w-0 flex flex-col justify-center gap-0.5 py-1.5">
+                          <div className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{row.tc.name || row.tc.vcdName || '—'}</div>
+                          {tagVal ? (
+                            <span
+                              className="inline-block w-fit px-1.5 py-0.5 rounded text-[10px] font-medium"
+                              style={tagColor ? { backgroundColor: tagColor, color: '#fff' } : { backgroundColor: 'var(--tw-slate-200)', color: 'var(--tw-slate-700)' }}
+                            >
+                              {String(tagVal)}
+                            </span>
+                          ) : (
+                            <span className="inline-block h-4" aria-hidden="true" />
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
-              {runPreview.length > 0 && (
-                <div className="mt-3 border border-slate-200 dark:border-slate-600 rounded-lg max-h-56 overflow-y-auto">
-                  <div className="px-3 py-2 text-xs font-bold text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between">
-                    <span>Run order (top = first)</span>
-                    <span className="font-normal text-slate-500 dark:text-slate-400">{runPreview.length} test case(s)</span>
-                  </div>
-                  <div className="divide-y divide-slate-100 dark:divide-slate-700">
+            </div>
+            <p className="text-xs text-slate-500 mt-2 shrink-0">Drag to the right, or Copy (⌘/Ctrl+C) and Paste (⌘/Ctrl+V). <button type="button" onClick={() => setShowBrowseModal(true)} className="text-blue-600 hover:underline">Open picker</button></p>
+          </div>
+
+          {/* Right — 2. Set for run (drop zone + list, reorder by drag only) */}
+          <div
+            ref={runSetRightRef}
+            tabIndex={0}
+            className="p-4 rounded-xl border-2 border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 h-[420px] flex flex-col outline-none"
+            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('ring-2', 'ring-blue-400'); }}
+            onDragLeave={(e) => { e.currentTarget.classList.remove('ring-2', 'ring-blue-400'); }}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.currentTarget.classList.remove('ring-2', 'ring-blue-400');
+              try {
+                const raw = e.dataTransfer.getData('application/json');
+                if (!raw) return;
+                const data = JSON.parse(raw);
+                if (data.type === 'library' && data.row) {
+                  const dropEl = e.target.closest('[data-drop-index]');
+                  const atIndex = dropEl ? parseInt(dropEl.getAttribute('data-drop-index'), 10) : null;
+                  if (!Number.isNaN(atIndex) && atIndex >= 0) addToRunPreview(data.row, atIndex);
+                  else addToRunPreview(data.row);
+                } else if (data.type === 'run' && typeof data.fromIndex === 'number') {
+                  const dropEl = e.target.closest('[data-drop-index]');
+                  const toIndex = dropEl ? parseInt(dropEl.getAttribute('data-drop-index'), 10) : null;
+                  if (!Number.isNaN(toIndex) && toIndex >= 0) reorderRunPreview(data.fromIndex, toIndex);
+                }
+              } catch (_) {}
+            }}
+          >
+            <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">2. Set for run</h3>
+            {runPreview.length === 0 ? (
+              <div
+                className="flex-1 flex flex-col items-center justify-center gap-2 py-8 px-4 rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-600 bg-slate-50/50 dark:bg-slate-800/30 min-h-[200px]"
+                data-drop-index="0"
+              >
+                <span className="text-sm text-slate-500 dark:text-slate-400">Drop test cases here or paste (⌘/Ctrl+V)</span>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 mb-2 shrink-0">
+                  <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{runPreview.length} test case(s)</span>
+                  <button type="button" onClick={() => { setRunPreview([]); setSelectedRunIndex(null); }} className="text-xs font-bold text-slate-600 hover:text-slate-800 dark:hover:text-slate-200">Clear all</button>
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden border border-slate-200 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-900 shadow-inner scroll-smooth" style={{ scrollBehavior: 'smooth' }}>
+                  <div className="divide-y divide-slate-200 dark:divide-slate-600">
                     {runPreview.map((item, idx) => (
-                      <div key={item.key} className="flex items-center gap-3 px-3 py-2 bg-white dark:bg-slate-900">
-                        <div className="w-7 text-xs font-bold text-slate-500 text-center">{idx + 1}</div>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate" title={item.tc.name || item.tc.vcdName || '—'}>
-                            {item.tc.name || item.tc.vcdName || '—'}
-                          </div>
-                          <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                            {item.tc.vcdName || '—'}{item.tc.binName ? ` · ${item.tc.binName}` : ''}{item.tc.linName ? ` · ${item.tc.linName}` : ''}
-                          </div>
+                      <div
+                        key={item.key}
+                        draggable
+                        data-drop-index={idx}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('application/json', JSON.stringify({ type: 'run', fromIndex: idx }));
+                          e.dataTransfer.effectAllowed = 'move';
+                        }}
+                        onClick={() => setSelectedRunIndex(idx)}
+                        className={`flex items-center gap-3 px-3 min-h-[56px] bg-white dark:bg-slate-900 cursor-grab active:cursor-grabbing hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${selectedRunIndex === idx ? 'ring-inset ring-1 ring-blue-400 dark:ring-blue-500' : ''}`}
+                      >
+                        <GripVertical size={16} className="text-slate-400 shrink-0 flex-shrink-0" />
+                        <div className="w-6 text-xs font-bold text-slate-500 shrink-0">{idx + 1}</div>
+                        <div className="flex-1 min-w-0 flex flex-col justify-center py-1.5">
+                          <div className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{item.tc.name || item.tc.vcdName || '—'}</div>
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{item.tc.vcdName || '—'}{item.tc.binName ? ` · ${item.tc.binName}` : ''}</div>
                         </div>
-                        <div className="flex flex-col gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => moveRunPreviewItem(idx, -1)}
-                            disabled={idx === 0}
-                            className={`p-1.5 rounded border text-xs ${idx === 0 ? 'opacity-30 cursor-not-allowed border-slate-200' : 'border-slate-200 hover:bg-slate-50'}`}
-                            title="Move up"
-                          >
-                            ↑
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => moveRunPreviewItem(idx, 1)}
-                            disabled={idx === runPreview.length - 1}
-                            className={`p-1.5 rounded border text-xs ${idx === runPreview.length - 1 ? 'opacity-30 cursor-not-allowed border-slate-200' : 'border-slate-200 hover:bg-slate-50'}`}
-                            title="Move down"
-                          >
-                            ↓
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); removeFromRunPreview(idx); }}
+                          className="p-1.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 shrink-0 transition-colors"
+                          title="Remove"
+                        >
+                          <X size={14} />
+                        </button>
                       </div>
                     ))}
+                    <div data-drop-index={runPreview.length} className="min-h-[12px]" aria-hidden="true" />
                   </div>
                 </div>
-              )}
-            </>
-          )}
+                <p className="text-xs text-slate-500 mt-2 shrink-0">Drag to reorder. Copy/Paste: ⌘/Ctrl+C then ⌘/Ctrl+V.</p>
+              </>
+            )}
           {/* Saved sets list embedded under Set for run */}
           <div className="mt-4 border-t border-slate-100 dark:border-slate-700 pt-3">
             <div className="flex items-center justify-between mb-2">
@@ -5721,8 +5921,14 @@ const RunSetPage = ({ onNavigateJobs }) => {
                       <button
                         type="button"
                         onClick={() => {
-                          setRunSelectionMode('set');
-                          setSelectedSetIds([set.id]);
+                          const items = (set.items || []).map((tc, idx) => ({
+                            key: `${set.id}-${idx}-${tc.id || tc.name || tc.vcdName || ''}`,
+                            setId: set.id,
+                            set,
+                            tc,
+                            order: idx + 1,
+                          }));
+                          setRunPreview(items);
                           addToast({ type: 'success', message: `Loaded set "${set.name}" for run` });
                         }}
                         className="px-2 py-1 rounded font-semibold bg-blue-600 hover:bg-blue-700 text-white"
@@ -5732,12 +5938,19 @@ const RunSetPage = ({ onNavigateJobs }) => {
                       <button
                         type="button"
                         onClick={() => {
-                          setRunSelectionMode('set');
-                          setSelectedSetIds((prev) => (prev.includes(set.id) ? prev : [...prev, set.id]));
-                          addToast({ type: 'success', message: `Appended set "${set.name}" to run selection` });
+                          const start = runPreview.length;
+                          const items = (set.items || []).map((tc, idx) => ({
+                            key: `${set.id}-${idx}-${Date.now()}-${tc.id || tc.name || tc.vcdName || ''}`,
+                            setId: set.id,
+                            set,
+                            tc,
+                            order: start + idx + 1,
+                          }));
+                          setRunPreview((prev) => prev.concat(items).map((it, i) => ({ ...it, order: i + 1 })));
+                          addToast({ type: 'success', message: `Appended set "${set.name}" to run list` });
                         }}
                         className="px-2 py-1 rounded font-semibold bg-slate-600 hover:bg-slate-700 text-white"
-                        title="Append this set to run selection (without replacing)"
+                        title="Append this set to run list (without replacing)"
                       >
                         +Append
                       </button>
@@ -5774,6 +5987,7 @@ const RunSetPage = ({ onNavigateJobs }) => {
                 ))}
               </div>
             )}
+          </div>
           </div>
         </div>
 
@@ -5873,18 +6087,18 @@ const RunSetPage = ({ onNavigateJobs }) => {
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
             onClick={runSelected}
-            disabled={isSubmitting || (runSelectionMode === 'browse' ? selectedBrowsedKeys.size === 0 : selectedSetIds.length === 0)}
+            disabled={isSubmitting || runPreview.length === 0}
             className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isSubmitting ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} />}
-            Run ({runSelectionMode === 'browse' ? selectedBrowsedKeys.size + ' cases' : selectedSetIds.length + ' set(s)'})
+            Run ({runPreview.length} case{runPreview.length !== 1 ? 's' : ''})
           </button>
           <button
             type="button"
             onClick={saveSelectedNotRun}
-            disabled={runSelectionMode === 'browse' ? selectedBrowsedKeys.size === 0 : selectedSetIds.length === 0}
+            disabled={runPreview.length === 0}
             className="inline-flex items-center gap-2 px-4 py-2 bg-slate-600 text-white rounded-lg text-sm font-bold hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            title="Save current selection as a set (no run). Set appears in SAVED on Test Cases page."
+            title="Save current run list as a set (no run). Set appears in SAVED on Test Cases page."
           >
             <Save size={16} />
             Save (not run)
@@ -5957,8 +6171,16 @@ const RunSetPage = ({ onNavigateJobs }) => {
               )}
             </div>
             <div className="px-4 py-3 border-t border-slate-200 dark:border-slate-600 flex justify-end">
-              <button type="button" onClick={() => setShowBrowseModal(false)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">
-                Done
+              <button
+                type="button"
+                onClick={() => {
+                  browsedRows.filter((r) => selectedBrowsedKeys.has(r.key)).forEach((row) => addToRunPreview(row));
+                  setShowBrowseModal(false);
+                  if (selectedBrowsedKeys.size > 0) addToast({ type: 'success', message: `Added ${selectedBrowsedKeys.size} test case(s) to run list` });
+                }}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700"
+              >
+                Done — add to run list
               </button>
             </div>
           </div>
