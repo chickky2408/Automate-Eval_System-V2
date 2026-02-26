@@ -39,7 +39,10 @@ const apiRequest = async (endpoint, options = {}) => {
     
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({ message: response.statusText }));
-      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+      const err = new Error(errorData.detail || errorData.message || `HTTP error! status: ${response.status}`);
+      err.status = response.status;
+      err.detail = errorData.detail || errorData.message;
+      throw err;
     }
     
     return await response.json();

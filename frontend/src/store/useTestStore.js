@@ -536,14 +536,24 @@ export const useTestStore = create((set, get) => ({
   removeUploadedFile: async (id) => {
     try {
       await api.deleteFile(id);
+      set((state) => ({
+        uploadedFiles: state.uploadedFiles.filter(f => f.id !== id),
+        vcdFiles: state.vcdFiles.filter(f => f.id !== id),
+        firmwareFiles: state.firmwareFiles.filter(f => f.id !== id),
+      }));
+      return true;
     } catch (error) {
-      console.error('Failed to delete file', error);
+      if (error?.status === 409) {
+        get().addToast({
+          type: 'warning',
+          message: error?.detail || 'File is in use by a running or pending batch. Wait for the batch to finish or remove the batch first.',
+        });
+      } else {
+        console.error('Failed to delete file', error);
+        get().addToast({ type: 'error', message: 'Failed to delete file.' });
+      }
+      return false;
     }
-    set((state) => ({
-      uploadedFiles: state.uploadedFiles.filter(f => f.id !== id),
-      vcdFiles: state.vcdFiles.filter(f => f.id !== id),
-      firmwareFiles: state.firmwareFiles.filter(f => f.id !== id),
-    }));
   },
 
   // Saved Test Cases (library)

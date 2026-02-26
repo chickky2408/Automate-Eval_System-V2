@@ -2595,12 +2595,24 @@ const getTestCasesUsingFile = (fileName, savedTestCases, savedTestCaseSets) => {
 // FILE LIBRARY PAGE — default: Test Case Library (เรียง set ลงมา แต่ละ set มีตารางแนวนอน + แสดงไฟล์); ปุ่มสลับView files in Library
 const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const { uploadedFiles, removeUploadedFile, loading, errors, savedTestCaseSets, savedTestCases, removeSavedTestCase, updateSavedTestCaseSet, removeSavedTestCaseSet } = useTestStore();
+  const jobs = useTestStore((s) => s.jobs);
   const refreshFiles = useTestStore((s) => s.refreshFiles);
   const addToast = useTestStore((s) => s.addToast);
   const setLibraryEditContext = useTestStore((s) => s.setLibraryEditContext);
   const clearLibraryEditContext = useTestStore((s) => s.clearLibraryEditContext);
   const setLoadedSetId = useTestStore((s) => s.setLoadedSetId);
   const syncFullLibraryToSavedTestCases = useTestStore((s) => s.syncFullLibraryToSavedTestCases);
+  const fileNamesInUseByBatch = useMemo(() => {
+    const names = new Set();
+    (jobs || []).filter((j) => j.status === 'pending' || j.status === 'running').forEach((job) => {
+      (job.files || []).forEach((f) => {
+        if (f.vcd) names.add(f.vcd);
+        if (f.erom) names.add(f.erom);
+        if (f.ulp) names.add(f.ulp);
+      });
+    });
+    return names;
+  }, [jobs]);
   useEffect(() => { refreshFiles(); }, [refreshFiles]);
   const [libraryView, setLibraryView] = useState('rawTestCases'); // 'testCases' | 'rawTestCases' (default) | 'files'
   const [fileFilter, setFileFilter] = useState('all');
@@ -2706,20 +2718,32 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
 
   const handleDeleteAll = async () => {
     if (!uploadedFiles?.length) return;
-    if (!window.confirm('Delete all files in Library?')) return;
+    const inUseCount = uploadedFiles.filter((f) => fileNamesInUseByBatch.has(f.name)).length;
+    if (!window.confirm(`Delete all files in Library?${inUseCount > 0 ? `\n\n${inUseCount} file(s) are in use by a batch and will be skipped.` : ''}`)) return;
     setIsDeleting(true);
-    for (const f of uploadedFiles) await removeUploadedFile(f.id);
+    let deleted = 0;
+    for (const f of uploadedFiles) {
+      const ok = await removeUploadedFile(f.id);
+      if (ok) deleted++;
+    }
     setIsDeleting(false);
-    addToast({ type: 'success', message: 'All files deleted' });
+    if (deleted > 0) addToast({ type: 'success', message: `Deleted ${deleted} file(s)` });
+    if (inUseCount > 0) addToast({ type: 'info', message: `${inUseCount} file(s) skipped (in use by batch)` });
   };
 
   const handleDeleteBox = async (setId, files) => {
     if (!files?.length) return;
-    if (!window.confirm(`Delete all ${files.length} file(s) in this box from Library?`)) return;
+    const inUseCount = files.filter((f) => fileNamesInUseByBatch.has(f.name)).length;
+    if (!window.confirm(`Delete all ${files.length} file(s) in this box from Library?${inUseCount > 0 ? `\n\n${inUseCount} file(s) are in use by a batch and will be skipped.` : ''}`)) return;
     setDeletingBoxId(setId);
-    for (const f of files) await removeUploadedFile(f.id);
+    let deleted = 0;
+    for (const f of files) {
+      const ok = await removeUploadedFile(f.id);
+      if (ok) deleted++;
+    }
     setDeletingBoxId(null);
-    addToast({ type: 'success', message: `Deleted ${files.length} file(s) from box` });
+    if (deleted > 0) addToast({ type: 'success', message: `Deleted ${deleted} file(s) from box` });
+    if (inUseCount > 0) addToast({ type: 'info', message: `${inUseCount} skipped (in use by batch)` });
   };
 
   return (
@@ -3275,17 +3299,30 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
             setSelectedLibraryFileIds(selectedFileSet.has(fileId) ? [] : [fileId]);
             lastClickedFileIndexRef.current = index;
           };
+          const selectedInUse = selectedLibraryFileIds.filter((id) => {
+            const f = filteredFiles.find((x) => x.id === id);
+            return f && fileNamesInUseByBatch.has(f.name);
+          }).length;
           const handleDeleteSelectedFiles = async () => {
             if (selectedFileSet.size === 0) {
               addToast({ type: 'info', message: 'Select file(s) first' });
               return;
             }
-            if (!window.confirm(`Delete ${selectedFileSet.size} selected file(s) from Library?`)) return;
+            if (selectedInUse === selectedFileSet.size) {
+              addToast({ type: 'warning', message: 'All selected files are in use by a running or pending batch. Wait for the batch to finish first.' });
+              return;
+            }
+            if (!window.confirm(`Delete ${selectedFileSet.size} selected file(s) from Library?${selectedInUse > 0 ? `\n\n${selectedInUse} file(s) are in use by a batch and will be skipped.` : ''}`)) return;
             setIsDeleting(true);
-            for (const id of selectedLibraryFileIds) await removeUploadedFile(id);
+            let deleted = 0;
+            for (const id of selectedLibraryFileIds) {
+              const ok = await removeUploadedFile(id);
+              if (ok) deleted++;
+            }
             setIsDeleting(false);
             setSelectedLibraryFileIds([]);
-            addToast({ type: 'success', message: `Deleted ${selectedFileSet.size} file(s)` });
+            if (deleted > 0) addToast({ type: 'success', message: `Deleted ${deleted} file(s)` });
+            if (deleted < selectedFileSet.size && selectedInUse > 0) addToast({ type: 'info', message: `${selectedFileSet.size - deleted} file(s) skipped (in use by batch)` });
           };
           return (
             <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
@@ -3299,7 +3336,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                 ))}
                 <input type="text" value={fileSearch} onChange={(e) => setFileSearch(e.target.value)} placeholder="Filter by name" className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 w-40" />
                 <select value={fileSort} onChange={(e) => setFileSort(e.target.value)} className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800"><option value="time">Time</option><option value="name">Name</option></select>
-                <button type="button" onClick={handleDeleteSelectedFiles} disabled={selectedFileSet.size === 0 || isDeleting} className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:pointer-events-none transition-colors" title={selectedFileSet.size > 0 ? `Delete ${selectedFileSet.size} selected` : 'Select files to delete'}>
+                <button type="button" onClick={handleDeleteSelectedFiles} disabled={selectedFileSet.size === 0 || isDeleting} className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:pointer-events-none transition-colors" title={selectedFileSet.size > 0 ? (selectedInUse > 0 ? `${selectedInUse} of ${selectedFileSet.size} selected are in use by a batch (will be skipped)` : `Delete ${selectedFileSet.size} selected`) : 'Select files to delete'}>
                   <Trash2 size={18} strokeWidth={2} />
                 </button>
                 {selectedFileSet.size > 0 && <span className="text-xs text-slate-500">{selectedFileSet.size} selected</span>}
@@ -3327,6 +3364,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                       const usedByTcs = getTestCasesUsingFile(f.name, savedTestCases, savedTestCaseSets);
                       const isSelected = selectedFileSet.has(f.id);
                       const usedByTcsTitle = usedByTcs.length > 0 ? usedByTcs.map((u) => `${u.name}${u.set ? ` (${u.set})` : ''}`).join('\n') : '';
+                      const inUseByBatch = fileNamesInUseByBatch.has(f.name);
                       return (
                         <div
                           key={f.id}
@@ -3337,6 +3375,9 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                         >
                           <input type="checkbox" checked={isSelected} onChange={() => toggleFileSelect(f.id, index, { shiftKey: false, ctrlKey: false, metaKey: false })} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded cursor-pointer shrink-0" />
                           <span className="flex-1 min-w-0 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
+                          {inUseByBatch && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[10px] font-semibold shrink-0" title="In use by a running or pending batch; cannot delete until batch finishes">In use by batch</span>
+                          )}
                           {usedByTcs.length > 0 && (
                             <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0 max-w-[200px] truncate" title={usedByTcsTitle || undefined}>
                               Test cases: {usedByTcs.slice(0, 2).map((u) => u.name).join(', ')}{usedByTcs.length > 2 ? ` +${usedByTcs.length - 2}` : ''}
@@ -3380,6 +3421,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                   const globalIndex = filteredFiles.findIndex((x) => x.id === f.id);
                                   const usedByTcs = getTestCasesUsingFile(f.name, savedTestCases, savedTestCaseSets);
                                   const usedByTcsTitle = usedByTcs.length > 0 ? usedByTcs.map((u) => `${u.name}${u.set ? ` (${u.set})` : ''}`).join('\n') : '';
+                                  const inUseByBatch = fileNamesInUseByBatch.has(f.name);
                                   return (
                                     <div
                                       key={f.id}
@@ -3390,6 +3432,9 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                     >
                                       <input type="checkbox" checked={isSelected} onChange={() => toggleFileSelect(f.id, globalIndex >= 0 ? globalIndex : fileIdx, { shiftKey: false, ctrlKey: false, metaKey: false })} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded cursor-pointer shrink-0" />
                                       <span className="flex-1 min-w-0 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
+                                      {inUseByBatch && (
+                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[10px] font-semibold shrink-0" title="In use by a running or pending batch">In use by batch</span>
+                                      )}
                                       {usedByTcs.length > 0 && (
                                         <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0 max-w-[180px] truncate" title={usedByTcsTitle || undefined}>
                                           Test cases: {usedByTcs.slice(0, 2).map((u) => u.name).join(', ')}{usedByTcs.length > 2 ? ` +${usedByTcs.length - 2}` : ''}
@@ -3472,6 +3517,18 @@ const TestCasesPage = () => {
   const activeProfileId = useTestStore((s) => s.activeProfileId);
   const libraryEditContext = useTestStore((s) => s.libraryEditContext);
   const clearLibraryEditContext = useTestStore((s) => s.clearLibraryEditContext);
+  const jobs = useTestStore((s) => s.jobs);
+  const fileNamesInUseByBatch = useMemo(() => {
+    const names = new Set();
+    (jobs || []).filter((j) => j.status === 'pending' || j.status === 'running').forEach((job) => {
+      (job.files || []).forEach((f) => {
+        if (f.vcd) names.add(f.vcd);
+        if (f.erom) names.add(f.erom);
+        if (f.ulp) names.add(f.ulp);
+      });
+    });
+    return names;
+  }, [jobs]);
   const fileInputRef = useRef(null);
   const csvInputRef = useRef(null);
   const prevUploadedCountRef = useRef(0);
@@ -3520,6 +3577,10 @@ const TestCasesPage = () => {
       setTableClearedMode(false);
       loadSetForEditing(loadSetId);
       setPendingDraftTestCases([]);
+    } else {
+      // Coming from Raw Test Cases with focusTcId (edit single test case): ensure table is not in "cleared" state so savedTestCases show
+      setSetupClearedPersisted(activeProfileId, false);
+      setTableClearedMode(false);
     }
     const applyFocus = () => {
       const state = useTestStore.getState();
@@ -3536,7 +3597,7 @@ const TestCasesPage = () => {
     } else {
       applyFocus();
     }
-  }, [libraryEditContext, loadSetForEditing, clearLibraryEditContext]);
+  }, [libraryEditContext, loadSetForEditing, clearLibraryEditContext, activeProfileId]);
 
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectedTestCaseIds, setSelectedTestCaseIds] = useState([]);
@@ -3737,6 +3798,12 @@ const TestCasesPage = () => {
     return (savedTestCaseSets || []).some((set) =>
       (Array.isArray(set.items) ? set.items : []).some((t) => t.id === tcId)
     );
+  };
+  const isTestCaseInUseByBatch = (tc) => {
+    const v = (tc.vcdName || '').trim();
+    const b = (tc.binName || '').trim();
+    const l = (tc.linName || '').trim();
+    return (v && fileNamesInUseByBatch.has(v)) || (b && fileNamesInUseByBatch.has(b)) || (l && fileNamesInUseByBatch.has(l));
   };
 
   const handleNameChange = (tcId, newName, prevName = '') => {
@@ -4091,6 +4158,20 @@ const TestCasesPage = () => {
   };
   const handleDeleteSelectedTestCases = () => {
     if (selectedTestCaseIds.length === 0) { addToast({ type: 'warning', message: 'Select at least one test case to delete' }); return; }
+    const selectedTcs = displayedSavedTestCases.filter((t) => selectedTestCaseIds.includes(t.id));
+    const inUse = selectedTcs.filter((tc) => {
+      const v = (tc.vcdName || '').trim();
+      const b = (tc.binName || '').trim();
+      const l = (tc.linName || '').trim();
+      return (v && fileNamesInUseByBatch.has(v)) || (b && fileNamesInUseByBatch.has(b)) || (l && fileNamesInUseByBatch.has(l));
+    });
+    if (inUse.length > 0) {
+      addToast({
+        type: 'warning',
+        message: `${inUse.length} selected test case(s) use files that are in a running or pending batch. Wait for the batch to finish before deleting them.`,
+      });
+      return;
+    }
     selectedTestCaseIds.forEach((id) => removeDisplayedTestCase(id));
     setSelectedTestCaseIds([]);
     addToast({ type: 'success', message: `Deleted ${selectedTestCaseIds.length} test case(s)` });
@@ -4439,7 +4520,7 @@ const TestCasesPage = () => {
               <Save size={14} />
               <span>Save to library</span>
             </button>
-            <span className="text-[11px] text-slate-500 dark:text-slate-400" title="Dropped files are uploaded when you click Save to library. Or upload in the File Library area above first.">Dropped files are uploaded when you Save to library.</span>
+            <span className="text-[11px] text-slate-500 dark:text-slate-400" title="Dropped files are uploaded when you click Save to library. Or upload in the File Library area above first."></span>
           </div>
         </div>
         {loadedSetId && displayedSavedTestCaseSets?.find((s) => s.id === loadedSetId) && !isViewingShared && (
@@ -4506,6 +4587,29 @@ const TestCasesPage = () => {
                 <span className="text-xs text-slate-500">{selectedTestCaseIds.length} selected</span>
                 <input type="number" min={1} value={bulkTryCount} onChange={(e) => setBulkTryCount(e.target.value)} placeholder="Try" className="w-16 px-2 py-1 text-xs border border-slate-300 dark:border-slate-500 rounded bg-white dark:bg-slate-800" onKeyDown={(e) => e.key === 'Enter' && handleBulkSetTryCount()} />
                 <button onClick={handleBulkSetTryCount} className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700">Apply</button>
+                <span className="text-slate-300 dark:text-slate-600 mx-0.5">|</span>
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-400">Save:</span>
+                <button
+                  type="button"
+                  onClick={() => addToast({ type: 'info', message: 'Edits are applied automatically (replace in place). Use "Save as new" to keep the original.' })}
+                  className="px-3 py-1 bg-slate-500 text-white rounded text-xs font-semibold hover:bg-slate-600"
+                  title="Changes to name/files are already saved. This confirms replace behavior."
+                >
+                  Update existing (replace)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    selectedTestCaseIds.forEach((id) => {
+                      if (displayedSavedTestCases.some((t) => t.id === id)) duplicateDisplayedTestCase(id, { name: getNextTestCaseName() });
+                    });
+                    addToast({ type: 'success', message: `Saved as new test case(s) (${selectedTestCaseIds.length})` });
+                  }}
+                  className="px-3 py-1 bg-emerald-600 text-white rounded text-xs font-semibold hover:bg-emerald-700"
+                  title="Duplicate selected with new names (TC00001, TC00002, …)"
+                >
+                  Save as new test case(s)
+                </button>
                 <button onClick={handleDeleteSelectedTestCases} className="px-3 py-1 bg-red-600 text-white rounded text-xs font-semibold hover:bg-red-700 flex items-center gap-1" title="Delete selected test cases">
                   <Trash2 size={12} />
                   Delete
@@ -4926,11 +5030,16 @@ const TestCasesPage = () => {
                       <button
                         type="button"
                         onClick={() => {
+                          if (isTestCaseInUseByBatch(tc)) {
+                            addToast({ type: 'warning', message: 'This test case uses files in a running or pending batch. Wait for the batch to finish.' });
+                            return;
+                          }
                           removeDisplayedTestCase(tc.id);
                           addToast({ type: 'success', message: 'Removed' });
                         }}
-                        className="p-1 text-red-500 hover:text-red-700 rounded"
-                        title="Delete"
+                        disabled={isTestCaseInUseByBatch(tc)}
+                        className="p-1 text-red-500 hover:text-red-700 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={isTestCaseInUseByBatch(tc) ? 'In use by a running or pending batch' : 'Delete'}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -5024,11 +5133,16 @@ const TestCasesPage = () => {
                       <button
                         type="button"
                         onClick={() => {
+                          if (isTestCaseInUseByBatch(tc)) {
+                            addToast({ type: 'warning', message: 'This test case uses files in a running or pending batch. Wait for the batch to finish.' });
+                            return;
+                          }
                           removeDisplayedTestCase(tc.id);
                           addToast({ type: 'success', message: 'Removed' });
                         }}
-                        className="p-1 text-red-500 hover:text-red-700 rounded"
-                        title="Delete"
+                        disabled={isTestCaseInUseByBatch(tc)}
+                        className="p-1 text-red-500 hover:text-red-700 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={isTestCaseInUseByBatch(tc) ? 'In use by a running or pending batch' : 'Delete'}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -5419,8 +5533,11 @@ const RunSetPage = ({ onNavigateJobs }) => {
   const savedTestCases = useTestStore((s) => s.savedTestCases);
   const uploadedFiles = useTestStore((s) => s.uploadedFiles);
   const boards = useTestStore((s) => s.boards);
+  const jobs = useTestStore((s) => s.jobs);
+  const updateSavedTestCaseSet = useTestStore((s) => s.updateSavedTestCaseSet);
   const createJob = useTestStore((s) => s.createJob);
   const refreshJobs = useTestStore((s) => s.refreshJobs);
+  const addSavedTestCaseSet = useTestStore((s) => s.addSavedTestCaseSet);
   const moveSavedTestCaseSetUp = useTestStore((s) => s.moveSavedTestCaseSetUp);
   const moveSavedTestCaseSetDown = useTestStore((s) => s.moveSavedTestCaseSetDown);
   const duplicateSavedTestCaseSet = useTestStore((s) => s.duplicateSavedTestCaseSet);
@@ -5445,7 +5562,24 @@ const RunSetPage = ({ onNavigateJobs }) => {
   const [selectedLeftKey, setSelectedLeftKey] = useState(null);
   const [selectedRunIndex, setSelectedRunIndex] = useState(null);
   const [selectedBrowsedKeys, setSelectedBrowsedKeys] = useState(new Set());
+  const [editingSetId, setEditingSetId] = useState(null);
+  const [editingSetName, setEditingSetName] = useState('');
   const runSetRightRef = useRef(null);
+
+  const isSetInUseByJobs = useCallback(
+    (set) => {
+      const activeStates = new Set(['pending', 'running']);
+      return (jobs || []).some((job) => {
+        const state = (job.status || '').toLowerCase();
+        if (!activeStates.has(state)) return false;
+        const configName = (job.configName || '').trim();
+        const jobName = (job.name || '').trim();
+        const setName = (set.name || '').trim();
+        return setName && (configName === setName || jobName === setName);
+      });
+    },
+    [jobs]
+  );
 
   const toggleSet = (id) => setSelectedSetIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   const selectAllSets = () => setSelectedSetIds(safeSets.map((s) => s.id));
@@ -5613,6 +5747,41 @@ const RunSetPage = ({ onNavigateJobs }) => {
     return { missing, filesPayload, firstBinName, pairsData };
   };
 
+  const saveCurrentRunSet = (options = { showToast: true }) => {
+    if (runPreview.length === 0) {
+      if (options.showToast) {
+        addToast({ type: 'warning', message: 'Add test cases to Set for run first (drag from left or Load a set)' });
+      }
+      return null;
+    }
+    const items = runPreview.map((item) => item.tc);
+    if (items.length === 0) {
+      if (options.showToast) addToast({ type: 'warning', message: 'No test cases to save' });
+      return null;
+    }
+    const name = (runSetName || '').trim() || `Set ${safeSets.length + 1}`;
+    const fileNames = new Set();
+    items.forEach((t) => {
+      if (t.vcdName) fileNames.add(t.vcdName);
+      if (t.binName) fileNames.add(t.binName);
+      if (t.linName) fileNames.add(t.linName);
+    });
+    const fileLibrarySnapshot = [...fileNames].map((n) => ({ name: n }));
+    addSavedTestCaseSet(name, items, { fileLibrarySnapshot });
+    const sets = useTestStore.getState().savedTestCaseSets;
+    const newSetId = Array.isArray(sets) && sets.length ? sets[sets.length - 1]?.id : null;
+    if (newSetId && safeFiles.length > 0) {
+      const fileIds = safeFiles.filter((f) => fileNames.has(f.name)).map((f) => f.id);
+      if (fileIds.length > 0) {
+        api.saveSetFiles(newSetId, fileIds).catch((err) => console.error('Save set files failed', err));
+      }
+    }
+    if (options.showToast) {
+      addToast({ type: 'success', message: `Saved "${name}" (${items.length} case(s)) — see SAVED on Test Cases page` });
+    }
+    return { id: newSetId, name, count: items.length };
+  };
+
   const runSelected = async () => {
     if (runPreview.length === 0) {
       addToast({ type: 'warning', message: 'Select test cases to run first' });
@@ -5622,6 +5791,8 @@ const RunSetPage = ({ onNavigateJobs }) => {
       addToast({ type: 'warning', message: 'Select at least one board (or switch to Auto assign)' });
       return;
     }
+    // Auto-save current selection as a set so it appears in SAVED
+    saveCurrentRunSet({ showToast: false });
     const boardNames = boardSelectionMode === 'auto'
       ? []
       : safeBoards.filter((b) => selectedBoardIds.includes(b.id)).map((b) => b.name);
@@ -5682,33 +5853,7 @@ const RunSetPage = ({ onNavigateJobs }) => {
   };
 
   const saveSelectedNotRun = () => {
-    if (runPreview.length === 0) {
-      addToast({ type: 'warning', message: 'Add test cases to Set for run first (drag from left or Load a set)' });
-      return;
-    }
-    const items = runPreview.map((item) => item.tc);
-    if (items.length === 0) {
-      addToast({ type: 'warning', message: 'No test cases to save' });
-      return;
-    }
-    const name = (runSetName || '').trim() || `Set ${safeSets.length + 1}`;
-    const fileNames = new Set();
-    items.forEach((t) => {
-      if (t.vcdName) fileNames.add(t.vcdName);
-      if (t.binName) fileNames.add(t.binName);
-      if (t.linName) fileNames.add(t.linName);
-    });
-    const fileLibrarySnapshot = [...fileNames].map((n) => ({ name: n }));
-    addSavedTestCaseSet(name, items, { fileLibrarySnapshot });
-    const sets = useTestStore.getState().savedTestCaseSets;
-    const newSetId = Array.isArray(sets) && sets.length ? sets[sets.length - 1]?.id : null;
-    if (newSetId && safeFiles.length > 0) {
-      const fileIds = safeFiles.filter((f) => fileNames.has(f.name)).map((f) => f.id);
-      if (fileIds.length > 0) {
-        api.saveSetFiles(newSetId, fileIds).catch((err) => console.error('Save set files failed', err));
-      }
-    }
-    addToast({ type: 'success', message: `Saved "${name}" (${items.length} case(s)) — see SAVED on Test Cases page` });
+    saveCurrentRunSet({ showToast: true });
   };
 
   return (
@@ -5749,6 +5894,7 @@ const RunSetPage = ({ onNavigateJobs }) => {
                     const tagVal = row.tc.extraColumns?.tag ?? '';
                     const tagColor = row.tc.extraColumns?.tagColor ?? '';
                     const isSelected = selectedLeftKey === row.key;
+                    const isFromCurrent = row.setId === '__current__';
                     return (
                       <li
                         key={row.key}
@@ -5763,6 +5909,11 @@ const RunSetPage = ({ onNavigateJobs }) => {
                         <GripVertical size={16} className="text-slate-400 shrink-0 flex-shrink-0" />
                         <div className="flex-1 min-w-0 flex flex-col justify-center gap-0.5 py-1.5">
                           <div className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{row.tc.name || row.tc.vcdName || '—'}</div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-[11px] text-slate-400 truncate max-w-[160px]">
+                              {isFromCurrent ? 'From Library' : `From set: ${row.set?.name || row.setId || 'Set'}`}
+                            </span>
+                          </div>
                           {tagVal ? (
                             <span
                               className="inline-block w-fit px-1.5 py-0.5 rounded text-[10px] font-medium"
@@ -5875,8 +6026,10 @@ const RunSetPage = ({ onNavigateJobs }) => {
                 No saved sets yet — create and save on the Test Cases page.
               </p>
             ) : (
-              <div className="space-y-1 max-h-40 overflow-y-auto">
-                {safeSets.map((set, index) => (
+            <div className="space-y-1 max-h-40 overflow-y-auto">
+              {safeSets.map((set, index) => {
+                const inUse = isSetInUseByJobs(set);
+                return (
                   <div
                     key={set.id}
                     className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700"
@@ -5903,18 +6056,71 @@ const RunSetPage = ({ onNavigateJobs }) => {
                     </div>
                     <span className="text-[10px] text-slate-400 w-4 shrink-0">#{index + 1}</span>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-slate-700 dark:text-slate-200 truncate">
-                          {set.name}
-                        </span>
-                        <span className="text-[10px] text-slate-400 dark:text-slate-500">
-                          {Array.isArray(set.items) ? `${set.items.length} cases` : ''}
-                        </span>
-                      </div>
-                      {set.createdAt && (
-                        <div className="text-[10px] text-slate-400 dark:text-slate-500">
-                          {new Date(set.createdAt).toLocaleString()}
-                        </div>
+                      {editingSetId === set.id ? (
+                        <>
+                          <div className="flex items-center gap-2 mb-1">
+                            <input
+                              type="text"
+                              value={editingSetName}
+                              onChange={(e) => setEditingSetName(e.target.value)}
+                              className="flex-1 min-w-0 px-2 py-1 border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-[11px]"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const trimmed = (editingSetName || '').trim();
+                                if (!trimmed) {
+                                  addToast({ type: 'warning', message: 'Set name cannot be empty' });
+                                  return;
+                                }
+                                updateSavedTestCaseSet(set.id, { name: trimmed });
+                                setEditingSetId(null);
+                                setEditingSetName('');
+                                addToast({ type: 'success', message: `Renamed set to "${trimmed}"` });
+                              }}
+                              className="px-2 py-0.5 rounded bg-blue-600 text-white text-[10px] font-semibold hover:bg-blue-700"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingSetId(null);
+                                setEditingSetName('');
+                              }}
+                              className="px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-[10px] font-semibold"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                          {set.createdAt && (
+                            <div className="text-[10px] text-slate-400 dark:text-slate-500">
+                              {new Date(set.createdAt).toLocaleString()}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-slate-700 dark:text-slate-200 truncate">
+                              {set.name}
+                            </span>
+                            {inUse && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[9px] font-semibold">
+                                In run
+                              </span>
+                            )}
+                            <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                              {Array.isArray(set.items) ? `${set.items.length} cases` : ''}
+                            </span>
+                          </div>
+                          {set.createdAt && (
+                            <div className="text-[10px] text-slate-400 dark:text-slate-500">
+                              {new Date(set.createdAt).toLocaleString()}
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
@@ -5957,6 +6163,31 @@ const RunSetPage = ({ onNavigateJobs }) => {
                       <button
                         type="button"
                         onClick={() => {
+                          if (inUse) {
+                            addToast({
+                              type: 'warning',
+                              message: 'Set นี้กำลังถูกใช้รันอยู่ แก้ไขชื่อไม่ได้ กรุณา duplicate แล้วแก้ในชุดใหม่แทน',
+                            });
+                            return;
+                          }
+                          setEditingSetId(set.id);
+                          setEditingSetName(set.name || '');
+                        }}
+                        disabled={inUse}
+                        className={`p-1 rounded text-slate-500 dark:text-slate-300 ${
+                          inUse ? 'opacity-40 cursor-not-allowed' : 'hover:bg-slate-200 dark:hover:bg-slate-700'
+                        }`}
+                        title={
+                          inUse
+                            ? 'Set นี้กำลังอยู่ใน process แก้ไขไม่ได้ (ให้ duplicate แล้วแก้ชื่อในชุดใหม่)'
+                            : 'Rename set'
+                        }
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
                           duplicateSavedTestCaseSet(set.id);
                           addToast({ type: 'success', message: `Duplicated set "${set.name}"` });
                         }}
@@ -5984,7 +6215,8 @@ const RunSetPage = ({ onNavigateJobs }) => {
                       </button>
                     </div>
                   </div>
-                ))}
+                );
+              })}
               </div>
             )}
           </div>
