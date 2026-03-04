@@ -58,6 +58,7 @@ async def upload_file(file: UploadFile = File(...), metadata: Optional[str] = Fo
         "size": record["size"],
         "type": record["type"],
         "uploadDate": record["uploadDate"],
+        "checksum": record.get("checksum"),
         # "set_id": record.get["set_id"]
     }
     if record.get("duplicateByContent"):

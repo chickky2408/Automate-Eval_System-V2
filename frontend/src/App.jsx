@@ -15,6 +15,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import API_ENDPOINTS from './utils/apiEndpoints';
 import api from './services/api';
+import { computeFileSignature } from './utils/fileSignature';
 
 // --- MAIN APPLICATION COMPONENT ---
 const App = () => {
@@ -2602,20 +2603,69 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const clearLibraryEditContext = useTestStore((s) => s.clearLibraryEditContext);
   const setLoadedSetId = useTestStore((s) => s.setLoadedSetId);
   const syncFullLibraryToSavedTestCases = useTestStore((s) => s.syncFullLibraryToSavedTestCases);
-  const fileNamesInUseByBatch = useMemo(() => {
-    const names = new Set();
-    (jobs || []).filter((j) => j.status === 'pending' || j.status === 'running').forEach((job) => {
+
+  // Status helpers for mapping jobs → sets / test cases / files
+  const STATUS_PRIORITY = { completed: 1, pending: 2, running: 3 };
+  const normalizeJobStatusForLibrary = (status) => {
+    const s = (status || '').toLowerCase();
+    if (s === 'running' || s === 'pending') return s;
+    if (s === 'completed') return 'completed';
+    return null;
+  };
+  const mergeStatus = (a, b) => {
+    if (!a) return b || null;
+    if (!b) return a || null;
+    return STATUS_PRIORITY[b] > STATUS_PRIORITY[a] ? b : a;
+  };
+
+  const { setStatusByName, testCaseStatusByName, fileStatusByName } = useMemo(() => {
+    const setStatus = new Map();
+    const tcStatus = new Map();
+    const fileStatus = new Map();
+
+    const update = (map, key, rawStatus) => {
+      const status = normalizeJobStatusForLibrary(rawStatus);
+      if (!key || !status) return;
+      const current = map.get(key);
+      if (!current || STATUS_PRIORITY[status] > STATUS_PRIORITY[current]) {
+        map.set(key, status);
+      }
+    };
+
+    (jobs || []).forEach((job) => {
+      const status = normalizeJobStatusForLibrary(job.status);
+      if (!status) return;
+
+      const setName = (job.configName || job.name || '').trim();
+      if (setName) update(setStatus, setName, status);
+
       (job.files || []).forEach((f) => {
-        if (f.vcd) names.add(f.vcd);
-        if (f.erom) names.add(f.erom);
-        if (f.ulp) names.add(f.ulp);
+        const tcName = (f.testCaseName || f.name || '').trim();
+        if (tcName) update(tcStatus, tcName, status);
+        ['vcd', 'erom', 'ulp'].forEach((field) => {
+          const nm = (f[field] || '').trim();
+          if (nm) update(fileStatus, nm, status);
+        });
       });
     });
-    return names;
+
+    return { setStatusByName: setStatus, testCaseStatusByName: tcStatus, fileStatusByName: fileStatus };
   }, [jobs]);
+
+  const fileNamesInUseByBatch = useMemo(() => {
+    const names = new Set();
+    fileStatusByName.forEach((status, name) => {
+      if (status === 'pending' || status === 'running') {
+        names.add(name);
+      }
+    });
+    return names;
+  }, [fileStatusByName]);
+
   useEffect(() => { refreshFiles(); }, [refreshFiles]);
   const [libraryView, setLibraryView] = useState('rawTestCases'); // 'testCases' | 'rawTestCases' (default) | 'files'
   const [fileFilter, setFileFilter] = useState('all');
+  const [fileStatusFilter, setFileStatusFilter] = useState('all'); // 'all' | 'pending' | 'running' | 'completed'
   const [fileSearch, setFileSearch] = useState('');
   const [fileSort, setFileSort] = useState('time');
   const [fileViewMode, setFileViewMode] = useState('all'); // 'all' | 'bySet'
@@ -2623,17 +2673,21 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const [deletingBoxId, setDeletingBoxId] = useState(null);
   const [libraryTcNameFilter, setLibraryTcNameFilter] = useState('');
   const [libraryTcTagFilter, setLibraryTcTagFilter] = useState('');
+  const [libraryTcStatusFilter, setLibraryTcStatusFilter] = useState('all'); // 'all' | 'pending' | 'running' | 'completed'
   const [selectedLibraryTcKeys, setSelectedLibraryTcKeys] = useState([]);
   const lastClickedLibraryTcIndexRef = useRef(null);
   const isDragSelectingLibraryRef = useRef(false);
   const [librarySetTcNameFilter, setLibrarySetTcNameFilter] = useState('');
   const [librarySetTcTagFilter, setLibrarySetTcTagFilter] = useState('');
+  const [librarySetTcStatusFilter, setLibrarySetTcStatusFilter] = useState('all'); // 'all' | 'pending' | 'running' | 'completed'
   const [selectedLibrarySetTcKeys, setSelectedLibrarySetTcKeys] = useState([]);
   const lastClickedLibrarySetTcRef = useRef({ setId: null, index: null });
   const isDragSelectingLibrarySetRef = useRef(false);
   const [selectedLibraryFileIds, setSelectedLibraryFileIds] = useState([]);
   const lastClickedFileIndexRef = useRef(null);
   const isDragSelectingFileRef = useRef(false);
+  const [libraryFocusFileName, setLibraryFocusFileName] = useState(null);
+  const focusedLibraryFileRef = useRef(null);
 
   const getFileKind = (f) => {
     const ext = String(f?.name || '').split('.').pop()?.toLowerCase();
@@ -2646,6 +2700,11 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
     .filter((f) => {
       const k = getFileKind(f);
       if (fileFilter !== 'all' && (fileFilter === 'vcd' ? k !== 'vcd' : fileFilter === 'bin' ? k !== 'bin' : k !== 'lin')) return false;
+      const status = fileStatusByName.get(f.name) || null;
+      if (fileStatusFilter !== 'all') {
+        if (!status) return false;
+        if (fileStatusFilter !== status) return false;
+      }
       if (fileSearch.trim()) return f.name.toLowerCase().includes(fileSearch.trim().toLowerCase());
       return true;
     })
@@ -2662,6 +2721,28 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
     });
     return [...names];
   };
+  const getTestCaseStatusFromJobs = useCallback(
+    (tc) => {
+      if (!tc) return null;
+      let status = null;
+      const name = (tc.name || '').trim();
+      if (name && testCaseStatusByName.has(name)) {
+        status = mergeStatus(status, testCaseStatusByName.get(name));
+      }
+      const fileNames = [tc.vcdName, tc.binName, tc.linName]
+        .filter(Boolean)
+        .map((n) => String(n).trim())
+        .filter(Boolean);
+      fileNames.forEach((n) => {
+        if (fileStatusByName.has(n)) {
+          status = mergeStatus(status, fileStatusByName.get(n));
+        }
+      });
+      return status;
+    },
+    [testCaseStatusByName, fileStatusByName]
+  );
+
   const filesBySet =
     fileViewMode === 'bySet'
       ? (savedTestCaseSets || []).map((set) => ({
@@ -2670,23 +2751,59 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
         }))
       : [];
 
+  const focusFileInLibrary = (rawName) => {
+    const fileName = typeof rawName === 'string' ? rawName.trim() : '';
+    if (!fileName) return;
+
+    setLibraryView('files');
+    setFileViewMode('all');
+    setFileFilter('all');
+    setFileSearch('');
+    setLibraryFocusFileName(fileName);
+
+    const match = (uploadedFiles || []).find((f) => f.name === fileName);
+    if (match?.id) {
+      setSelectedLibraryFileIds([match.id]);
+    } else {
+      setSelectedLibraryFileIds([]);
+      addToast({ type: 'info', message: `File "${fileName}" is not in File in Library yet. Upload it on the Test Cases page first.` });
+    }
+  };
+
+  useEffect(() => {
+    if (libraryView !== 'files') return;
+    if (!libraryFocusFileName) return;
+    const el = focusedLibraryFileRef.current;
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [libraryView, libraryFocusFileName, filteredFiles.length]);
+
   const libraryRawRows = useMemo(() => {
     if (libraryView !== 'rawTestCases') return [];
     const contentKey = (tc) => [tc.name ?? '', tc.vcdName ?? '', tc.binName ?? '', tc.linName ?? ''].join('\0');
-    const fromCurrent = (savedTestCases || []).map((tc) => ({
+    const withStatus = (tc) => ({
       ...tc,
-      _key: `current-${tc.id}`,
-      _source: 'current',
-    }));
+      _status: getTestCaseStatusFromJobs(tc),
+    });
+    const fromCurrent = (savedTestCases || []).map((tc) =>
+      withStatus({
+        ...tc,
+        _key: `current-${tc.id}`,
+        _source: 'current',
+      })
+    );
     const seen = new Set(fromCurrent.map((tc) => contentKey(tc)));
     const fromSets = (savedTestCaseSets || []).flatMap((set) =>
-      (Array.isArray(set.items) ? set.items : []).map((tc, tcIdx) => ({
-        ...tc,
-        _key: `set-${set.id}-${tcIdx}`,
-        _source: 'set',
-        _setId: set.id,
-        _itemIndex: tcIdx,
-      }))
+      (Array.isArray(set.items) ? set.items : []).map((tc, tcIdx) =>
+        withStatus({
+          ...tc,
+          _key: `set-${set.id}-${tcIdx}`,
+          _source: 'set',
+          _setId: set.id,
+          _itemIndex: tcIdx,
+        })
+      )
     );
     const fromSetsDeduped = fromSets.filter((tc) => {
       const key = contentKey(tc);
@@ -2695,16 +2812,21 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
       return true;
     });
     return [...fromCurrent, ...fromSetsDeduped];
-  }, [libraryView, savedTestCases, savedTestCaseSets]);
+  }, [libraryView, savedTestCases, savedTestCaseSets, getTestCaseStatusFromJobs]);
 
   const libraryFilteredRows = useMemo(() => {
     return libraryRawRows.filter((tc) => {
       if (libraryTcNameFilter.trim() && !(tc.name || '').toLowerCase().includes(libraryTcNameFilter.trim().toLowerCase())) return false;
       const tagVal = (tc.extraColumns && (tc.extraColumns.tag || tc.extraColumns.Tag)) || '';
       if (libraryTcTagFilter.trim() && !String(tagVal).toLowerCase().includes(libraryTcTagFilter.trim().toLowerCase())) return false;
+       if (libraryTcStatusFilter !== 'all') {
+         const status = tc._status || null;
+         if (!status) return false;
+         if (libraryTcStatusFilter !== status) return false;
+       }
       return true;
     });
-  }, [libraryRawRows, libraryTcNameFilter, libraryTcTagFilter]);
+  }, [libraryRawRows, libraryTcNameFilter, libraryTcTagFilter, libraryTcStatusFilter]);
 
   useEffect(() => {
     const onMouseUp = () => {
@@ -2719,7 +2841,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const handleDeleteAll = async () => {
     if (!uploadedFiles?.length) return;
     const inUseCount = uploadedFiles.filter((f) => fileNamesInUseByBatch.has(f.name)).length;
-    if (!window.confirm(`Delete all files in Library?${inUseCount > 0 ? `\n\n${inUseCount} file(s) are in use by a batch and will be skipped.` : ''}`)) return;
+    if (!window.confirm(`Delete all files in Library?${inUseCount > 0 ? `\n\n${inUseCount} file(s) are in use by a set and will be skipped.` : ''}`)) return;
     setIsDeleting(true);
     let deleted = 0;
     for (const f of uploadedFiles) {
@@ -2728,13 +2850,13 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
     }
     setIsDeleting(false);
     if (deleted > 0) addToast({ type: 'success', message: `Deleted ${deleted} file(s)` });
-    if (inUseCount > 0) addToast({ type: 'info', message: `${inUseCount} file(s) skipped (in use by batch)` });
+    if (inUseCount > 0) addToast({ type: 'info', message: `${inUseCount} file(s) skipped (in use by set)` });
   };
 
   const handleDeleteBox = async (setId, files) => {
     if (!files?.length) return;
     const inUseCount = files.filter((f) => fileNamesInUseByBatch.has(f.name)).length;
-    if (!window.confirm(`Delete all ${files.length} file(s) in this box from Library?${inUseCount > 0 ? `\n\n${inUseCount} file(s) are in use by a batch and will be skipped.` : ''}`)) return;
+    if (!window.confirm(`Delete all ${files.length} file(s) in this box from Library?${inUseCount > 0 ? `\n\n${inUseCount} file(s) are in use by a set and will be skipped.` : ''}`)) return;
     setDeletingBoxId(setId);
     let deleted = 0;
     for (const f of files) {
@@ -2743,7 +2865,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
     }
     setDeletingBoxId(null);
     if (deleted > 0) addToast({ type: 'success', message: `Deleted ${deleted} file(s) from box` });
-    if (inUseCount > 0) addToast({ type: 'info', message: `${inUseCount} skipped (in use by batch)` });
+    if (inUseCount > 0) addToast({ type: 'info', message: `${inUseCount} skipped (in use by set)` });
   };
 
   return (
@@ -2757,14 +2879,14 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
               onClick={() => setLibraryView('testCases')}
               className={`px-3 py-1.5 text-xs font-semibold ${libraryView === 'testCases' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
             >
-              Test Case Library
+              Set Library
             </button>
             <button
               type="button"
               onClick={() => setLibraryView('rawTestCases')}
               className={`px-3 py-1.5 text-xs font-semibold ${libraryView === 'rawTestCases' ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}
             >
-              Raw Test Cases
+              Test Cases Library
             </button>
             <button
               type="button"
@@ -2816,6 +2938,16 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
               <div className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 flex flex-wrap items-center gap-3">
                 <input type="text" value={librarySetTcNameFilter} onChange={(e) => setLibrarySetTcNameFilter(e.target.value)} placeholder="Filter by name" className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 w-40" />
                 <input type="text" value={librarySetTcTagFilter} onChange={(e) => setLibrarySetTcTagFilter(e.target.value)} placeholder="Filter by tag" className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 w-32" />
+                <select
+                  value={librarySetTcStatusFilter}
+                  onChange={(e) => setLibrarySetTcStatusFilter(e.target.value)}
+                  className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800"
+                >
+                  <option value="all">All status</option>
+                  <option value="pending">Pending</option>
+                  <option value="running">Running</option>
+                  <option value="completed">Completed</option>
+                </select>
                 <button type="button" onClick={handleDeleteSelectedSetTcs} disabled={selectedSetKeys.size === 0} className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:pointer-events-none transition-colors" title={selectedSetKeys.size > 0 ? `Delete ${selectedSetKeys.size} selected` : 'Select test cases to delete'}>
                   <Trash2 size={18} strokeWidth={2} />
                 </button>
@@ -2829,11 +2961,16 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
               ) : (
                 savedTestCaseSets.map((set, setIdx) => {
                   const items = Array.isArray(set.items) ? set.items : [];
-                  const itemsWithIndex = items.map((tc, i) => ({ ...tc, _origIndex: i }));
+                  const itemsWithIndex = items.map((tc, i) => ({ ...tc, _origIndex: i, _status: getTestCaseStatusFromJobs(tc) }));
                   const filteredItems = itemsWithIndex.filter((tc) => {
                     if (librarySetTcNameFilter.trim() && !(tc.name || '').toLowerCase().includes(librarySetTcNameFilter.trim().toLowerCase())) return false;
                     const tagVal = (tc.extraColumns && (tc.extraColumns.tag || tc.extraColumns.Tag)) || '';
                     if (librarySetTcTagFilter.trim() && !String(tagVal).toLowerCase().includes(librarySetTcTagFilter.trim().toLowerCase())) return false;
+                    if (librarySetTcStatusFilter !== 'all') {
+                      const status = tc._status || null;
+                      if (!status) return false;
+                      if (librarySetTcStatusFilter !== status) return false;
+                    }
                     return true;
                   });
                   const extraCols = [...new Set((items || []).flatMap((t) => Object.keys(t.extraColumns || {})))].sort();
@@ -2906,12 +3043,13 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                               <th className="min-w-[100px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">VCD</th>
                               {extraCols.map((col) => (<th key={col} className="px-2 py-2 border-r border-slate-200 dark:border-slate-600 min-w-[90px] whitespace-nowrap">{col}</th>))}
                               <th className="w-14 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Try</th>
+                              <th className="w-20 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Status</th>
                             </tr>
                           </thead>
                           <tbody>
                             {filteredItems.length === 0 ? (
                               <tr>
-                                <td colSpan={8 + extraCols.length} className="px-2 py-4 text-center text-slate-400 text-xs">No test cases in this set{items.length > 0 ? ' (or no match for filter)' : ''}</td>
+                                <td colSpan={9 + extraCols.length} className="px-2 py-4 text-center text-slate-400 text-xs">No test cases in this set{items.length > 0 ? ' (or no match for filter)' : ''}</td>
                               </tr>
                             ) : (
                               filteredItems.map((tc, idx) => {
@@ -2944,6 +3082,33 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">{tc.vcdName || '—'}</td>
                                     {extraCols.map((col) => (<td key={col} className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300 min-w-[90px] truncate max-w-[140px]" title={tc.extraColumns?.[col] || undefined}>{tc.extraColumns?.[col] ?? '—'}</td>))}
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center text-slate-600 dark:text-slate-400">{typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1}</td>
+                                    <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center">
+                                      {(() => {
+                                        const status = tc._status || null;
+                                        if (status === 'running') {
+                                          return (
+                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[10px] font-semibold" title="Running in current set(s)">
+                                              Running
+                                            </span>
+                                          );
+                                        }
+                                        if (status === 'pending') {
+                                          return (
+                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-yellow-50 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-700 text-[10px] font-semibold" title="Pending in run queue">
+                                              Pending
+                                            </span>
+                                          );
+                                        }
+                                        if (status === 'completed') {
+                                          return (
+                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700 text-[10px] font-semibold" title="Completed in past run(s)">
+                                              Completed
+                                            </span>
+                                          );
+                                        }
+                                        return <span className="text-slate-400 dark:text-slate-500 text-[10px]">—</span>;
+                                      })()}
+                                    </td>
                                   </tr>
                                 );
                               })
@@ -3072,6 +3237,16 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                   placeholder="Filter by tag"
                   className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 w-32"
                 />
+                <select
+                  value={libraryTcStatusFilter}
+                  onChange={(e) => setLibraryTcStatusFilter(e.target.value)}
+                  className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800"
+                >
+                  <option value="all">All status</option>
+                  <option value="pending">Pending</option>
+                  <option value="running">Running</option>
+                  <option value="completed">Completed</option>
+                </select>
                 <button
                   type="button"
                   onClick={handleDeleteSelected}
@@ -3112,12 +3287,13 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                         <th key={col} className="px-2 py-2 border-r border-slate-200 dark:border-slate-600 min-w-[90px] whitespace-nowrap">{col}</th>
                       ))}
                       <th className="w-14 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Try</th>
+                      <th className="w-24 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {libraryFilteredRows.length === 0 ? (
                       <tr>
-                        <td colSpan={9 + extraCols.length} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400 text-sm">
+                        <td colSpan={10 + extraCols.length} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400 text-sm">
                           No test cases yet — or no match for filter. Create on Test Cases page or clear filters.
                         </td>
                       </tr>
@@ -3235,21 +3411,120 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                               {tc.createdAt ? new Date(tc.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}
                             </td>
                             <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">
-                              {tc.binName || '—'}
+                              {tc.binName ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    focusFileInLibrary(tc.binName);
+                                  }}
+                                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline hover:text-blue-700 dark:hover:text-blue-300"
+                                  title="View this file in File in Library"
+                                >
+                                  {tc.binName}
+                                </button>
+                              ) : (
+                                '—'
+                              )}
                             </td>
                             <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">
-                              {tc.linName || '—'}
+                              {tc.linName ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    focusFileInLibrary(tc.linName);
+                                  }}
+                                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline hover:text-blue-700 dark:hover:text-blue-300"
+                                  title="View this file in File in Library"
+                                >
+                                  {tc.linName}
+                                </button>
+                              ) : (
+                                '—'
+                              )}
                             </td>
                             <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">
-                              {tc.vcdName || '—'}
+                              {tc.vcdName ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    focusFileInLibrary(tc.vcdName);
+                                  }}
+                                  className="text-xs text-blue-600 dark:text-blue-400 hover:underline hover:text-blue-700 dark:hover:text-blue-300"
+                                  title="View this file in File in Library"
+                                >
+                                  {tc.vcdName}
+                                </button>
+                              ) : (
+                                '—'
+                              )}
                             </td>
                             {extraCols.map((col) => (
-                              <td key={col} className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300 min-w-[90px] truncate max-w-[140px]" title={getExtraVal(tc, col) || undefined}>
-                                {getExtraVal(tc, col) || '—'}
+                              <td
+                                key={col}
+                                className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300 min-w-[90px] truncate max-w-[140px]"
+                                title={getExtraVal(tc, col) || undefined}
+                              >
+                                {(() => {
+                                  const val = getExtraVal(tc, col);
+                                  if (!val) return '—';
+                                  const isFileCol = /^VCD\d+$/i.test(col) || /^ERoM\d+$/i.test(col) || /^ULP\d+$/i.test(col);
+                                  if (!isFileCol) return val;
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        focusFileInLibrary(String(val));
+                                      }}
+                                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline hover:text-blue-700 dark:hover:text-blue-300"
+                                      title="View this file in File in Library"
+                                    >
+                                      {val}
+                                    </button>
+                                  );
+                                })()}
                               </td>
                             ))}
                             <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center text-slate-600 dark:text-slate-400">
                               {typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1}
+                            </td>
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center">
+                              {(() => {
+                                const status = tc._status || null;
+                                if (status === 'running') {
+                                  return (
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[10px] font-semibold" title="Running in current set(s)">
+                                      Running
+                                    </span>
+                                  );
+                                }
+                                if (status === 'pending') {
+                                  return (
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-yellow-50 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-700 text-[10px] font-semibold" title="Pending in run queue">
+                                      Pending
+                                    </span>
+                                  );
+                                }
+                                if (status === 'completed') {
+                                  return (
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700 text-[10px] font-semibold" title="Completed in past run(s)">
+                                      Completed
+                                    </span>
+                                  );
+                                }
+                                if (tc._source === 'set' && tc._setId) {
+                                  const setName = (savedTestCaseSets || []).find((s) => s.id === tc._setId)?.name || 'Set';
+                                  return (
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600 text-[10px] font-medium" title={`In set: ${setName}`}>
+                                      In set
+                                    </span>
+                                  );
+                                }
+                                return <span className="text-slate-400 dark:text-slate-500 text-[10px]">—</span>;
+                              })()}
                             </td>
                           </tr>
                         );
@@ -3309,10 +3584,10 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
               return;
             }
             if (selectedInUse === selectedFileSet.size) {
-              addToast({ type: 'warning', message: 'All selected files are in use by a running or pending batch. Wait for the batch to finish first.' });
+              addToast({ type: 'warning', message: 'All selected files are in use by a running or pending set. Wait for the set to finish first.' });
               return;
             }
-            if (!window.confirm(`Delete ${selectedFileSet.size} selected file(s) from Library?${selectedInUse > 0 ? `\n\n${selectedInUse} file(s) are in use by a batch and will be skipped.` : ''}`)) return;
+            if (!window.confirm(`Delete ${selectedFileSet.size} selected file(s) from Library?${selectedInUse > 0 ? `\n\n${selectedInUse} file(s) are in use by a set and will be skipped.` : ''}`)) return;
             setIsDeleting(true);
             let deleted = 0;
             for (const id of selectedLibraryFileIds) {
@@ -3322,7 +3597,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
             setIsDeleting(false);
             setSelectedLibraryFileIds([]);
             if (deleted > 0) addToast({ type: 'success', message: `Deleted ${deleted} file(s)` });
-            if (deleted < selectedFileSet.size && selectedInUse > 0) addToast({ type: 'info', message: `${selectedFileSet.size - deleted} file(s) skipped (in use by batch)` });
+            if (deleted < selectedFileSet.size && selectedInUse > 0) addToast({ type: 'info', message: `${selectedFileSet.size - deleted} file(s) skipped (in use by set)` });
           };
           return (
             <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
@@ -3334,9 +3609,19 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                 {['all', 'vcd', 'bin', 'lin'].map((k) => (
                   <button key={k} onClick={() => setFileFilter(k)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${fileFilter === k ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700' : 'border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-400'}`}>{k === 'all' ? 'All' : k.toUpperCase()}</button>
                 ))}
+                <select
+                  value={fileStatusFilter}
+                  onChange={(e) => setFileStatusFilter(e.target.value)}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800"
+                >
+                  <option value="all">All status</option>
+                  <option value="pending">Pending</option>
+                  <option value="running">Running</option>
+                  <option value="completed">Completed</option>
+                </select>
                 <input type="text" value={fileSearch} onChange={(e) => setFileSearch(e.target.value)} placeholder="Filter by name" className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 w-40" />
                 <select value={fileSort} onChange={(e) => setFileSort(e.target.value)} className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800"><option value="time">Time</option><option value="name">Name</option></select>
-                <button type="button" onClick={handleDeleteSelectedFiles} disabled={selectedFileSet.size === 0 || isDeleting} className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:pointer-events-none transition-colors" title={selectedFileSet.size > 0 ? (selectedInUse > 0 ? `${selectedInUse} of ${selectedFileSet.size} selected are in use by a batch (will be skipped)` : `Delete ${selectedFileSet.size} selected`) : 'Select files to delete'}>
+                <button type="button" onClick={handleDeleteSelectedFiles} disabled={selectedFileSet.size === 0 || isDeleting} className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:pointer-events-none transition-colors" title={selectedFileSet.size > 0 ? (selectedInUse > 0 ? `${selectedInUse} of ${selectedFileSet.size} selected are in use by a set (will be skipped)` : `Delete ${selectedFileSet.size} selected`) : 'Select files to delete'}>
                   <Trash2 size={18} strokeWidth={2} />
                 </button>
                 {selectedFileSet.size > 0 && <span className="text-xs text-slate-500">{selectedFileSet.size} selected</span>}
@@ -3363,12 +3648,15 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                       const setNames = getSetNamesUsingFile(f.name, savedTestCaseSets);
                       const usedByTcs = getTestCasesUsingFile(f.name, savedTestCases, savedTestCaseSets);
                       const isSelected = selectedFileSet.has(f.id);
+                      const isFocused = libraryFocusFileName && f.name === libraryFocusFileName;
+                      const isHighlighted = isSelected || isFocused;
                       const usedByTcsTitle = usedByTcs.length > 0 ? usedByTcs.map((u) => `${u.name}${u.set ? ` (${u.set})` : ''}`).join('\n') : '';
                       const inUseByBatch = fileNamesInUseByBatch.has(f.name);
                       return (
                         <div
                           key={f.id}
-                          className={`flex items-center gap-2 px-4 py-2 flex-wrap cursor-pointer select-none ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}
+                          ref={isFocused ? focusedLibraryFileRef : null}
+                          className={`flex items-center gap-2 px-4 py-2 flex-wrap cursor-pointer select-none ${isHighlighted ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}
                           onClick={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return; toggleFileSelect(f.id, index, e); }}
                           onMouseDown={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return; if (e.button === 0) { isDragSelectingFileRef.current = true; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); } }}
                           onMouseEnter={() => { if (!isDragSelectingFileRef.current) return; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); }}
@@ -3376,7 +3664,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                           <input type="checkbox" checked={isSelected} onChange={() => toggleFileSelect(f.id, index, { shiftKey: false, ctrlKey: false, metaKey: false })} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded cursor-pointer shrink-0" />
                           <span className="flex-1 min-w-0 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
                           {inUseByBatch && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[10px] font-semibold shrink-0" title="In use by a running or pending batch; cannot delete until batch finishes">In use by batch</span>
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[10px] font-semibold shrink-0" title="In use by a running or pending set; cannot delete until set finishes">In use by set</span>
                           )}
                           {usedByTcs.length > 0 && (
                             <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0 max-w-[200px] truncate" title={usedByTcsTitle || undefined}>
@@ -3433,7 +3721,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                       <input type="checkbox" checked={isSelected} onChange={() => toggleFileSelect(f.id, globalIndex >= 0 ? globalIndex : fileIdx, { shiftKey: false, ctrlKey: false, metaKey: false })} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded cursor-pointer shrink-0" />
                                       <span className="flex-1 min-w-0 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
                                       {inUseByBatch && (
-                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[10px] font-semibold shrink-0" title="In use by a running or pending batch">In use by batch</span>
+                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[10px] font-semibold shrink-0" title="In use by a running or pending set">In use by set</span>
                                       )}
                                       {usedByTcs.length > 0 && (
                                         <span className="text-[11px] text-emerald-600 dark:text-emerald-400 shrink-0 max-w-[180px] truncate" title={usedByTcsTitle || undefined}>
@@ -3529,6 +3817,21 @@ const TestCasesPage = () => {
     });
     return names;
   }, [jobs]);
+
+  const isSetInUseByJobs = useCallback(
+    (set) => {
+      const activeStates = new Set(['pending', 'running']);
+      return (jobs || []).some((job) => {
+        const state = (job.status || '').toLowerCase();
+        if (!activeStates.has(state)) return false;
+        const configName = (job.configName || '').trim();
+        const jobName = (job.name || '').trim();
+        const setName = (set.name || '').trim();
+        return setName && (configName === setName || jobName === setName);
+      });
+    },
+    [jobs]
+  );
   const fileInputRef = useRef(null);
   const csvInputRef = useRef(null);
   const prevUploadedCountRef = useRef(0);
@@ -3601,6 +3904,7 @@ const TestCasesPage = () => {
 
   const [selectedIds, setSelectedIds] = useState([]);
   const [selectedTestCaseIds, setSelectedTestCaseIds] = useState([]);
+  const [duplicateHighlightIds, setDuplicateHighlightIds] = useState([]);
   const [bulkTryCount, setBulkTryCount] = useState('');
   const [fileFilter, setFileFilter] = useState('all');
   const [fileSearch, setFileSearch] = useState('');
@@ -3634,6 +3938,11 @@ const TestCasesPage = () => {
   };
 
   const isDraftId = (id) => (pendingDraftTestCases || []).some((t) => t.id === id);
+  useEffect(() => {
+    if (!duplicateHighlightIds.length) return;
+    const timer = setTimeout(() => setDuplicateHighlightIds([]), 1600);
+    return () => clearTimeout(timer);
+  }, [duplicateHighlightIds]);
   const updateDisplayedTestCase = (id, updates) => {
     if (isDraftId(id)) {
       setPendingDraftTestCases((prev) =>
@@ -4073,6 +4382,7 @@ const TestCasesPage = () => {
     const orderedBins = orderedFiles.filter((f) => getFileKind(f) === 'bin');
     const orderedLins = orderedFiles.filter((f) => getFileKind(f) === 'lin');
     let added = 0;
+    const duplicateIds = new Set();
     orderedVcds.forEach((vcdFile, vcdIdx) => {
       const vcdIndexInOrdered = orderedFiles.findIndex((f) => f.id === vcdFile.id);
       let nearestBin = null, minDistance = Infinity;
@@ -4086,9 +4396,10 @@ const TestCasesPage = () => {
         const d = Math.abs(orderedFiles.findIndex((f) => f.id === linFile.id) - vcdIndexInOrdered);
         if (d < minLin) { minLin = d; nearestLin = linFile; }
       });
-      const inSaved = (savedTestCases || []).some((t) => t.vcdName === vcdFile.name && t.binName === binFile.name);
-      const inDraft = (pendingDraftTestCases || []).some((t) => t.vcdName === vcdFile.name && t.binName === binFile.name);
-      if (!inSaved && !inDraft) {
+      const existing = (displayedSavedTestCases || []).find(
+        (t) => t.vcdName === vcdFile.name && t.binName === binFile.name && t.linName === (nearestLin?.name || '')
+      );
+      if (!existing) {
         const name = getNextTestCaseName();
         const entry = { name, vcdName: vcdFile.name, binName: binFile.name, linName: nearestLin?.name || '', tryCount: 1, createdAt: new Date().toISOString() };
         if (loadedSetId) {
@@ -4097,13 +4408,25 @@ const TestCasesPage = () => {
           setPendingDraftTestCases((prev) => [...prev, { ...entry, id: `tc-draft-${Date.now()}-${Math.random().toString(36).slice(2, 9)}` }]);
         }
         added++;
+      } else if (existing.id) {
+        duplicateIds.add(existing.id);
       }
     });
     if (added > 0) {
       setSetupClearedPersisted(activeProfileId, false);
       setTableClearedMode(false);
       addToast({ type: 'success', message: `Added ${added} test case(s) from selection` });
-    } else addToast({ type: 'info', message: 'All possible pairs already in library' });
+      if (duplicateIds.size > 0) {
+        addToast({ type: 'info', message: `${duplicateIds.size} selection(s) matched existing test case(s) and were skipped` });
+      }
+    } else if (duplicateIds.size > 0) {
+      const ids = Array.from(duplicateIds);
+      setSelectedTestCaseIds(ids);
+      setDuplicateHighlightIds(ids);
+      addToast({ type: 'info', message: `Test case with the same files already exists (${ids.length})` });
+    } else {
+      addToast({ type: 'info', message: 'All possible pairs already in library' });
+    }
   };
 
   const addOneTestCase = () => {
@@ -4168,7 +4491,7 @@ const TestCasesPage = () => {
     if (inUse.length > 0) {
       addToast({
         type: 'warning',
-        message: `${inUse.length} selected test case(s) use files that are in a running or pending batch. Wait for the batch to finish before deleting them.`,
+        message: `${inUse.length} selected test case(s) use files that are in a running or pending set. Wait for the set to finish before deleting them.`,
       });
       return;
     }
@@ -4494,14 +4817,54 @@ const TestCasesPage = () => {
                 // Upload any dropped-but-not-yet-uploaded files first so they appear in File in Library
                 const toUpload = (localDroppedFiles || []).filter((f) => f && f.file instanceof File);
                 if (toUpload.length > 0) {
-                  let uploaded = 0;
+                  // Pre-compare by checksum with existing library before uploading
+                  await refreshFiles?.();
+                  const currentFiles = useTestStore.getState().uploadedFiles || [];
+                  const byChecksum = new Map(
+                    currentFiles
+                      .filter((f) => f.checksum)
+                      .map((f) => [f.checksum, f])
+                  );
+
+                  const prepared = [];
                   for (const f of toUpload) {
-                    const result = await addUploadedFile(f.file);
+                    const sig = await computeFileSignature(f.file);
+                    const existing = sig.checksum ? byChecksum.get(sig.checksum) : null;
+                    prepared.push({ file: f.file, sig, existing });
+                  }
+
+                  const duplicates = prepared.filter((p) => p.existing);
+                  const uniques = prepared.filter((p) => !p.existing);
+
+                  let uploadDuplicates = false;
+                  if (duplicates.length > 0) {
+                    const names = duplicates.map((d) => d.file.name).join(', ');
+                    const msg =
+                      `พบไฟล์ ${duplicates.length} ไฟล์ที่มีเนื้อหาเหมือนใน Library อยู่แล้ว:\n` +
+                      `${names}\n\n` +
+                      'กด OK = อัปโหลดเฉพาะไฟล์ใหม่ (ใช้ไฟล์เดิมจาก Library แทนสำหรับไฟล์ซ้ำ)\n' +
+                      'กด Cancel = อัปโหลดไฟล์ทั้งหมด (รวมไฟล์ซ้ำ)';
+                    uploadDuplicates = !window.confirm(msg);
+                  }
+
+                  let uploaded = 0;
+                  const toActuallyUpload = uploadDuplicates ? prepared : uniques;
+                  for (const p of toActuallyUpload) {
+                    const result = await addUploadedFile(p.file);
                     if (result) uploaded++;
                   }
+
                   setLocalDroppedFiles([]);
                   if (refreshFiles) await refreshFiles();
-                  if (uploaded > 0) addToast({ type: 'success', message: `${uploaded} file(s) uploaded to library` });
+                  if (uploaded > 0) {
+                    addToast({ type: 'success', message: `${uploaded} file(s) uploaded to library` });
+                  }
+                  if (!uploadDuplicates && duplicates.length > 0) {
+                    addToast({
+                      type: 'info',
+                      message: `${duplicates.length} file(s) already in library by content — reused existing version`,
+                    });
+                  }
                 }
                 if (toSave.length > 0) {
                   toSave.forEach((tc) => {
@@ -4530,6 +4893,14 @@ const TestCasesPage = () => {
             </span>
             <button
               onClick={() => {
+                const currentSet = displayedSavedTestCaseSets.find((s) => s.id === loadedSetId);
+                if (currentSet && isSetInUseByJobs(currentSet)) {
+                  addToast({
+                    type: 'warning',
+                    message: 'ชุด Set นี้กำลังถูกใช้รันอยู่ ไม่สามารถอัปเดต test cases / files ได้จนกว่ารันเสร็จ',
+                  });
+                  return;
+                }
                 const mergeCommandsIntoExtra = (tc) => {
                   const extra = tc.extraColumns && typeof tc.extraColumns === 'object' ? { ...tc.extraColumns } : {};
                   const cmds = Array.isArray(tc.commands) ? tc.commands : [];
@@ -4778,7 +5149,11 @@ const TestCasesPage = () => {
                       dropTargetRowIndex === idx
                         ? 'ring-1 ring-blue-400 bg-blue-50 dark:bg-blue-900/20'
                         : ''
-                    } ${selectedTestCaseIds.includes(tc.id) ? 'bg-blue-50 dark:bg-blue-900/20' : ''}`}
+                    } ${
+                      selectedTestCaseIds.includes(tc.id) ? 'bg-blue-50 dark:bg-blue-900/20' : ''
+                    } ${
+                      duplicateHighlightIds.includes(tc.id) ? 'animate-pulse ring-1 ring-emerald-400' : ''
+                    }`}
                   >
                     <td
                       className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700"
@@ -4826,11 +5201,13 @@ const TestCasesPage = () => {
                         onChange={(e) =>
                           updateDisplayedTestCase(tc.id, { binName: e.target.value })
                         }
-                        disabled={isTestCaseLocked(tc.id) || isViewingShared}
+                        disabled={isTestCaseLocked(tc.id) || isTestCaseInUseByBatch(tc) || isViewingShared}
                         className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
                         title={
                           isTestCaseLocked(tc.id)
                             ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
+                            : isTestCaseInUseByBatch(tc)
+                              ? 'Files are locked because this test case is in a running or pending set. Use “Save as new test case” to change files.'
                             : 'Select ERoM file'
                         }
                       >
@@ -4854,11 +5231,13 @@ const TestCasesPage = () => {
                             linName: e.target.value || undefined,
                           })
                         }
-                        disabled={isTestCaseLocked(tc.id) || isViewingShared}
+                        disabled={isTestCaseLocked(tc.id) || isTestCaseInUseByBatch(tc) || isViewingShared}
                         className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
                         title={
                           isTestCaseLocked(tc.id)
                             ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
+                            : isTestCaseInUseByBatch(tc)
+                            ? 'Files are locked because this test case is in a running or pending set. Use “Save as new test case” to change files.'
                             : 'Select ULP file'
                         }
                       >
@@ -4880,11 +5259,13 @@ const TestCasesPage = () => {
                         onChange={(e) =>
                           updateDisplayedTestCase(tc.id, { vcdName: e.target.value })
                         }
-                        disabled={isTestCaseLocked(tc.id) || isViewingShared}
+                        disabled={isTestCaseLocked(tc.id) || isTestCaseInUseByBatch(tc) || isViewingShared}
                         className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
                         title={
                           isTestCaseLocked(tc.id)
                             ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
+                            : isTestCaseInUseByBatch(tc)
+                            ? 'Files are locked because this test case is in a running or pending set. Use “Save as new test case” to change files.'
                             : 'Select VCD file'
                         }
                       >
@@ -4941,11 +5322,13 @@ const TestCasesPage = () => {
                             <select
                               value={getExtraVal(tc, col)}
                               onChange={(e) => handleExtraColumnChange(tc.id, col, e.target.value)}
-                              disabled={isTestCaseLocked(tc.id) || isViewingShared}
+                              disabled={isTestCaseLocked(tc.id) || isTestCaseInUseByBatch(tc) || isViewingShared}
                               className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
                               title={
                                 isTestCaseLocked(tc.id)
                                   ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
+                                  : isTestCaseInUseByBatch(tc)
+                                  ? 'Files are locked because this test case is in a running or pending set. Use “Save as new test case” to change files.'
                                   : `Select file for ${col}`
                               }
                             >
@@ -5031,7 +5414,7 @@ const TestCasesPage = () => {
                         type="button"
                         onClick={() => {
                           if (isTestCaseInUseByBatch(tc)) {
-                            addToast({ type: 'warning', message: 'This test case uses files in a running or pending batch. Wait for the batch to finish.' });
+                            addToast({ type: 'warning', message: 'This test case uses files in a running or pending set. Wait for the set to finish.' });
                             return;
                           }
                           removeDisplayedTestCase(tc.id);
@@ -5039,7 +5422,7 @@ const TestCasesPage = () => {
                         }}
                         disabled={isTestCaseInUseByBatch(tc)}
                         className="p-1 text-red-500 hover:text-red-700 rounded disabled:opacity-40 disabled:cursor-not-allowed"
-                        title={isTestCaseInUseByBatch(tc) ? 'In use by a running or pending batch' : 'Delete'}
+                        title={isTestCaseInUseByBatch(tc) ? 'In use by a running or pending set' : 'Delete'}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -5134,7 +5517,7 @@ const TestCasesPage = () => {
                         type="button"
                         onClick={() => {
                           if (isTestCaseInUseByBatch(tc)) {
-                            addToast({ type: 'warning', message: 'This test case uses files in a running or pending batch. Wait for the batch to finish.' });
+                            addToast({ type: 'warning', message: 'This test case uses files in a running or pending set. Wait for the set to finish.' });
                             return;
                           }
                           removeDisplayedTestCase(tc.id);
@@ -5142,7 +5525,7 @@ const TestCasesPage = () => {
                         }}
                         disabled={isTestCaseInUseByBatch(tc)}
                         className="p-1 text-red-500 hover:text-red-700 rounded disabled:opacity-40 disabled:cursor-not-allowed"
-                        title={isTestCaseInUseByBatch(tc) ? 'In use by a running or pending batch' : 'Delete'}
+                        title={isTestCaseInUseByBatch(tc) ? 'In use by a running or pending set' : 'Delete'}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -5416,8 +5799,24 @@ const TestCasesPage = () => {
                   className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700"
                 >
                   <div className="flex flex-col gap-0 shrink-0">
-                    <button type="button" onClick={() => moveSavedTestCaseSetUp(set.id)} disabled={index === 0 || isViewingShared} className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30" title="Move up"><ArrowUp size={12} className="text-slate-500" /></button>
-                    <button type="button" onClick={() => moveSavedTestCaseSetDown(set.id)} disabled={index === displayedSavedTestCaseSets.length - 1 || isViewingShared} className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30" title="Move down"><ArrowDown size={12} className="text-slate-500" /></button>
+                    <button
+                      type="button"
+                      onClick={() => moveSavedTestCaseSetUp(set.id)}
+                      disabled={index === 0 || isViewingShared}
+                      className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30"
+                      title="Move up"
+                    >
+                      <ArrowUp size={12} className="text-slate-500" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveSavedTestCaseSetDown(set.id)}
+                      disabled={index === displayedSavedTestCaseSets.length - 1 || isViewingShared}
+                      className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30"
+                      title="Move down"
+                    >
+                      <ArrowDown size={12} className="text-slate-500" />
+                    </button>
                   </div>
                   <span className="text-[10px] text-slate-400 w-4 shrink-0">#{index + 1}</span>
                   <div className="flex-1 min-w-0">
@@ -5425,6 +5824,11 @@ const TestCasesPage = () => {
                       <span className="font-semibold text-slate-700 dark:text-slate-200 truncate">
                         {set.name}
                       </span>
+                      {isSetInUseByJobs(set) && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[9px] font-semibold">
+                          In run
+                        </span>
+                      )}
                       <span className="text-[10px] text-slate-400 dark:text-slate-500">
                         {Array.isArray(set.items) ? `${set.items.length} cases` : ''}
                       </span>
@@ -5437,6 +5841,7 @@ const TestCasesPage = () => {
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
                     <button
+                      type="button"
                       onClick={async () => {
                         try {
                           await api.restoreSetFilesToLibrary(set.id);
@@ -5458,7 +5863,9 @@ const TestCasesPage = () => {
                                 if (t.binName) n.add(t.binName);
                                 if (t.linName) n.add(t.linName);
                                 const ec = t.extraColumns || {};
-                                Object.values(ec).forEach((v) => { if ((v ?? '').toString().trim()) n.add(String(v).trim()); });
+                                Object.values(ec).forEach((v) => {
+                                  if ((v ?? '').toString().trim()) n.add(String(v).trim());
+                                });
                               });
                               return [...n];
                             })();
@@ -5467,14 +5874,20 @@ const TestCasesPage = () => {
                           const ids = files.filter((f) => fileNames.includes(f.name)).map((f) => f.id);
                           setSelectedIds(ids);
                         }
-                        addToast({ type: 'success', message: `Loaded set "${set.name}" — files restored to Library, table and selection updated` });
+                        addToast({
+                          type: 'success',
+                          message: `Loaded set "${set.name}" — files restored to Library, table and selection updated`,
+                        });
                       }}
                       disabled={isViewingShared}
-                      className={`px-2 py-1 rounded font-semibold ${isViewingShared ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
+                      className={`px-2 py-1 rounded font-semibold ${
+                        isViewingShared ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'
+                      }`}
                     >
                       Load
                     </button>
                     <button
+                      type="button"
                       onClick={() => {
                         setSetupClearedPersisted(activeProfileId, false);
                         setTableClearedMode(false);
@@ -5483,35 +5896,45 @@ const TestCasesPage = () => {
                         addToast({ type: 'success', message: `Appended set "${set.name}" to table` });
                       }}
                       disabled={isViewingShared}
-                      className={`px-2 py-1 rounded font-semibold ${isViewingShared ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-slate-600 hover:bg-slate-700 text-white'}`}
+                      className={`px-2 py-1 rounded font-semibold ${
+                        isViewingShared ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-slate-600 hover:bg-slate-700 text-white'
+                      }`}
                       title="Append this set to table (without replacing)"
                     >
                       +Append
                     </button>
                     <button
+                      type="button"
                       onClick={() => {
                         duplicateSavedTestCaseSet(set.id);
                         addToast({ type: 'success', message: `Duplicated set "${set.name}"` });
                       }}
                       disabled={isViewingShared}
-                      className={`p-1 rounded ${isViewingShared ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300'}`}
+                      className={`p-1 rounded ${
+                        isViewingShared ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300'
+                      }`}
                       title="Clone set"
                     >
                       <Copy size={14} />
                     </button>
                     <button
+                      type="button"
                       onClick={async () => {
                         if (!window.confirm(`Delete set "${set.name}"? This will remove it from the library and from the database.`)) return;
                         try {
                           await api.deleteSet(set.id);
                         } catch (e) {
-                          if (!String(e?.message || '').includes('404')) addToast({ type: 'warning', message: `Backend: ${e?.message || 'Delete failed'}` });
+                          if (!String(e?.message || '').includes('404')) {
+                            addToast({ type: 'warning', message: `Backend: ${e?.message || 'Delete failed'}` });
+                          }
                         }
                         removeSavedTestCaseSet(set.id);
                         addToast({ type: 'success', message: `Deleted set "${set.name}"` });
                       }}
                       disabled={isViewingShared}
-                      className={`p-1 rounded ${isViewingShared ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-600/10 text-red-600'}`}
+                      className={`p-1 rounded ${
+                        isViewingShared ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-600/10 text-red-600'
+                      }`}
                       title="Delete set (from library and database)"
                     >
                       <Trash2 size={14} />
@@ -7209,7 +7632,18 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
   };
 
   const handleFileSelect = async (selectedFiles) => {
-    for (const file of Array.from(selectedFiles)) {
+    const filesArray = Array.from(selectedFiles);
+    // Pre-compare with existing library by checksum before upload
+    await useTestStore.getState().refreshFiles?.();
+    const currentFiles = useTestStore.getState().uploadedFiles || [];
+    const byChecksum = new Map(
+      currentFiles
+        .filter((f) => f.checksum)
+        .map((f) => [f.checksum, f])
+    );
+
+    const prepared = [];
+    for (const file of filesArray) {
       // Validate file type
       const extension = file.name.split('.').pop().toLowerCase();
       const validExtensions = ['vcd', 'bin', 'hex', 'elf', 'erom', 'ulp'];
@@ -7225,8 +7659,35 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
         pushFileError(`File ${file.name} is too large. Maximum size is 50MB.`);
         continue;
       }
-      
-      await addUploadedFile(file);
+      const sig = await computeFileSignature(file);
+      const existing = sig.checksum ? byChecksum.get(sig.checksum) : null;
+      prepared.push({ file, sig, existing });
+    }
+
+    const duplicates = prepared.filter((p) => p.existing);
+    const uniques = prepared.filter((p) => !p.existing);
+
+    let uploadDuplicates = false;
+    if (duplicates.length > 0) {
+      const names = duplicates.map((d) => d.file.name).join(', ');
+      const msg =
+        `พบไฟล์ ${duplicates.length} ไฟล์ที่มีเนื้อหาเหมือนใน Library อยู่แล้ว:\n` +
+        `${names}\n\n` +
+        'กด OK = อัปโหลดเฉพาะไฟล์ใหม่ (ใช้ไฟล์เดิมจาก Library แทนสำหรับไฟล์ซ้ำ)\n' +
+        'กด Cancel = อัปโหลดไฟล์ทั้งหมด (รวมไฟล์ซ้ำ)';
+      uploadDuplicates = !window.confirm(msg);
+    }
+
+    const toActuallyUpload = uploadDuplicates ? prepared : uniques;
+    for (const p of toActuallyUpload) {
+      await addUploadedFile(p.file);
+    }
+
+    if (!uploadDuplicates && duplicates.length > 0) {
+      addToast({
+        type: 'info',
+        message: `${duplicates.length} file(s) already in library by content — reused existing version`,
+      });
     }
   };
   

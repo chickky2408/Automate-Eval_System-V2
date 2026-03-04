@@ -546,7 +546,7 @@ export const useTestStore = create((set, get) => ({
       if (error?.status === 409) {
         get().addToast({
           type: 'warning',
-          message: error?.detail || 'File is in use by a running or pending batch. Wait for the batch to finish or remove the batch first.',
+          message: error?.detail || 'File is in use by a running or pending set. Wait for the set to finish or remove the set first.',
         });
       } else {
         console.error('Failed to delete file', error);
@@ -1439,6 +1439,7 @@ export const useTestStore = create((set, get) => ({
         type: inferFileType(file.name, file.type),
         file: null,
         uploadDate: file.uploadDate,
+        checksum: file.checksum || null,
       }));
       set({
         uploadedFiles: mapped,
@@ -1469,6 +1470,7 @@ export const useTestStore = create((set, get) => ({
         type: inferFileType(file.name, file.type),
         file: null,
         uploadDate: file.uploadDate,
+        checksum: file.checksum || null,
       }));
       set({
         uploadedFiles: mapped,
