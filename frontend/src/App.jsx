@@ -2595,7 +2595,7 @@ const getTestCasesUsingFile = (fileName, savedTestCases, savedTestCaseSets) => {
 
 // FILE LIBRARY PAGE — default: Test Case Library (เรียง set ลงมา แต่ละ set มีตารางแนวนอน + แสดงไฟล์); ปุ่มสลับView files in Library
 const FileLibraryPage = ({ onNavigateToTestCases }) => {
-  const { uploadedFiles, removeUploadedFile, loading, errors, savedTestCaseSets, savedTestCases, removeSavedTestCase, updateSavedTestCaseSet, removeSavedTestCaseSet } = useTestStore();
+  const { uploadedFiles, removeUploadedFile, loading, errors, savedTestCaseSets, savedTestCases, removeSavedTestCase, updateSavedTestCaseSet, removeSavedTestCaseSet, fileTags, setFileTag } = useTestStore();
   const jobs = useTestStore((s) => s.jobs);
   const refreshFiles = useTestStore((s) => s.refreshFiles);
   const addToast = useTestStore((s) => s.addToast);
@@ -3646,6 +3646,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                       </div>
                     ) : filteredFiles.map((f, index) => {
                       const setNames = getSetNamesUsingFile(f.name, savedTestCaseSets);
+                      const tagVal = (fileTags && fileTags[f.id]) || '';
                       const usedByTcs = getTestCasesUsingFile(f.name, savedTestCases, savedTestCaseSets);
                       const isSelected = selectedFileSet.has(f.id);
                       const isFocused = libraryFocusFileName && f.name === libraryFocusFileName;
@@ -3663,6 +3664,18 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                         >
                           <input type="checkbox" checked={isSelected} onChange={() => toggleFileSelect(f.id, index, { shiftKey: false, ctrlKey: false, metaKey: false })} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded cursor-pointer shrink-0" />
                           <span className="flex-1 min-w-0 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
+                          <input
+                            type="text"
+                            value={tagVal}
+                            onChange={(e) => {
+                              e.stopPropagation();
+                              setFileTag?.(f.id, e.target.value);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="px-2 py-0.5 text-[11px] rounded-full border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-200 max-w-[120px] truncate"
+                            placeholder="tag"
+                            title={tagVal ? `Tag: ${tagVal}` : 'Set tag for this file'}
+                          />
                           {inUseByBatch && (
                             <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[10px] font-semibold shrink-0" title="In use by a running or pending set; cannot delete until set finishes">In use by set</span>
                           )}
@@ -6410,14 +6423,34 @@ const RunSetPage = ({ onNavigateJobs }) => {
                           e.dataTransfer.effectAllowed = 'move';
                         }}
                         onClick={() => setSelectedRunIndex(idx)}
-                        className={`flex items-center gap-3 px-3 min-h-[56px] bg-white dark:bg-slate-900 cursor-grab active:cursor-grabbing hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${selectedRunIndex === idx ? 'ring-inset ring-1 ring-blue-400 dark:ring-blue-500' : ''}`}
+                    className={`flex items-center gap-3 px-3 min-h-[56px] bg-white dark:bg-slate-900 cursor-grab active:cursor-grabbing hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${selectedRunIndex === idx ? 'ring-inset ring-1 ring-blue-400 dark:ring-blue-500' : ''}`}
                       >
                         <GripVertical size={16} className="text-slate-400 shrink-0 flex-shrink-0" />
-                        <div className="w-6 text-xs font-bold text-slate-500 shrink-0">{idx + 1}</div>
+                    <div className="w-6 text-xs font-bold text-slate-500 shrink-0 text-center">{idx + 1}</div>
                         <div className="flex-1 min-w-0 flex flex-col justify-center py-1.5">
                           <div className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{item.tc.name || item.tc.vcdName || '—'}</div>
                           <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{item.tc.vcdName || '—'}{item.tc.binName ? ` · ${item.tc.binName}` : ''}</div>
                         </div>
+                    <div className="flex flex-col items-center gap-0.5 mr-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); if (idx > 0) reorderRunPreview(idx, idx - 1); }}
+                        disabled={idx === 0}
+                        className="p-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40"
+                        title="Move up"
+                      >
+                        <ArrowUp size={12} className="text-slate-400" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); if (idx < runPreview.length - 1) reorderRunPreview(idx, idx + 1); }}
+                        disabled={idx === runPreview.length - 1}
+                        className="p-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40"
+                        title="Move down"
+                      >
+                        <ArrowDown size={12} className="text-slate-400" />
+                      </button>
+                    </div>
                         <button
                           type="button"
                           onClick={(e) => { e.stopPropagation(); removeFromRunPreview(idx); }}

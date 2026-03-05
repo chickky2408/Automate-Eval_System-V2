@@ -54,6 +54,7 @@ const saveTestCommands = (commands) => {
 const PROFILES_LIST_KEY = 'app_profiles_list';
 const ACTIVE_PROFILE_ID_KEY = 'app_active_profile_id';
 const PROFILE_DATA_PREFIX = 'app_profile_';
+const FILE_TAGS_KEY = 'app_file_tags';
 const SHARED_PROFILES_KEY = 'app_shared_profiles';
 
 // True if profile id is a backend UUID (can sync / share)
@@ -124,6 +125,27 @@ const saveProfile = (profileId, profileData) => {
     localStorage.setItem(`${PROFILE_DATA_PREFIX}${profileId}`, JSON.stringify(updated));
   } catch (e) {
     console.error(`Failed to save profile ${profileId}`, e);
+  }
+};
+
+// File tags (global, per-device)
+const loadFileTags = () => {
+  try {
+    const raw = localStorage.getItem(FILE_TAGS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    console.error('Failed to load file tags', e);
+    return {};
+  }
+};
+
+const saveFileTags = (tags) => {
+  try {
+    localStorage.setItem(FILE_TAGS_KEY, JSON.stringify(tags || {}));
+  } catch (e) {
+    console.error('Failed to save file tags', e);
   }
 };
 
@@ -302,6 +324,9 @@ export const useTestStore = create((set, get) => ({
   vcdFiles: [],
   firmwareFiles: [],
 
+  // File metadata (per device) — tags keyed by file.id
+  fileTags: (() => loadFileTags())(),
+
   // Saved Test Cases (library) — persisted; only shown in Library after "Save to library"
   savedTestCases: (() => loadSavedTestCases())(),
 
@@ -404,6 +429,17 @@ export const useTestStore = create((set, get) => ({
   addVcd: (file) => set((state) => ({ vcdFiles: [...state.vcdFiles, file] })),
   addVcdFile: (file) => set((state) => ({ vcdFiles: [...state.vcdFiles, file] })),
   addFirmwareFile: (file) => set((state) => ({ firmwareFiles: [...state.firmwareFiles, file] })),
+  setFileTag: (fileId, tag) => {
+    set((state) => {
+      const next = { ...(state.fileTags || {}) };
+      const value = (tag || '').trim();
+      if (!fileId) return {};
+      if (!value) delete next[fileId];
+      else next[fileId] = value;
+      saveFileTags(next);
+      return { fileTags: next };
+    });
+  },
   addBoard: async (boardInput) => {
     try {
       const payload = {
