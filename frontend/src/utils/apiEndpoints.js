@@ -61,6 +61,25 @@ export const API_ENDPOINTS = {
   JOB_FILE_RERUN: (jobId, fileId) => `${API_BASE_URL}/jobs/${jobId}/files/${fileId}/rerun`,
   JOB_FILE_MOVE: (jobId, fileId) => `${API_BASE_URL}/jobs/${jobId}/files/${fileId}/move`,
   JOB_PAIRS: (jobId) => `${API_BASE_URL}/jobs/${jobId}/pairs`, // Get pairs data for editing
+  JOB_FILES_SYNC: (jobId, status) => `${API_BASE_URL}/jobs/${jobId}/files/sync`,
+  
+  // Test Commands
+  TEST_COMMANDS: `${API_BASE_URL}/test-commands`,
+  TEST_COMMAND_BY_ID: (id) => `${API_BASE_URL}/test-commands/${id}`,
+  
+  // File Tags
+  FILE_TAGS: `${API_BASE_URL}/file-tags`,
+  FILE_TAG_BY_ID: (id) => `${API_BASE_URL}/file-tags/${id}`,
+  
+  // Test Cases/Sets
+  TEST_CASES: `${API_BASE_URL}/test-management/test-cases`,
+  TEST_CASES_BY_ID: (id) => `${API_BASE_URL}/test-management/test-cases/${id}`,
+  TEST_SETS: `${API_BASE_URL}/test-management/test-sets`,
+  TEST_SETS_BY_ID: (id) => `${API_BASE_URL}/test-management/test-sets/${id}`,
+  TEST_SETS_ITEMS: (setId) => `${API_BASE_URL}/test-management/test-sets/${setId}/items`,
+  TEST_SETS_ADD_ITEM: (setId) => `${API_BASE_URL}/test-management/test-sets/${setId}/items`,
+  TEST_SETS_REMOVE_ITEM: (setId, testCaseId) => `${API_BASE_URL}/test-management/test-sets/${setId}/items/${testCaseId}`,
+  TEST_SETS_UPDATE_ITEM_ORDER: (setId, testCaseId) => `${API_BASE_URL}/test-management/test-sets/${setId}/items/${testCaseId}/order`,
   
   // File Upload
   FILE_UPLOAD: `${API_BASE_URL}/files/upload`,

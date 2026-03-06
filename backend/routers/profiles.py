@@ -1,109 +1,136 @@
-"""
-Profiles API (Option B1: no login).
-Profile id is the share key; anyone with the id can read. Write overwrites profile data.
-"""
+"""Profile management API endpoints."""
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List, Any, Optional
-from sqlalchemy import select
+from typing import Optional, Dict, Any
+from datetime import datetime
+import uuid
+
+from sqlalchemy import select, update, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from db.database import async_session
 from db.orm_models import ProfileORM
 
 router = APIRouter()
 
 
-class CreateProfileBody(BaseModel):
+class ProfileCreate(BaseModel):
     name: str
+    data: Optional[Dict[str, Any]] = None
 
 
-class ProfileDataBody(BaseModel):
-    savedTestCases: Optional[List[Any]] = None
-    savedTestCaseSets: Optional[List[Any]] = None
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
 
 
-class UpdateProfileNameBody(BaseModel):
-    name: str
-
-
-@router.post("", status_code=201)
-async def create_profile(body: CreateProfileBody):
-    """Create a new profile. Returns { id, name }. No auth; id is the share key."""
-    name = (body.name or "").strip() or "Unnamed"
+@router.get("")
+async def list_profiles():
+    """Get all profiles."""
     async with async_session() as session:
-        profile = ProfileORM(name=name, data={"savedTestCases": [], "savedTestCaseSets": []})
-        session.add(profile)
+        result = await session.execute(select(ProfileORM))
+        profiles = result.scalars().all()
+        return [
+            {
+                "id": p.id,
+                "name": p.name,
+                "data": p.data,
+                "updated_at": p.updated_at.isoformat() + "Z",
+            }
+            for p in profiles
+        ]
+
+
+@router.post("")
+async def create_profile(payload: ProfileCreate):
+    """Create a new profile."""
+    profile_id = str(uuid.uuid4())
+    async with async_session() as session:
+        orm = ProfileORM(
+            id=profile_id,
+            name=payload.name,
+            data=payload.data,
+            updated_at=datetime.utcnow(),
+        )
+        session.add(orm)
         await session.commit()
-        await session.refresh(profile)
-        return {"id": profile.id, "name": profile.name}
+        await session.refresh(orm)
+        
+        return {
+            "id": orm.id,
+            "name": orm.name,
+            "data": orm.data,
+            "updated_at": orm.updated_at.isoformat() + "Z",
+        }
 
 
 @router.get("/{profile_id}")
 async def get_profile(profile_id: str):
-    """Get profile metadata (id, name, updated_at). For display when viewing shared profile."""
-    if not profile_id.strip():
-        raise HTTPException(status_code=400, detail="profile_id required")
+    """Get a specific profile."""
     async with async_session() as session:
-        result = await session.execute(select(ProfileORM).where(ProfileORM.id == profile_id))
+        result = await session.execute(
+            select(ProfileORM).where(ProfileORM.id == profile_id)
+        )
         profile = result.scalar_one_or_none()
         if not profile:
             raise HTTPException(status_code=404, detail="Profile not found")
+        
         return {
             "id": profile.id,
             "name": profile.name,
-            "updatedAt": profile.updated_at.isoformat() + "Z" if profile.updated_at else None,
+            "data": profile.data,
+            "updated_at": profile.updated_at.isoformat() + "Z",
         }
 
 
 @router.get("/{profile_id}/data")
 async def get_profile_data(profile_id: str):
-    """Get profile data (savedTestCases, savedTestCaseSets). Read-only; for viewing shared profile."""
-    if not profile_id.strip():
-        raise HTTPException(status_code=400, detail="profile_id required")
+    """Get profile data only."""
     async with async_session() as session:
-        result = await session.execute(select(ProfileORM).where(ProfileORM.id == profile_id))
-        profile = result.scalar_one_or_none()
-        if not profile:
+        result = await session.execute(
+            select(ProfileORM.data).where(ProfileORM.id == profile_id)
+        )
+        data = result.scalar_one_or_none()
+        if data is None:
             raise HTTPException(status_code=404, detail="Profile not found")
-        data = profile.data or {}
-        return {
-            "savedTestCases": data.get("savedTestCases", []),
-            "savedTestCaseSets": data.get("savedTestCaseSets", []),
-        }
+        
+        return data
 
 
-@router.put("/{profile_id}/data")
-async def put_profile_data(profile_id: str, body: ProfileDataBody):
-    """Overwrite profile data. Used when saving from "my" profile on this device."""
-    if not profile_id.strip():
-        raise HTTPException(status_code=400, detail="profile_id required")
+@router.patch("/{profile_id}")
+async def update_profile(profile_id: str, payload: ProfileUpdate):
+    """Update a profile."""
     async with async_session() as session:
-        result = await session.execute(select(ProfileORM).where(ProfileORM.id == profile_id))
-        profile = result.scalar_one_or_none()
-        if not profile:
-            raise HTTPException(status_code=404, detail="Profile not found")
-        data = profile.data or {}
-        if body.savedTestCases is not None:
-            data["savedTestCases"] = body.savedTestCases
-        if body.savedTestCaseSets is not None:
-            data["savedTestCaseSets"] = body.savedTestCaseSets
-        profile.data = data
+        values = {}
+        if payload.name is not None:
+            values["name"] = payload.name
+        if payload.data is not None:
+            values["data"] = payload.data
+        values["updated_at"] = datetime.utcnow()
+        
+        result = await session.execute(
+            update(ProfileORM).where(ProfileORM.id == profile_id).values(**values)
+        )
         await session.commit()
-        return {"ok": True}
-
-
-@router.put("/{profile_id}")
-async def update_profile_name(profile_id: str, body: UpdateProfileNameBody):
-    """Rename profile."""
-    if not profile_id.strip():
-        raise HTTPException(status_code=400, detail="profile_id required")
-    name = (body.name or "").strip() or "Unnamed"
-    async with async_session() as session:
-        result = await session.execute(select(ProfileORM).where(ProfileORM.id == profile_id))
-        profile = result.scalar_one_or_none()
-        if not profile:
+        
+        if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Profile not found")
-        profile.name = name
+        
+        return {"success": True}
+
+
+@router.delete("/{profile_id}")
+async def delete_profile(profile_id: str):
+    """Delete a profile."""
+    async with async_session() as session:
+        result = await session.execute(
+            delete(ProfileORM).where(ProfileORM.id == profile_id)
+        )
         await session.commit()
-        return {"id": profile.id, "name": profile.name}
+        
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        
+        return {"success": True}

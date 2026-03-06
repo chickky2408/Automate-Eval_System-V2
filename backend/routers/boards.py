@@ -234,6 +234,46 @@ async def batch_action(request: BatchActionRequest):
     return {"success": True, "results": results}
 
 
+@router.post("/{board_id}/pause-queue")
+async def pause_board_queue(board_id: str):
+    """Pause queue for a specific board."""
+    board = await board_manager.get_board(board_id)
+    if not board:
+        raise HTTPException(status_code=404, detail=f"Board {board_id} not found")
+    
+    # Set board to a "paused" state (or use tag)
+    updated = await board_manager.update_board(board_id, {"tag": "paused"})
+    if not updated:
+        raise HTTPException(status_code=400, detail="Failed to pause board queue")
+    
+    return {"success": True, "message": f"Queue paused for board {board_id}"}
+
+
+@router.post("/{board_id}/resume-queue")
+async def resume_board_queue(board_id: str):
+    """Resume queue for a specific board."""
+    board = await board_manager.get_board(board_id)
+    if not board:
+        raise HTTPException(status_code=404, detail=f"Board {board_id} not found")
+    
+    # Remove "paused" tag
+    updated = await board_manager.update_board(board_id, {"tag": None})
+    if not updated:
+        raise HTTPException(status_code=400, detail="Failed to resume board queue")
+    
+    return {"success": True, "message": f"Queue resumed for board {board_id}"}
+
+
+@router.post("/{board_id}/shutdown")
+async def shutdown_board(board_id: str):
+    """Shutdown a board."""
+    success = await board_manager.reboot_board(board_id)  # Use reboot for now
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to shutdown board")
+    
+    return {"success": True, "message": f"Board {board_id} shutdown initiated"}
+
+
 @router.delete("/{board_id}")
 async def delete_board(board_id: str):
     success = await board_manager.delete_board(board_id)

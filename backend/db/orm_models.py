@@ -43,6 +43,7 @@ class JobORM(Base):
     firmware_filename = Column(String(255), nullable=True)
 
     target_board_id = Column(String(32), nullable=True)
+    target_board_ids = Column(JSON, nullable=True)  # For broadcast mode
     assigned_board_id = Column(String(32), nullable=True)
     priority = Column(Integer, default=0)
     queue_position = Column(Integer, default=0)
@@ -57,6 +58,12 @@ class JobORM(Base):
     current_step = Column(String(255), nullable=True)
     error_message = Column(Text, nullable=True)
     
+    # Frontend metadata columns
+    tag = Column(String(255), nullable=True)
+    client_id = Column(String(128), nullable=True)
+    config_name = Column(String(255), nullable=True)
+    pairs_data = Column(JSON, nullable=True)
+    
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     started_at = Column(DateTime, nullable=True)
@@ -68,9 +75,9 @@ class ResultORM(Base):
     __tablename__ = "results"
 
     id = Column(String(32), primary_key=True)
-    job_id = Column(String(32), nullable=False)
+    job_id = Column(String(32), ForeignKey("jobs.id"), nullable=False)
     job_name = Column(String(255), nullable=False)
-    board_id = Column(String(32), nullable=False)
+    board_id = Column(String(32), ForeignKey("boards.id"), nullable=False)
     board_name = Column(String(255), nullable=False)
     passed = Column(Boolean, nullable=False)
     
@@ -124,3 +131,96 @@ class BoardORM(Base):
     last_heartbeat = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TestCaseORM(Base):
+    """Test case definitions."""
+    __tablename__ = "test_cases"
+
+    id = Column(String(32), primary_key=True)
+    name = Column(String(255), nullable=False)
+    vcd_file_id = Column(String(36), ForeignKey("files.id"), nullable=True)
+    firmware_filename = Column(String(255), nullable=True)
+    tags = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TestSetORM(Base):
+    """Test sets (suites)."""
+    __tablename__ = "test_sets"
+
+    id = Column(String(32), primary_key=True)
+    name = Column(String(255), nullable=False)
+    tags = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TestSetItemORM(Base):
+    """Link table for Test Sets → Test Cases."""
+    __tablename__ = "test_set_items"
+
+    id = Column(String(32), primary_key=True)
+    test_set_id = Column(String(32), ForeignKey("test_sets.id"), nullable=False)
+    test_case_id = Column(String(32), ForeignKey("test_cases.id"), nullable=False)
+    execution_order = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class NotificationORM(Base):
+    """User notifications."""
+    __tablename__ = "notifications"
+
+    id = Column(String(32), primary_key=True)
+    user_id = Column(String(128), nullable=True)  # null = broadcast to all
+    type = Column(String(50), nullable=False)  # job_completed, error, etc.
+    title = Column(String(255), nullable=False)
+    message = Column(Text, nullable=True)
+    data = Column(JSON, nullable=True)
+    read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TestCommandORM(Base):
+    """User test commands."""
+    __tablename__ = "test_commands"
+
+    id = Column(String(32), primary_key=True)
+    user_id = Column(String(128), nullable=True)  # null = shared commands
+    name = Column(String(255), nullable=False)
+    command = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class FileTagORM(Base):
+    """File tags for categorization."""
+    __tablename__ = "file_tags"
+
+    id = Column(String(32), primary_key=True)
+    user_id = Column(String(128), nullable=True)  # null = shared tags
+    tag = Column(String(100), nullable=False)
+    color = Column(String(7), default="#000000")  # Hex color code
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class JobFileORM(Base):
+    """Job files - files within a job."""
+    __tablename__ = "job_files"
+
+    id = Column(String(32), primary_key=True)
+    job_id = Column(String(32), ForeignKey("jobs.id"), nullable=False)
+    name = Column(String(255), nullable=False)
+    status = Column(String(32), default="pending")
+    result = Column(String(32), nullable=True)  # pass, fail, stopped
+    order = Column(Integer, nullable=False)
+    vcd = Column(String(255), nullable=True)  # VCD file name
+    erom = Column(String(255), nullable=True)  # ERoM (BIN) file name
+    ulp = Column(String(255), nullable=True)  # ULP (LIN) file name
+    try_count = Column(Integer, nullable=True)  # Number of test rounds
+    test_case_name = Column(String(255), nullable=True)  # Display name (e.g. from set)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

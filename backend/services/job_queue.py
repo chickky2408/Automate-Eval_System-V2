@@ -45,7 +45,10 @@ class JobQueueService:
             name=orm.name,
             vcd_filename=orm.vcd_filename, # Legacy support
             firmware_filename=orm.firmware_filename, # Legacy support
+            vcd_file_id=orm.vcd_file_id, # File ID
+            firmware_file_id=orm.firmware_file_id, # File ID
             target_board_id=orm.target_board_id,
+            target_board_ids=orm.target_board_ids,  # For broadcast mode
             assigned_board_id=orm.assigned_board_id,
             priority=orm.priority,
             timeout_seconds=orm.timeout_seconds,
@@ -61,7 +64,22 @@ class JobQueueService:
             created_at=orm.created_at,
             started_at=orm.started_at,
             completed_at=orm.completed_at,
+            tag=orm.tag,  # Frontend metadata
+            client_id=orm.client_id,  # Frontend metadata
+            config_name=orm.config_name,  # Frontend metadata
+            pairs_data=orm.pairs_data,  # Frontend metadata
         )
+
+    async def _resolve_file_id(self, filename: Optional[str]) -> Optional[str]:
+        """Resolve file ID from filename."""
+        if not filename:
+            return None
+        from services.file_store import file_store
+        files = await file_store.list_files()
+        for f in files:
+            if f["name"] == filename:
+                return f["id"]
+        return None
 
     async def get_all_jobs(self) -> List[Job]:
         """Get all jobs in queue order."""
@@ -85,6 +103,10 @@ class JobQueueService:
         """Add a new job to the queue."""
         job_id = str(uuid.uuid4())[:8]
         
+        # Resolve file IDs
+        vcd_file_id = await self._resolve_file_id(job_data.vcd_filename)
+        firmware_file_id = await self._resolve_file_id(job_data.firmware_filename)
+        
         async with async_session() as session:
             # Get max queue position
             result = await session.execute(
@@ -92,13 +114,15 @@ class JobQueueService:
             )
             max_pos = result.scalar() or 0
             
-            # TODO: Map filenames to IDs if possible, for now duplicate to legacy
             orm = JobORM(
                 id=job_id,
                 name=job_data.name,
-                vcd_filename=job_data.vcd_filename, # TODO: Use FileID
-                firmware_filename=job_data.firmware_filename, # TODO: Use FileID
+                vcd_file_id=vcd_file_id,  # Use file ID
+                firmware_file_id=firmware_file_id,  # Use file ID
+                vcd_filename=job_data.vcd_filename,  # Keep for backward compatibility
+                firmware_filename=job_data.firmware_filename,  # Keep for backward compatibility
                 target_board_id=job_data.target_board_id,
+                target_board_ids=job_data.target_board_ids,  # For broadcast mode
                 priority=job_data.priority,
                 queue_position=max_pos + 1,
                 timeout_seconds=job_data.timeout_seconds,
@@ -107,6 +131,11 @@ class JobQueueService:
                 save_to_db=job_data.save_to_db,
                 state="pending",
                 progress=0,
+                # Frontend metadata
+                tag=getattr(job_data, 'tag', None),
+                client_id=getattr(job_data, 'client_id', None),
+                config_name=getattr(job_data, 'config_name', None),
+                pairs_data=getattr(job_data, 'pairs_data', None),
                 created_at=datetime.utcnow(),
             )
             session.add(orm)
@@ -230,10 +259,103 @@ class JobQueueService:
                 print(f"[JobQueue] Loop Error: {e}")
                 await asyncio.sleep(1)
 
+    async def _execute_job_on_board(self, job: Job, board_id: str, board_name: str):
+        """Execute a job on a specific board."""
+        print(f"[JobQueue] Executing job {job.id} on board {board_id}")
+
+        try:
+            # 1. Start Execution
+            await self.update_job_status(
+                job.id, JobState.CONFIGURING, 10, "Initializing board...",
+                assigned_board_id=board_id, started_at=datetime.utcnow()
+            )
+
+            # TODO: Resolve file paths from DB if passing ID
+            # vcd_path = ...
+            
+            # 2. Flash Firmware (if needed)
+            if job.firmware_filename:
+                await self.update_job_status(job.id, JobState.FLASHING, 30, "Programming EROM...")
+                # await board_manager.flash_firmware(board_id, job.firmware_filename)
+
+            # 3. Run Test
+            await self.update_job_status(job.id, JobState.RUNNING, 50, "Executing test...")
+            
+            # NOTE: For now still simulating the Agent Call until Agent API is fully integrated
+            await asyncio.sleep(2)
+            
+            # 4. Save Result (Mock Result for now)
+            result = TestResult(
+                id=uuid.uuid4().hex,
+                job_id=job.id,
+                job_name=job.name,
+                board_id=board_id,
+                board_name=board_name,
+                passed=True,
+                started_at=datetime.utcnow(),
+                completed_at=datetime.utcnow(),
+                duration_seconds=5.0,
+                vcd_filename=job.vcd_filename,
+                firmware_filename=job.firmware_filename,
+                packet_count=1000,
+                crc_errors=0
+            )
+            await result_store.add_result(result)
+
+            # 5. Complete
+            await self.update_job_status(
+                job.id, JobState.COMPLETED, 100, "Done",
+                completed_at=datetime.utcnow()
+            )
+            print(f"[JobQueue] Job {job.id} on board {board_id} completed successfully")
+
+        except Exception as e:
+            await self.update_job_status(
+                job.id, JobState.FAILED, 0, None, str(e),
+                completed_at=datetime.utcnow()
+            )
+            print(f"[JobQueue] Job {job.id} on board {board_id} failed: {e}")
+
     async def _execute_job(self, job: Job):
-        """Execute a single job (Real Implementation)."""
+        """Execute a job (supports broadcast mode)."""
         print(f"[JobQueue] Executing job: {job.name}")
 
+        # Check for broadcast mode (multiple boards)
+        if job.target_board_ids and len(job.target_board_ids) > 0:
+            print(f"[JobQueue] Broadcast mode: executing on {len(job.target_board_ids)} boards")
+            
+            # Execute on all specified boards in parallel
+            tasks = []
+            for board_id in job.target_board_ids:
+                # Get available board info (checks if board is online)
+                board = await board_manager.get_available_board(target_board_id=board_id)
+                if not board:
+                    print(f"[JobQueue] Board {board_id} not available, skipping")
+                    continue
+                
+                # Lock board
+                await board_manager.set_board_busy(board.id, job.id)
+                
+                # Create task for this board
+                task = self._execute_job_on_board(job, board.id, board.name)
+                tasks.append((task, board.id))
+            
+            if not tasks:
+                print(f"[JobQueue] No available boards for broadcast job {job.id}")
+                await asyncio.sleep(5)  # Wait before retrying logic or skipping
+                return
+            
+            # Execute all tasks and handle cleanup
+            try:
+                await asyncio.gather(*[task for task, _ in tasks])
+            finally:
+                # Release all boards
+                for _, board_id in tasks:
+                    await board_manager.set_board_idle(board_id)
+            
+            return
+
+        # Single board mode (targeted or auto-assign)
         # 1. Find available board
         if job.target_board_id:
             board = await board_manager.get_available_board(target_board_id=job.target_board_id)
@@ -249,57 +371,8 @@ class JobQueueService:
         await board_manager.set_board_busy(board.id, job.id)
 
         try:
-            # 3. Start Execution
-            await self.update_job_status(
-                job.id, JobState.CONFIGURING, 10, "Initializing board...",
-                assigned_board_id=board.id, started_at=datetime.utcnow()
-            )
-
-            # TODO: Resolve file paths from DB if passing ID
-            # vcd_path = ...
-            
-            # 4. Flash Firmware (if needed)
-            if job.firmware_filename:
-                await self.update_job_status(job.id, JobState.FLASHING, 30, "Programming EROM...")
-                # await board_manager.flash_firmware(board.id, job.firmware_filename)
-
-            # 5. Run Test
-            await self.update_job_status(job.id, JobState.RUNNING, 50, "Executing test...")
-            
-            # NOTE: For now still simulating the Agent Call until Agent API is fully integrated
-            await asyncio.sleep(2) 
-            
-            # 6. Save Result (Mock Result for now)
-            result = TestResult(
-                id=uuid.uuid4().hex,
-                job_id=job.id,
-                job_name=job.name,
-                board_id=board.id,
-                board_name=board.name,
-                passed=True,
-                started_at=datetime.utcnow(),
-                completed_at=datetime.utcnow(),
-                duration_seconds=5.0,
-                vcd_filename=job.vcd_filename,
-                firmware_filename=job.firmware_filename,
-                packet_count=1000,
-                crc_errors=0
-            )
-            await result_store.add_result(result)
-
-            # 7. Complete
-            await self.update_job_status(
-                job.id, JobState.COMPLETED, 100, "Done",
-                completed_at=datetime.utcnow()
-            )
-            print(f"[JobQueue] Job {job.id} completed successfully")
-
-        except Exception as e:
-            await self.update_job_status(
-                job.id, JobState.FAILED, 0, None, str(e),
-                completed_at=datetime.utcnow()
-            )
-            print(f"[JobQueue] Job {job.id} failed: {e}")
+            # 3. Execute on the board
+            await self._execute_job_on_board(job, board.id, board.name)
 
         finally:
             await board_manager.set_board_idle(board.id)
