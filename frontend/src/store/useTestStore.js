@@ -56,6 +56,7 @@ const ACTIVE_PROFILE_ID_KEY = 'app_active_profile_id';
 const PROFILE_DATA_PREFIX = 'app_profile_';
 const FILE_TAGS_KEY = 'app_file_tags';
 const SHARED_PROFILES_KEY = 'app_shared_profiles';
+const RUN_BOARD_SELECTION_KEY = 'app_run_board_selection';
 
 // True if profile id is a backend UUID (can sync / share)
 const isBackendProfileId = (id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(id || ''));
@@ -80,6 +81,32 @@ const saveProfilesList = (list) => {
     localStorage.setItem(PROFILES_LIST_KEY, JSON.stringify(list));
   } catch (e) {
     console.error('Failed to save profiles list', e);
+  }
+};
+
+const loadRunBoardSelection = () => {
+  try {
+    const saved = localStorage.getItem(RUN_BOARD_SELECTION_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed && typeof parsed.mode === 'string' && Array.isArray(parsed.boardIds)) {
+        return { mode: parsed.mode === 'manual' ? 'manual' : 'auto', boardIds: parsed.boardIds };
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load run board selection', e);
+  }
+  return { mode: 'auto', boardIds: [] };
+};
+
+const saveRunBoardSelection = (data) => {
+  try {
+    localStorage.setItem(RUN_BOARD_SELECTION_KEY, JSON.stringify({
+      mode: data.mode === 'manual' ? 'manual' : 'auto',
+      boardIds: Array.isArray(data.boardIds) ? data.boardIds : [],
+    }));
+  } catch (e) {
+    console.error('Failed to save run board selection', e);
   }
 };
 
@@ -370,6 +397,19 @@ export const useTestStore = create((set, get) => ({
     firmware: null
   },
   selectedBoards: [],
+  // Persisted board selection for Run Set / Create Batch (mode + boardIds); load/save to localStorage
+  runBoardSelection: (() => loadRunBoardSelection())(),
+  setRunBoardSelection: (payload) => {
+    set((state) => {
+      const next = typeof payload === 'function' ? payload(state.runBoardSelection) : payload;
+      const data = {
+        mode: next?.mode === 'manual' ? 'manual' : 'auto',
+        boardIds: Array.isArray(next?.boardIds) ? next.boardIds : (state.runBoardSelection?.boardIds ?? []),
+      };
+      saveRunBoardSelection(data);
+      return { runBoardSelection: data };
+    });
+  },
   selectedJobFilter: 'all', // 'all' | 'my'
   loading: {
     systemHealth: false,
@@ -1379,14 +1419,33 @@ export const useTestStore = create((set, get) => ({
           const nowDone = j.status === 'completed' || j.status === 'stopped';
           return wasRunning && nowDone;
         });
-        const newLocal = justFinished.map((j) => ({
-          id: `local-${j.id}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          title: j.status === 'completed' ? 'Batch completed' : 'Batch stopped',
-          message: `Batch #${j.id} (${j.name || 'Unnamed'}) ${j.status === 'completed' ? 'finished successfully.' : 'was stopped.'}`,
-          type: j.status === 'completed' ? 'success' : 'info',
-          read: false,
-          createdAt: new Date().toISOString(),
-        }));
+        const now = new Date().toISOString();
+        const newLocal = [];
+        justFinished.forEach((j) => {
+          newLocal.push({
+            id: `local-${j.id}-batch-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            title: j.status === 'completed' ? 'Batch completed' : 'Batch stopped',
+            message: `Batch #${j.id} (${j.name || 'Unnamed'}) ${j.status === 'completed' ? 'finished successfully.' : 'was stopped.'}`,
+            type: j.status === 'completed' ? 'success' : 'info',
+            read: false,
+            createdAt: now,
+          });
+          (j.files || []).forEach((file, idx) => {
+            const result = (file.result || '').toLowerCase();
+            const isFail = result === 'fail' || (file.status || '').toLowerCase() === 'error';
+            if (result === 'pass' || isFail) {
+              const name = file.testCaseName || file.name || `Test case #${idx + 1}`;
+              newLocal.push({
+                id: `local-${j.id}-file-${idx}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                title: result === 'pass' ? 'Test case passed' : 'Test case failed',
+                message: `${name} — ${result === 'pass' ? 'Passed' : 'Failed'} (Set: ${j.name || j.configName || `#${j.id}`})`,
+                type: result === 'pass' ? 'success' : 'error',
+                read: false,
+                createdAt: now,
+              });
+            }
+          });
+        });
         const localNotifications = [...newLocal, ...(state.localNotifications || [])];
         return { jobs: data, localNotifications };
       });
@@ -1412,14 +1471,33 @@ export const useTestStore = create((set, get) => ({
           const nowDone = j.status === 'completed' || j.status === 'stopped';
           return wasRunning && nowDone;
         });
-        const newLocal = justFinished.map((j) => ({
-          id: `local-${j.id}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          title: j.status === 'completed' ? 'Batch completed' : 'Batch stopped',
-          message: `Batch #${j.id} (${j.name || 'Unnamed'}) ${j.status === 'completed' ? 'finished successfully.' : 'was stopped.'}`,
-          type: j.status === 'completed' ? 'success' : 'info',
-          read: false,
-          createdAt: new Date().toISOString(),
-        }));
+        const now = new Date().toISOString();
+        const newLocal = [];
+        justFinished.forEach((j) => {
+          newLocal.push({
+            id: `local-${j.id}-batch-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            title: j.status === 'completed' ? 'Batch completed' : 'Batch stopped',
+            message: `Batch #${j.id} (${j.name || 'Unnamed'}) ${j.status === 'completed' ? 'finished successfully.' : 'was stopped.'}`,
+            type: j.status === 'completed' ? 'success' : 'info',
+            read: false,
+            createdAt: now,
+          });
+          (j.files || []).forEach((file, idx) => {
+            const result = (file.result || '').toLowerCase();
+            const isFail = result === 'fail' || (file.status || '').toLowerCase() === 'error';
+            if (result === 'pass' || isFail) {
+              const name = file.testCaseName || file.name || `Test case #${idx + 1}`;
+              newLocal.push({
+                id: `local-${j.id}-file-${idx}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                title: result === 'pass' ? 'Test case passed' : 'Test case failed',
+                message: `${name} — ${result === 'pass' ? 'Passed' : 'Failed'} (Set: ${j.name || j.configName || `#${j.id}`})`,
+                type: result === 'pass' ? 'success' : 'error',
+                read: false,
+                createdAt: now,
+              });
+            }
+          });
+        });
         const localNotifications = [...newLocal, ...(state.localNotifications || [])];
         return { jobs: data, localNotifications };
       });
@@ -1543,6 +1621,12 @@ export const useTestStore = create((set, get) => ({
       return created;
     } catch (error) {
       console.error('Failed to create job', error);
+      const d = error?.detail;
+      if (error?.status === 409 && d?.code === 'FILE_MODIFIED') {
+        const msg = d.message || 'One or more files were modified after upload.';
+        const files = Array.isArray(d.files) && d.files.length ? ` (${d.files.join(', ')})` : '';
+        get().addToast({ type: 'error', message: msg + files, duration: 8000 });
+      }
       return null;
     }
   },
@@ -1573,11 +1657,24 @@ export const useTestStore = create((set, get) => ({
   startPendingJobs: async () => {
     try {
       const jobs = get().jobs.filter(j => j.status === 'pending');
-      await Promise.allSettled(jobs.map((job) => api.startJob(job.id)));
+      const results = await Promise.allSettled(jobs.map((job) => api.startJob(job.id)));
+      const fileModified = results.find((r) => r.status === 'rejected' && r.reason?.status === 409 && r.reason?.detail?.code === 'FILE_MODIFIED');
+      if (fileModified) {
+        const d = fileModified.reason?.detail;
+        const msg = d?.message || 'One or more files were modified after upload.';
+        const files = Array.isArray(d?.files) && d.files.length ? ` (${d.files.join(', ')})` : '';
+        get().addToast({ type: 'error', message: msg + files, duration: 8000 });
+      }
       await get().refreshJobs();
       return true;
     } catch (error) {
       console.error('Failed to start pending jobs', error);
+      const d = error?.detail;
+      if (error?.status === 409 && d?.code === 'FILE_MODIFIED') {
+        const msg = d.message || 'One or more files were modified after upload.';
+        const files = Array.isArray(d.files) && d.files.length ? ` (${d.files.join(', ')})` : '';
+        get().addToast({ type: 'error', message: msg + files, duration: 8000 });
+      }
       return false;
     }
   },
@@ -1617,7 +1714,7 @@ export const useTestStore = create((set, get) => ({
     const jobs = [...state.jobs];
     const [moved] = jobs.splice(idx, 1);
     jobs.splice(idx - 1, 0, moved);
-    const newPosition = idx;
+    const newPosition = idx - 1; // 0-based index after move
     void api.reorderJob(jobId, newPosition)
       .then(() => get().refreshJobs())
       .catch((error) => console.error('Failed to reorder job', error));
@@ -1629,12 +1726,27 @@ export const useTestStore = create((set, get) => ({
     const jobs = [...state.jobs];
     const [moved] = jobs.splice(idx, 1);
     jobs.splice(idx + 1, 0, moved);
-    const newPosition = idx + 2;
+    const newPosition = idx + 1; // 0-based index after move
     void api.reorderJob(jobId, newPosition)
       .then(() => get().refreshJobs())
       .catch((error) => console.error('Failed to reorder job', error));
     return { jobs };
   }),
+  /** Move a job to a specific index (e.g. from drag-and-drop). allJobs = current list order. */
+  moveJobToIndex: (jobId, toIndex, allJobs) => {
+    const jobs = Array.isArray(allJobs) ? [...allJobs] : [...get().jobs];
+    const fromIndex = jobs.findIndex(j => j.id === jobId);
+    if (fromIndex === -1 || fromIndex === toIndex) return;
+    const [moved] = jobs.splice(fromIndex, 1);
+    jobs.splice(toIndex, 0, moved);
+    set({ jobs });
+    void api.reorderJob(jobId, toIndex)
+      .then(() => get().refreshJobs())
+      .catch((error) => {
+        console.error('Failed to reorder job', error);
+        get().refreshJobs();
+      });
+  },
   deleteJob: async (jobId) => {
     try {
       await api.deleteJob(jobId);
@@ -1646,8 +1758,12 @@ export const useTestStore = create((set, get) => ({
     }
   },
 
-  /** Create a new batch with only the failed file(s) from a job and start it (moves to Running). */
-  rerunFailedFiles: async (jobId, fileIds = null) => {
+  /** Create a new batch with only the failed file(s) from a job and start it (moves to Running).
+   * @param {string} jobId
+   * @param {string[]|null} fileIds - optional: only these file ids (must be failed); null = all failed
+   * @param {{ vcd: string, erom?: string, ulp?: string }[]|null} fileSelections - optional: per-file VCD/ERoM/ULP overrides (same order as failedFiles)
+   */
+  rerunFailedFiles: async (jobId, fileIds = null, fileSelections = null) => {
     try {
       const job = get().jobs.find(j => j.id === jobId);
       if (!job || !job.files?.length) {
@@ -1662,14 +1778,18 @@ export const useTestStore = create((set, get) => ({
         get().addToast({ type: 'warning', message: 'No failed test cases to re-run.' });
         return null;
       }
-      const filesPayload = failedFiles.map((f, i) => ({
-        name: f.name || `test_${i + 1}`,
-        order: i + 1,
-        vcd: f.vcd ?? f.name,
-        erom: f.erom ?? undefined,
-        ulp: f.ulp ?? undefined,
-        try_count: f.try_count ?? f.try ?? 1,
-      }));
+      const filesPayload = failedFiles.map((f, i) => {
+        const sel = Array.isArray(fileSelections) && fileSelections[i] ? fileSelections[i] : null;
+        const vcdVal = (sel?.vcd ?? f.vcd ?? f.name ?? `test_${i + 1}`).toString().trim() || f.name || `test_${i + 1}`;
+        return {
+          name: vcdVal,
+          order: i + 1,
+          vcd: vcdVal,
+          erom: (sel?.erom !== undefined && sel?.erom !== '' ? sel.erom : f.erom) ?? undefined,
+          ulp: (sel?.ulp !== undefined && sel?.ulp !== '' ? sel.ulp : f.ulp) ?? undefined,
+          try_count: f.try_count ?? f.try ?? 1,
+        };
+      });
       const baseName = (job.configName || job.name || 'Batch').trim();
       const payload = {
         name: `${baseName} (Re-run failed)`,
@@ -1694,7 +1814,14 @@ export const useTestStore = create((set, get) => ({
       return created;
     } catch (error) {
       console.error('Failed to re-run failed files', error);
-      get().addToast({ type: 'error', message: 'Failed to re-run failed test cases.' });
+      const d = error?.detail;
+      if (error?.status === 409 && d?.code === 'FILE_MODIFIED') {
+        const msg = d.message || 'One or more files were modified after upload.';
+        const files = Array.isArray(d.files) && d.files.length ? ` (${d.files.join(', ')})` : '';
+        get().addToast({ type: 'error', message: msg + files, duration: 8000 });
+      } else {
+        get().addToast({ type: 'error', message: 'Failed to re-run failed test cases.' });
+      }
       return null;
     }
   },

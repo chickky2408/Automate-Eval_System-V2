@@ -124,13 +124,21 @@ class JobQueueService:
             return result.rowcount > 0
 
     async def reorder_job(self, job_id: str, new_position: int) -> bool:
-        """Move a job to a new position."""
+        """Move a job to a new position (0-based index). Reassigns queue_position for all jobs."""
         async with async_session() as session:
             result = await session.execute(
-                update(JobORM).where(JobORM.id == job_id).values(queue_position=new_position)
+                select(JobORM).order_by(JobORM.priority.desc(), JobORM.queue_position)
             )
+            jobs = list(result.scalars().all())
+            idx = next((i for i, j in enumerate(jobs) if j.id == job_id), -1)
+            if idx < 0 or new_position < 0 or new_position >= len(jobs):
+                return False
+            moved = jobs.pop(idx)
+            jobs.insert(new_position, moved)
+            for i, orm in enumerate(jobs):
+                orm.queue_position = i
             await session.commit()
-            return result.rowcount > 0
+            return True
 
     async def update_job_meta(
         self, job_id: str, *, name: Optional[str] = None,

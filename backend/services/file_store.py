@@ -214,6 +214,20 @@ class FileStore:
         async with aiofiles.open(path, "rb") as f:
             return await f.read()
 
+    async def verify_file_checksum(self, file_id: str) -> bool:
+        """Verify that file on disk still matches stored checksum. Returns True if OK, False if modified or missing."""
+        rec = await self.get_file(file_id)
+        if not rec or not rec.get("path"):
+            return False
+        stored = rec.get("checksum")
+        if not stored:
+            return True  # no checksum to verify
+        path = rec["path"]
+        if not os.path.exists(path):
+            return False
+        current = await self.calculate_checksum(path)
+        return current == stored
+
     async def delete_files_by_set_id(self, set_id: str) -> int:
         """Delete all files for this set (from DB and disk). Returns count deleted."""
         async with async_session() as session:

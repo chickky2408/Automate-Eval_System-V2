@@ -12,6 +12,7 @@ from models.job import JobCreate, JobState
 from services.job_queue import job_queue_service
 from services.fe_job_store import fe_job_store
 from services.board_manager import board_manager
+from services.file_store import file_store
 
 router = APIRouter()
 
@@ -241,10 +242,40 @@ async def update_job(job_id: str, payload: JobCreatePayload):
 
 @router.post("/{job_id}/start")
 async def start_job(job_id: str):
-    """Start a job (mock)."""
+    """Start a job. Verifies that referenced files have not been modified on disk since upload."""
     job = await job_queue_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    fe_job_store.ensure_meta(job.id, default_file_name=job.vcd_filename)
+    job_files = fe_job_store.list_files(job.id)
+    file_names = set()
+    for f in job_files:
+        if getattr(f, "vcd", None):
+            file_names.add(f.vcd)
+        if getattr(f, "erom", None):
+            file_names.add(f.erom)
+        if getattr(f, "ulp", None):
+            file_names.add(f.ulp)
+
+    modified = []
+    if file_names:
+        library = await file_store.list_files(set_id=None)
+        name_to_id = {f["name"]: f["id"] for f in library}
+        for name in file_names:
+            fid = name_to_id.get(name)
+            if fid and not await file_store.verify_file_checksum(fid):
+                modified.append(name)
+        if modified:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "FILE_MODIFIED",
+                    "message": "One or more files were modified after upload. Re-upload or restore files before running.",
+                    "files": modified,
+                },
+            )
+
     await job_queue_service.update_job_status(
         job_id, JobState.RUNNING, progress=0, started_at=datetime.utcnow()
     )
