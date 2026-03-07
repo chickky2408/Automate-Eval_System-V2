@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import os
 
-from routers import boards, jobs, results, system, files, notifications, ws, agent, sets, profiles
+from routers import boards, jobs, results, system, files, notifications, ws, agent, sets, profiles, test_cases, test_commands, job_files
 from services.job_queue import job_queue_service
 from db.database import init_db
 
@@ -78,6 +78,9 @@ app.include_router(files.router, prefix="/api/files", tags=["Files"])
 app.include_router(sets.router, prefix="/api/sets", tags=["Sets"])
 app.include_router(profiles.router, prefix="/api/profiles", tags=["Profiles"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
+app.include_router(test_cases.router, prefix="/api/test-management", tags=["Test Management"])
+app.include_router(test_commands.router, prefix="/api/test-commands", tags=["Test Commands"])
+app.include_router(job_files.router, prefix="/api/jobs", tags=["Job Files"])
 app.include_router(agent.router, prefix="/api/agent", tags=["Agent"])
 app.include_router(ws.router, tags=["WebSocket"])
 

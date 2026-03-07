@@ -1,61 +1,152 @@
 """
-In-memory notification store.
+Notification Store Service with Database persistence.
 """
 from __future__ import annotations
 
 from typing import List, Optional
 from datetime import datetime
+import uuid
+
+from sqlalchemy import select, update, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from db.database import async_session
+from db.orm_models import NotificationORM
 
 
 class NotificationStore:
+    """Manages notifications with database persistence."""
+
     def __init__(self) -> None:
-        self._notifications: List[dict] = []
-        self._next_id = 1
-        self._seed_defaults()
+        pass  # Database-backed, no in-memory state
 
-    def _seed_defaults(self) -> None:
-        self.add_notification(
-            title="System Ready",
-            message="Backend service is running",
-            notif_type="info",
-        )
+    async def add_notification(
+        self,
+        title: str,
+        message: str,
+        notif_type: str,
+        user_id: Optional[str] = None,
+        data: Optional[dict] = None,
+    ) -> dict:
+        """Add a new notification."""
+        notification_id = str(uuid.uuid4())
+        
+        async with async_session() as session:
+            orm = NotificationORM(
+                id=notification_id,
+                user_id=user_id,
+                type=notif_type,
+                title=title,
+                message=message,
+                data=data,
+                read=False,
+                created_at=datetime.utcnow(),
+            )
+            session.add(orm)
+            await session.commit()
+            await session.refresh(orm)
+            
+            return {
+                "id": orm.id,
+                "userId": orm.user_id,
+                "type": orm.type,
+                "title": orm.title,
+                "message": orm.message,
+                "data": orm.data,
+                "read": orm.read,
+                "createdAt": orm.created_at.isoformat() + "Z",
+            }
 
-    def add_notification(self, title: str, message: str, notif_type: str) -> dict:
-        record = {
-            "id": self._next_id,
-            "title": title,
-            "message": message,
-            "time": "just now",
-            "type": notif_type,
-            "read": False,
-            "createdAt": datetime.utcnow().isoformat() + "Z",
-        }
-        self._next_id += 1
-        self._notifications.insert(0, record)
-        return record
+    async def list_notifications(
+        self,
+        read: Optional[bool] = None,
+        limit: Optional[int] = None,
+        user_id: Optional[str] = None,
+    ) -> List[dict]:
+        """List notifications."""
+        async with async_session() as session:
+            query = select(NotificationORM).order_by(NotificationORM.created_at.desc())
+            
+            if user_id:
+                query = query.where(
+                    (NotificationORM.user_id == user_id) | (NotificationORM.user_id.is_(None))
+                )
+            
+            if read is not None:
+                query = query.where(NotificationORM.read == read)
+            
+            if limit:
+                query = query.limit(limit)
+            
+            result = await session.execute(query)
+            notifications = result.scalars().all()
+            
+            return [
+                {
+                    "id": n.id,
+                    "userId": n.user_id,
+                    "type": n.type,
+                    "title": n.title,
+                    "message": n.message,
+                    "data": n.data,
+                    "read": n.read,
+                    "createdAt": n.created_at.isoformat() + "Z",
+                }
+                for n in notifications
+            ]
 
-    def list_notifications(self, read: Optional[bool] = None, limit: Optional[int] = None) -> List[dict]:
-        records = self._notifications
-        if read is not None:
-            records = [n for n in records if n["read"] == read]
-        if limit is not None:
-            records = records[:limit]
-        return records
+    async def mark_read(self, notif_id: str) -> Optional[dict]:
+        """Mark a notification as read."""
+        async with async_session() as session:
+            result = await session.execute(
+                update(NotificationORM)
+                .where(NotificationORM.id == notif_id)
+                .values(read=True)
+            )
+            await session.commit()
+            
+            if result.rowcount == 0:
+                return None
+            
+            # Get the updated record
+            result = await session.execute(
+                select(NotificationORM).where(NotificationORM.id == notif_id)
+            )
+            orm = result.scalar_one_or_none()
+            
+            return {
+                "id": orm.id,
+                "userId": orm.user_id,
+                "type": orm.type,
+                "title": orm.title,
+                "message": orm.message,
+                "data": orm.data,
+                "read": orm.read,
+                "createdAt": orm.created_at.isoformat() + "Z",
+            }
 
-    def mark_read(self, notif_id: int) -> Optional[dict]:
-        for record in self._notifications:
-            if record["id"] == notif_id:
-                record["read"] = True
-                return record
-        return None
+    async def mark_all_read(self, user_id: Optional[str] = None) -> int:
+        """Mark all notifications as read."""
+        async with async_session() as session:
+            query = update(NotificationORM).values(read=True)
+            
+            if user_id:
+                query = query.where(NotificationORM.user_id == user_id)
+            
+            result = await session.execute(query)
+            await session.commit()
+            
+            return result.rowcount
 
-    def mark_all_read(self) -> int:
-        count = 0
-        for record in self._notifications:
-            if not record["read"]:
-                record["read"] = True
-                count += 1
-        return count
+    async def delete_notification(self, notif_id: str) -> bool:
+        """Delete a notification."""
+        async with async_session() as session:
+            result = await session.execute(
+                delete(NotificationORM).where(NotificationORM.id == notif_id)
+            )
+            await session.commit()
+            
+            return result.rowcount > 0
 
 
 notification_store = NotificationStore()

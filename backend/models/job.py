@@ -29,11 +29,17 @@ class JobCreate(BaseModel):
     vcd_filename: str
     firmware_filename: Optional[str] = None
     target_board_id: Optional[str] = None  # None = auto-assign
+    target_board_ids: Optional[List[str]] = None  # For broadcast mode
     priority: int = 0  # Higher = more priority
     timeout_seconds: int = 60
     retries: int = 0
     enable_picoscope: bool = False
     save_to_db: bool = True
+    # Frontend metadata
+    tag: Optional[str] = None
+    client_id: Optional[str] = None
+    config_name: Optional[str] = None
+    pairs_data: Optional[dict] = None
 
 
 class Job(BaseModel):
@@ -42,7 +48,10 @@ class Job(BaseModel):
     name: str
     vcd_filename: str
     firmware_filename: Optional[str] = None
+    vcd_file_id: Optional[str] = None  # File ID
+    firmware_file_id: Optional[str] = None  # File ID
     target_board_id: Optional[str] = None
+    target_board_ids: Optional[List[str]] = None  # For broadcast mode
     assigned_board_id: Optional[str] = None
     priority: int = 0
     timeout_seconds: int = 60
@@ -53,6 +62,11 @@ class Job(BaseModel):
     created_at: datetime
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    # Frontend metadata
+    tag: Optional[str] = None
+    client_id: Optional[str] = None
+    config_name: Optional[str] = None
+    pairs_data: Optional[dict] = None
 
     class Config:
         from_attributes = True

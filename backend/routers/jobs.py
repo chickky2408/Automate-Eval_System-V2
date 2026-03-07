@@ -311,6 +311,15 @@ async def stop_all_jobs():
     return {"success": True, "stoppedCount": stopped}
 
 
+@router.post("/{job_id}/reorder")
+async def reorder_job(job_id: str, new_position: int):
+    """Reorder a job in the queue."""
+    success = await job_queue_service.reorder_job(job_id, new_position)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    return {"success": True, "new_position": new_position}
+
+
 @router.get("/{job_id}/export")
 async def export_job(job_id: str):
     """Export a job payload as JSON."""
@@ -318,6 +327,22 @@ async def export_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
     return await _build_fe_job(job)
+
+
+@router.get("/status/summary")
+async def get_job_status_summary():
+    """Get summary of job statuses."""
+    jobs = await job_queue_service.get_all_jobs()
+    
+    summary = {
+        "total": len(jobs),
+        "pending": sum(1 for j in jobs if _map_job_state(j.status.state) == "pending"),
+        "running": sum(1 for j in jobs if _map_job_state(j.status.state) == "running"),
+        "completed": sum(1 for j in jobs if _map_job_state(j.status.state) == "completed"),
+        "stopped": sum(1 for j in jobs if _map_job_state(j.status.state) == "stopped"),
+        "failed": sum(1 for j in jobs if _map_job_state(j.status.state) == "failed"),
+    }
+    return summary
 
 
 @router.patch("/{job_id}")
