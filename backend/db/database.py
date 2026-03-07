@@ -66,6 +66,32 @@ async def init_db():
                         pass
             await conn.run_sync(_add_set_id)
 
+        # Migration: add missing job columns (target_board_ids, tag, client_id, config_name, pairs_data)
+        async with engine.begin() as conn:
+            def _add_job_columns(sync_conn):
+                is_sqlite = "sqlite" in DATABASE_URL
+                if is_sqlite:
+                    cur = sync_conn.execute(text("PRAGMA table_info(jobs)"))
+                    cols = [row[1] for row in cur.fetchall()]
+                # (col_name, sqlite_type, pg_type)
+                to_add = [
+                    ("target_board_ids", "TEXT", "JSONB"),
+                    ("tag", "VARCHAR(255)", "VARCHAR(255)"),
+                    ("client_id", "VARCHAR(128)", "VARCHAR(128)"),
+                    ("config_name", "VARCHAR(255)", "VARCHAR(255)"),
+                    ("pairs_data", "TEXT", "JSONB"),
+                ]
+                for col_name, sqlite_type, pg_type in to_add:
+                    if is_sqlite:
+                        if col_name not in cols:
+                            sync_conn.execute(text(f"ALTER TABLE jobs ADD COLUMN {col_name} {sqlite_type}"))
+                    else:
+                        try:
+                            sync_conn.execute(text(f"ALTER TABLE jobs ADD COLUMN {col_name} {pg_type}"))
+                        except Exception:
+                            pass
+            await conn.run_sync(_add_job_columns)
+
         print(f"[DB] Database ready at {DATABASE_URL}")
     except Exception as e:
         print(f"[DB] Connection failed: {e}")
