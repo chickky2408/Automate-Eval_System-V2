@@ -6460,6 +6460,9 @@ const RunSetPage = ({ onNavigateJobs }) => {
         continue;
       }
       if (!firstBinName) firstBinName = tc.binName || '';
+      const displayName = (tc.name || '').trim();
+      const fallbackName = vcdFile.name ? vcdFile.name.replace(/\.[^/.]+$/, '') : '';
+      const testCaseName = displayName || fallbackName || `Test case ${i + 1}`;
       filesPayload.push({
         name: vcdFile.name,
         order: i + 1,
@@ -6467,7 +6470,7 @@ const RunSetPage = ({ onNavigateJobs }) => {
         erom: binFile.name,
         ulp: linFile?.name || null,
         try_count: typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1,
-        testCaseName: (tc.name || '').trim() || vcdFile.name,
+        testCaseName,
       });
     }
     const missing = [...missingNames];
@@ -8011,34 +8014,39 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
 
   const handleFileSelect = async (selectedFiles) => {
     const filesArray = Array.from(selectedFiles);
-    // Pre-compare with existing library by checksum before upload
     await useTestStore.getState().refreshFiles?.();
     const currentFiles = useTestStore.getState().uploadedFiles || [];
-    const byChecksum = new Map(
-      currentFiles
-        .filter((f) => f.checksum)
-        .map((f) => [f.checksum, f])
-    );
+    const byChecksum = new Map(currentFiles.filter((f) => f.checksum).map((f) => [f.checksum, f]));
 
     const prepared = [];
     for (const file of filesArray) {
-      // Validate file type
       const extension = file.name.split('.').pop().toLowerCase();
       const validExtensions = ['vcd', 'bin', 'hex', 'elf', 'erom', 'ulp'];
-      
       if (!validExtensions.includes(extension)) {
         pushFileError(`File type .${extension} is not supported. Please upload .vcd, .bin, .hex, .elf, .erom, or .ulp files.`);
         continue;
       }
-      
-      // Validate file size (max 50MB)
       const maxSize = 50 * 1024 * 1024; // 50MB
       if (file.size > maxSize) {
         pushFileError(`File ${file.name} is too large. Maximum size is 50MB.`);
         continue;
       }
       const sig = await computeFileSignature(file);
-      const existing = sig.checksum ? byChecksum.get(sig.checksum) : null;
+      let existing = null;
+      if (sig.checksum) {
+        try {
+          const res = await api.checkFile({
+            filename: file.name,
+            signature: sig.checksum,
+            size: sig.size,
+            modifyDate: sig.modifiedAt,
+          });
+          if (res.duplicate && res.existing) existing = res.existing;
+        } catch {
+          existing = byChecksum.get(sig.checksum) || null;
+        }
+        if (!existing) existing = byChecksum.get(sig.checksum) || null;
+      }
       prepared.push({ file, sig, existing });
     }
 
@@ -8056,19 +8064,21 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
     if (!uploadChoiceModal?.prepared) return;
     const prepared = uploadChoiceModal.prepared;
     let uploaded = 0;
-    let reused = 0;
+    const reusedIds = [];
     for (const p of prepared) {
       const choice = choices[p.file.name];
       if (p.existing && choice === 'reuse') {
-        reused++;
+        reusedIds.push(p.existing.id);
         continue;
       }
-      const result = await addUploadedFile(p.file);
+      const forceNew = p.existing && choice === 'upload';
+      const result = await addUploadedFile(p.file, forceNew ? { forceNew: true } : {});
       if (result) uploaded++;
     }
     setUploadChoiceModal(null);
+    if (reusedIds.length > 0) setSelectedIds((prev) => [...new Set([...prev, ...reusedIds])]);
     if (uploaded > 0) addToast({ type: 'success', message: `${uploaded} file(s) uploaded` });
-    if (reused > 0) addToast({ type: 'info', message: `${reused} file(s) reused from library` });
+    if (reusedIds.length > 0) addToast({ type: 'info', message: `${reusedIds.length} file(s) reused from library` });
   };
 
   const handleDragOver = (e) => {
@@ -10329,7 +10339,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
     );
   };
   
-  const getTestCaseDisplayNameForModal = (f) => (f?.testCaseName || f?.vcd || f?.name || 'N/A');
+  const getTestCaseDisplayNameForModal = (f) => formatTestCaseDisplayNameRaw(f?.testCaseName || f?.vcd || f?.name || 'N/A');
 
   return (
   <div className="space-y-4 min-w-0">
@@ -12101,12 +12111,19 @@ const NotificationItem = ({ notification, onClick }) => {
 
 // File Row Component (for JobsPage)
 // Test Cases Progress View Component
+const formatTestCaseDisplayNameRaw = (raw) => {
+  if (!raw || raw === 'N/A') return raw || 'N/A';
+  const ext = raw.split('.').pop()?.toLowerCase();
+  if (['vcd', 'erom', 'ulp', 'bin', 'hex', 'elf'].includes(ext) && raw.includes('.')) return raw.slice(0, -ext.length - 1);
+  return raw;
+};
+
 const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onSearchChange, onStopFile, onRerunFile, onRerunFailedFile }) => {
   const runningFileRef = useRef(null);
   const [selectedFileIds, setSelectedFileIds] = useState([]);
   const [showDetails, setShowDetails] = useState(false); // collapse details to get more space for file list / drop
 
-  const getTestCaseDisplayName = (file) => (file?.testCaseName || file?.vcd || file?.name || 'N/A');
+  const getTestCaseDisplayName = (file) => formatTestCaseDisplayNameRaw(file?.testCaseName || file?.vcd || file?.name || 'N/A');
   
   // Filter and search files
   const filteredFiles = files.filter(file => {
@@ -12504,7 +12521,7 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
 };
 
 const FileRow = ({ file, jobId, index, totalFiles, onStop, onRerun, onRerunFailed, onMoveUp, onMoveDown, onShowError, job, reportChecked, onToggleReport, onDownloadReport }) => {
-  const getTestCaseDisplayName = (f) => (f?.testCaseName || f?.vcd || f?.name || 'N/A');
+  const getTestCaseDisplayName = (f) => formatTestCaseDisplayNameRaw(f?.testCaseName || f?.vcd || f?.name || 'N/A');
   const getStatusColor = (status) => {
     switch(status) {
       case 'completed': return 'bg-emerald-100 text-emerald-700';

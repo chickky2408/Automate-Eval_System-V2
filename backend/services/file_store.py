@@ -82,16 +82,23 @@ class FileStore:
                 for f in files
             ]
 
-    async def add_file(self, name: str, file_type: str, content: bytes, set_id: Optional[str] = None) -> dict:
+    async def add_file(
+        self,
+        name: str,
+        file_type: str,
+        content: bytes,
+        set_id: Optional[str] = None,
+        force_new: bool = False,
+    ) -> dict:
         """Save file to disk and DB. set_id=None for main library; set_id=id for set storage.
-        Detects duplicates: by content (checksum) returns existing record without saving;
+        Detects duplicates: by content (checksum) returns existing record without saving, unless force_new=True;
         by name sets duplicateByName in response if same name already exists."""
         checksum = self._checksum_bytes(content)
         size = len(content)
 
-        # Duplicate by content: return existing file (no new save)
+        # Duplicate by content: return existing file (no new save) unless force_new
         existing_by_content = await self.find_by_checksum(checksum, set_id)
-        if existing_by_content:
+        if existing_by_content and not force_new:
             return {
                 "id": existing_by_content["id"],
                 "name": existing_by_content["name"],

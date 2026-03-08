@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import Response
 from typing import Optional, Set
 from datetime import datetime
+from pydantic import BaseModel
 import os
 
 from services.file_store import file_store
@@ -34,6 +35,36 @@ async def _file_names_in_use_by_active_jobs() -> Set[str]:
     return names
 
 
+class FileCheckPayload(BaseModel):
+    """Metadata only: for compare-before-upload. Frontend sends filename, signature (checksum), size, modifyDate."""
+    filename: Optional[str] = None
+    signature: Optional[str] = None  # SHA-256 checksum (or MD5/CRC per requirement)
+    size: Optional[int] = None
+    modifyDate: Optional[str] = None
+
+
+@router.post("/check")
+async def check_file(payload: FileCheckPayload):
+    """Compare by signature (checksum) before upload. Returns duplicate + existing file if found."""
+    checksum = (payload.signature or "").strip()
+    if not checksum:
+        return {"duplicate": False}
+    existing = await file_store.find_by_checksum(checksum, set_id=None)
+    if existing:
+        return {
+            "duplicate": True,
+            "existing": {
+                "id": existing["id"],
+                "name": existing["name"],
+                "size": existing["size"],
+                "type": existing["type"],
+                "uploadDate": existing["uploadDate"],
+                "checksum": existing.get("checksum"),
+            },
+        }
+    return {"duplicate": False}
+
+
 @router.get("/{file_id}/content")
 async def get_file_content(file_id: str):
     """Return raw file content (for copying to set storage or download)."""
@@ -45,12 +76,20 @@ async def get_file_content(file_id: str):
     return Response(content=content, media_type="application/octet-stream", headers={"Content-Disposition": f"inline; filename={name}"})
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...), metadata: Optional[str] = Form(None)):
+async def upload_file(
+    file: UploadFile = File(...),
+    metadata: Optional[str] = Form(None),
+    force_new: Optional[str] = Form(None),
+):
+    """Upload file. If force_new is 'true', save a new copy even when content (checksum) already exists."""
     content = await file.read()
     filename = file.filename or "upload.bin"
     file_type = (os.path.splitext(filename)[1] or "").lstrip(".") or (file.content_type or "bin")
+    force_save_new = str(force_new or "").lower() in ("true", "1", "yes")
 
-    record = await file_store.add_file(name=filename, file_type=file_type, content=content)
+    record = await file_store.add_file(
+        name=filename, file_type=file_type, content=content, force_new=force_save_new
+    )
 
     response = {
         "id": record["id"],
@@ -70,7 +109,7 @@ async def upload_file(file: UploadFile = File(...), metadata: Optional[str] = Fo
 
 @router.get("")
 async def list_files():
-    # No need to sync_with_dir anymore, effectively handled by DB
+    # Include checksum so frontend can compare before upload (filename, signature, size, modify)
     files = await file_store.list_files()
     return [
         {
@@ -79,6 +118,7 @@ async def list_files():
             "size": f["size"],
             "type": f["type"],
             "uploadDate": f["uploadDate"],
+            "checksum": f.get("checksum"),
         }
         for f in files
     ]

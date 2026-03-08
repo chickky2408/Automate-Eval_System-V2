@@ -405,6 +405,20 @@ export const moveJobFile = (jobId, fileId, direction) => {
 // ============================================
 
 /**
+ * Check file by metadata (compare before upload). Send filename, signature (checksum), size, modifyDate.
+ * Expected Response: { duplicate: boolean, existing?: { id, name, size, type, uploadDate, checksum } }
+ */
+export const checkFile = (payload) => apiRequest(API_ENDPOINTS.FILE_CHECK, {
+  method: 'POST',
+  body: JSON.stringify({
+    filename: payload.filename ?? null,
+    signature: payload.signature ?? payload.checksum ?? null,
+    size: payload.size ?? null,
+    modifyDate: payload.modifyDate ?? null,
+  }),
+});
+
+/**
  * Upload a file
  * Body: FormData with file and metadata
  * Expected Response: { id, name, size, type, uploadDate }

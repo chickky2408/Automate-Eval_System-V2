@@ -81,7 +81,8 @@ export const API_ENDPOINTS = {
   TEST_SETS_REMOVE_ITEM: (setId, testCaseId) => `${API_BASE_URL}/test-management/test-sets/${setId}/items/${testCaseId}`,
   TEST_SETS_UPDATE_ITEM_ORDER: (setId, testCaseId) => `${API_BASE_URL}/test-management/test-sets/${setId}/items/${testCaseId}/order`,
   
-  // File Upload
+  // File Upload (compare-before-upload: send metadata first, then user decides)
+  FILE_CHECK: `${API_BASE_URL}/files/check`,
   FILE_UPLOAD: `${API_BASE_URL}/files/upload`,
   FILES: `${API_BASE_URL}/files`,
   FILE_BY_ID: (id) => `${API_BASE_URL}/files/${id}`,
