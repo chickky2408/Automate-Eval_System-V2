@@ -20,6 +20,8 @@ class BoardStatus(BaseModel):
     ram_usage: Optional[float] = None
     current_job_id: Optional[str] = None
     last_heartbeat: Optional[datetime] = None
+    fpga_status: Optional[str] = None  # 'active' | 'idle' | 'error' | 'unknown'
+    arm_status: Optional[str] = None    # 'online' | 'busy' | 'error' | 'unknown'
 
 
 class BoardInfo(BaseModel):

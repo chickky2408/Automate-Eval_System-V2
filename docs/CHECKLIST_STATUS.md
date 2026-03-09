@@ -46,8 +46,8 @@
 ### Test History
 - **มี History page แล้ว:** `HistoryPage`, activePage === 'history', แสดง batch ที่ completed และปุ่มดู job ใน Job Management
 
-### Detail — จัดลำดับใน Detail, เช็ค Detail ได้ (Job management)
-- **ทำแล้ว:** คลิกการ์ด job = เปิด Details (Firmware, Boards, Progress, Files); มีปุ่ม Details; ใน Details มี Test Cases in Batch พร้อม move up/down ต่อไฟล์
+### Detail — จัดลำดับใน Detail, เช็ค Detail ได้ (Job management) (EVAL-51)
+- **ทำแล้ว:** คลิกการ์ด job = เปิด Details (Firmware, Boards, Progress, Files); มีปุ่ม Details; ใน Details มี Test Cases in Batch พร้อม move up/down ต่อไฟล์; แสดงรายละเอียดไฟล์ (size, date จาก Library); ปุ่ม "Open in Library" ไปโฟกัสไฟล์ใน File Library; scroll ได้ (max-h 400px)
 
 ---
 
@@ -75,8 +75,8 @@
 ### Test case management
 - **ทำครบแล้วแต่ต้องปรับปรุง:** ตามที่ระบุ "have to improve until it's work for user" — ต้อง iterate ตาม feedback การใช้งานจริง
 
-### Test / Status — Board status, FPGA/Arm, Monitor system health
-- **In progress:** มี Dashboard (system health), Board status, การโหลด boards; ส่วน FPGA/Arm / monitoring แบบละเอียดอาจยังไม่ครบทุกจุด
+### Test / Status — Board status, FPGA/Arm, Monitor system health (EVAL-47)
+- **ทำแล้ว:** Dashboard มี System Health indicator (OK / Warning / Error), StatCard Stale boards; Board card/list แสดง FPGA/ARM status; Backend รองรับ fpga_status, arm_status ใน heartbeat + system health มี staleBoards; Agent ส่ง fpga_status, arm_status ได้ (optional)
 
 ### Test History
 - **มี history page แล้ว;** "รอ requirement/design เพิ่ม" เป็นเรื่องเนื้อหา/รูปแบบที่ต้องออกแบบต่อ
@@ -156,11 +156,12 @@
 | EVAL-33 | Filter (tag, name) ในหน้า run set — section เลือก test case | ✅ runListNameFilter, runListTagFilter; nameFilter, tagFilter |
 | EVAL-35 | ลากหรือเลื่อนในการจัด sequence (Run set) | ✅ handleRowDragStart, handleRowDrop; draggable แถวใน Set for run |
 | EVAL-36 | คลิกไฟล์แล้วไปที่ไฟล์ใน library (pointer) | ✅ focusFileInLibrary(rawName); คลิกชื่อไฟล์ → โฟกัสใน Library |
-| EVAL-37 | แสดงว่าไฟล์นี้ run ใน test case ไหน, ถูกใช้ใน set ไหน | ⚠️ มี view by set; ถ้าต้องการโม달 "ไฟล์นี้ถูกใช้ใน test case/set ไหน" โดยตรง อาจต้องเพิ่ม |
+| EVAL-37 | แสดงว่าไฟล์นี้ run ใน test case ไหน, ถูกใช้ใน set ไหน | ⚠️ มี view by set; ถ้าต้องการโมดิฟาย "ไฟล์นี้ถูกใช้ใน test case/set ไหน" โดยตรง อาจต้องเพิ่ม |
 | EVAL-39 | Protect ไฟล์/test case ที่กำลังใน process ไม่ให้แก้/ลบ | ✅ Backend: ลบไฟล์ in_use → 409; Set ที่รันอยู่ไม่ให้แก้ชื่อ |
 | EVAL-40 | เวลาสั่ง run ให้ saved set อัตโนมัติ | ✅ runSelected เรียก saveCurrentRunSet ก่อน start |
 | EVAL-41 | Test case run อยู่ แก้ได้แค่ duplicate และ saved as new | ✅ "Files are locked... Use Save as new test case"; Save as new ได้ |
 | EVAL-42 | Re-run test case (fails) | ✅ rerunFailedModal, rerunSelections (VCD/ERoM/ULP), rerunFailedFiles |
+| EVAL-43 | Bug — delete/select/edit/stop + message | ✅ ลบ batch รองรับผลบางส่วน + เคลียร์ selection; Stop/Rerun file มี toast; ข้อความ Jobs ใช้ไทย |
 | EVAL-45 | Batch → Test case, checkbox download → Report | ✅ checkbox ต่อแถว, Select all/Clear, Download report (selected), Report ต่อแถว |
 | EVAL-49 | Duplicate set, edit ได้, เพิ่ม pair, Drop เป็น folder | ✅ duplicateSavedTestCaseSet; drop folder; pairs_data ใน job |
 | Run set Options | Create Run set → Options → เลือก board, Auto assign | ✅ boardSelectionMode, selectedBoardIds; Auto assign |

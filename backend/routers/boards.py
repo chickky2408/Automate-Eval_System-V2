@@ -62,6 +62,8 @@ def _parse_board_state(status: Optional[str]) -> BoardState:
 
 def _board_to_fe(board: BoardInfo) -> dict:
     status = _map_board_state(board.status.state)
+    last_hb = board.status.last_heartbeat
+    last_heartbeat_iso = last_hb.isoformat() + "Z" if last_hb else None
     return {
         "id": board.id,
         "name": board.name,
@@ -76,6 +78,9 @@ def _board_to_fe(board: BoardInfo) -> dict:
         "currentJob": f"Batch #{board.status.current_job_id}" if board.status.current_job_id else None,
         "tag": board.tag,
         "connections": board.connections or [],
+        "fpgaStatus": board.status.fpga_status or "unknown",
+        "armStatus": board.status.arm_status or (status if status in ("online", "busy", "error") else "unknown"),
+        "lastHeartbeat": last_heartbeat_iso,
     }
 
 

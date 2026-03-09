@@ -36,8 +36,8 @@ const UploadChoiceModal = ({ open, prepared = [], onConfirm, onCancel }) => {
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50" onClick={onCancel}>
       <div className="bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-600 max-w-lg w-full max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="p-4 border-b border-slate-200 dark:border-slate-600">
-          <h3 className="text-lg font-bold text-slate-800 dark:text-white">เลือกการดำเนินการต่อไฟล์</h3>
-          <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">เลือกแต่ละไฟล์ว่าใช้ของเดิมใน Library หรืออัปโหลดใหม่</p>
+          <h3 className="text-lg font-bold text-slate-800 dark:text-white">Upload Choice</h3>
+          <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">Select each file to reuse the existing file in the Library or upload a new file</p>
         </div>
         <div className="p-4 overflow-y-auto flex-1 space-y-3">
           {prepared.map((p) => (
@@ -48,23 +48,23 @@ const UploadChoiceModal = ({ open, prepared = [], onConfirm, onCancel }) => {
                   <>
                     <label className="flex items-center gap-1.5 cursor-pointer">
                       <input type="radio" name={`choice-${p.file.name}`} checked={(choices[p.file.name] || 'reuse') === 'reuse'} onChange={() => setChoice(p.file.name, 'reuse')} className="w-4 h-4 text-blue-600" />
-                      <span className="text-xs font-medium text-slate-700 dark:text-slate-300">Reuse ของเดิม</span>
+                      <span className="text-xs font-medium text-slate-700 dark:text-slate-300">Reuse existing file</span>
                     </label>
                     <label className="flex items-center gap-1.5 cursor-pointer">
                       <input type="radio" name={`choice-${p.file.name}`} checked={choices[p.file.name] === 'upload'} onChange={() => setChoice(p.file.name, 'upload')} className="w-4 h-4 text-blue-600" />
-                      <span className="text-xs font-medium text-slate-700 dark:text-slate-300">Upload ใหม่</span>
+                      <span className="text-xs font-medium text-slate-700 dark:text-slate-300">Upload new file</span>
                     </label>
                   </>
                 ) : (
-                  <span className="text-xs text-slate-500 dark:text-slate-400">Upload ใหม่ (ไม่มีใน Library)</span>
+                  <span className="text-xs text-slate-500 dark:text-slate-400">Upload new file (not in Library)</span>
                 )}
               </div>
             </div>
           ))}
         </div>
         <div className="p-4 border-t border-slate-200 dark:border-slate-600 flex justify-end gap-2">
-          <button type="button" onClick={onCancel} className="px-4 py-2 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-300 bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500">ยกเลิก</button>
-          <button type="button" onClick={() => onConfirm(choices)} className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700">ดำเนินการ</button>
+          <button type="button" onClick={onCancel} className="px-4 py-2 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-300 bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500">Cancel</button>
+          <button type="button" onClick={() => onConfirm(choices)} className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700">Confirm</button>
         </div>
       </div>
     </div>
@@ -213,19 +213,36 @@ const App = () => {
         >
           <div className="h-14 flex items-center justify-between px-4 sm:px-6 lg:px-8 gap-2 min-w-0">
             {activePage === 'dashboard' ? (
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">System Dashboard</h2>
                 <span className="text-xs text-slate-500 dark:text-slate-400">
                   Monitoring {systemHealth.totalBoards} boards
                 </span>
-                <div className={`ml-4 flex items-center gap-2 px-2.5 py-1 rounded-full text-[11px] font-semibold ${
+                {(() => {
+                  const total = systemHealth.totalBoards || 0;
+                  const online = systemHealth.onlineBoards || 0;
+                  const stale = systemHealth.staleBoards || 0;
+                  const error = systemHealth.errorBoards || 0;
+                  const healthStatus = total === 0 ? 'unknown' : error > 0 || (online === 0 && total > 0) ? 'error' : stale > 0 ? 'warning' : 'ok';
+                  const healthConfig = { ok: { bg: 'bg-emerald-50 dark:bg-emerald-900/30', text: 'text-emerald-600 dark:text-emerald-400', label: 'System OK' }, warning: { bg: 'bg-amber-50 dark:bg-amber-900/30', text: 'text-amber-600 dark:text-amber-400', label: 'Stale boards' }, error: { bg: 'bg-red-50 dark:bg-red-900/30', text: 'text-red-600 dark:text-red-400', label: 'System degraded' }, unknown: { bg: 'bg-slate-100 dark:bg-slate-700', text: 'text-slate-600 dark:text-slate-400', label: 'No boards' } };
+                  const c = healthConfig[healthStatus] || healthConfig.unknown;
+                  return (
+                    <div className={`flex items-center gap-2 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${c.bg} ${c.text} border-current/20`} title={healthStatus === 'warning' ? `${stale} board(s) no heartbeat >60s` : healthStatus === 'error' ? 'Boards offline or error' : ''}>
+                      {healthStatus === 'ok' && <CheckCircle2 size={13} />}
+                      {healthStatus === 'warning' && <AlertCircle size={13} />}
+                      {healthStatus === 'error' && <XCircle size={13} />}
+                      <span>{c.label}</span>
+                    </div>
+                  );
+                })()}
+                <div className={`flex items-center gap-2 px-2.5 py-1 rounded-full text-[11px] font-semibold ${
                   systemHealth.boardApiStatus === 'online' 
-                    ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' 
-                    : 'bg-red-50 text-red-600 border border-red-100'
+                    ? 'bg-emerald-50 text-emerald-600 border border-emerald-100 dark:bg-emerald-900/30 dark:border-emerald-800' 
+                    : 'bg-red-50 text-red-600 border border-red-100 dark:bg-red-900/30 dark:border-red-800'
                 }`}>
                   {systemHealth.boardApiStatus === 'online' ? <Wifi size={13} /> : <WifiOff size={13} />}
                   <span>REST API {systemHealth.boardApiStatus === 'online' ? 'Online' : 'Offline'}</span>
-          </div>
+                </div>
               </div>
             ) : (
               <div />
@@ -261,7 +278,7 @@ const App = () => {
           {activePage === 'testCases' && <TestCasesPage />}
           {activePage === 'runSet' && <RunSetPage onNavigateJobs={() => setActivePage('jobs')} />}
           {activePage === 'setup' && <SetupPage editJobId={expandJobId} onEditComplete={() => setExpandJobId(null)} />}
-          {activePage === 'jobs' && <JobsPage expandJobId={expandJobId} onExpandComplete={() => setExpandJobId(null)} onEditJob={(jobId) => { setExpandJobId(jobId); setActivePage('setup'); }} />}
+          {activePage === 'jobs' && <JobsPage expandJobId={expandJobId} onExpandComplete={() => setExpandJobId(null)} onEditJob={(jobId) => { setExpandJobId(jobId); setActivePage('setup'); }} onNavigateToFileLibrary={(fileName) => { useTestStore.getState().setLibraryFocusFileNameOnNavigate(fileName); setActivePage('fileLibrary'); }} />}
           {activePage === 'boards' && <BoardsPage />}
           {activePage === 'history' && <HistoryPage onViewJob={(jobId) => { setExpandJobId(jobId); setActivePage('jobs'); }} />}
           {activePage === 'waveform' && <WaveformPage />}
@@ -888,7 +905,7 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
   const availableBoards = boards.filter(b => b.status === 'online' && !b.currentJob).length;
   const queuedBoardsLeft = availableBoards; // simplified
   const deviceProgressRows = boards.map(b => {
-    const jobId = (b.currentJob || '').replace('Batch #', '');
+  const jobId = (b.currentJob || '').replace(/^(Batch|Set) #/, '');
     const job = jobs.find(j => j.id === jobId);
     const progress = job ? job.progress : 0;
     const completedFiles = job ? (job.completedFiles ?? 0) : 0;
@@ -1103,10 +1120,10 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
                     <div className="flex flex-col">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="font-bold text-slate-800 dark:text-slate-200 text-sm">
-                          Batch #{sys.jobId}
+                          {sys.jobName || `Set #${sys.jobId}`}
                         </span>
                       </div>
-                      <div className="text-xs text-slate-600 dark:text-slate-300">{sys.jobName}</div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">ID: {sys.jobId}</div>
                     </div>
                     <div className="flex items-center gap-1">
                       {isEditingTag ? (
@@ -1197,11 +1214,11 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
                 <div className="flex flex-col">
                   <div className="flex items-center gap-2">
                     <h2 className="font-bold text-slate-900 dark:text-slate-100 text-sm sm:text-base">
-                      Batch #{systemModalJob.id}
+                      {systemModalJob.name || systemModalJob.configName || `Set #${systemModalJob.id}`}
                     </h2>
                   </div>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    {systemModalJob.name || '—'}
+                    ID: {systemModalJob.id}
                   </p>
                 </div>
               </div>
@@ -2657,6 +2674,8 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const clearLibraryEditContext = useTestStore((s) => s.clearLibraryEditContext);
   const setLoadedSetId = useTestStore((s) => s.setLoadedSetId);
   const syncFullLibraryToSavedTestCases = useTestStore((s) => s.syncFullLibraryToSavedTestCases);
+  const libraryFocusFileNameOnNavigate = useTestStore((s) => s.libraryFocusFileNameOnNavigate);
+  const clearLibraryFocusFileNameOnNavigate = useTestStore((s) => s.clearLibraryFocusFileNameOnNavigate);
 
   // Status helpers for mapping jobs → sets / test cases / files
   const STATUS_PRIORITY = { completed: 1, pending: 2, running: 3 };
@@ -2778,23 +2797,13 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const getTestCaseStatusFromJobs = useCallback(
     (tc) => {
       if (!tc) return null;
-      let status = null;
       const name = (tc.name || '').trim();
       if (name && testCaseStatusByName.has(name)) {
-        status = mergeStatus(status, testCaseStatusByName.get(name));
+        return testCaseStatusByName.get(name);
       }
-      const fileNames = [tc.vcdName, tc.binName, tc.linName]
-        .filter(Boolean)
-        .map((n) => String(n).trim())
-        .filter(Boolean);
-      fileNames.forEach((n) => {
-        if (fileStatusByName.has(n)) {
-          status = mergeStatus(status, fileStatusByName.get(n));
-        }
-      });
-      return status;
+      return null;
     },
-    [testCaseStatusByName, fileStatusByName]
+    [testCaseStatusByName]
   );
 
   // Test case history: jobs/sets where this test case (vcd+erom+ulp or testCaseName) was used
@@ -2854,6 +2863,25 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
       addToast({ type: 'info', message: `File "${fileName}" is not in File in Library yet. Upload it on the Test Cases page first.` });
     }
   };
+
+  // When navigating from JobsPage (or other) with a file to focus
+  useEffect(() => {
+    if (!libraryFocusFileNameOnNavigate) return;
+    const fileName = libraryFocusFileNameOnNavigate;
+    clearLibraryFocusFileNameOnNavigate();
+    setLibraryView('files');
+    setFileViewMode('all');
+    setFileFilter('all');
+    setFileSearch('');
+    setLibraryFocusFileName(fileName);
+    const match = (uploadedFiles || []).find((f) => f.name === fileName);
+    if (match?.id) {
+      setSelectedLibraryFileIds([match.id]);
+    } else {
+      setSelectedLibraryFileIds([]);
+      addToast({ type: 'info', message: `File "${fileName}" is not in File in Library yet. Upload it on the Test Cases page first.` });
+    }
+  }, [libraryFocusFileNameOnNavigate]);
 
   useEffect(() => {
     if (libraryView !== 'files') return;
@@ -6305,6 +6333,24 @@ const RunSetPage = ({ onNavigateJobs }) => {
     },
     [jobs]
   );
+  const selectedRunnableSets = useMemo(
+    () => safeSets.filter((set) => selectedSetIds.includes(set.id) && !isSetInUseByJobs(set)),
+    [safeSets, selectedSetIds, isSetInUseByJobs]
+  );
+  const selectedRunnableCaseCount = useMemo(
+    () => selectedRunnableSets.reduce((sum, set) => sum + ((Array.isArray(set.items) ? set.items.length : 0) || 0), 0),
+    [selectedRunnableSets]
+  );
+
+  // ไม่ให้เลือก set ที่กำลังรันอยู่ (In run) — ถ้า job เปลี่ยนสถานะเป็น running/pending ให้ถอด checkbox ออกอัตโนมัติ
+  useEffect(() => {
+    setSelectedSetIds((prev) =>
+      prev.filter((id) => {
+        const set = safeSets.find((s) => s.id === id);
+        return set && !isSetInUseByJobs(set);
+      })
+    );
+  }, [safeSets, isSetInUseByJobs]);
 
   const toggleSet = (id) => setSelectedSetIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   const selectAllSets = () => setSelectedSetIds(safeSets.map((s) => s.id));
@@ -6460,9 +6506,9 @@ const RunSetPage = ({ onNavigateJobs }) => {
         continue;
       }
       if (!firstBinName) firstBinName = tc.binName || '';
+      // ใช้ชื่อ test case เท่านั้น — ไม่ใช้ชื่อไฟล์ (ต้องแสดงชื่อจาก set/ตาราง ไม่ใช่ชื่อไฟล์)
       const displayName = (tc.name || '').trim();
-      const fallbackName = vcdFile.name ? vcdFile.name.replace(/\.[^/.]+$/, '') : '';
-      const testCaseName = displayName || fallbackName || `Test case ${i + 1}`;
+      const testCaseName = displayName || `Test case ${i + 1}`;
       filesPayload.push({
         name: vcdFile.name,
         order: i + 1,
@@ -6528,8 +6574,16 @@ const RunSetPage = ({ onNavigateJobs }) => {
     return { id: newSetId, name, count: items.length };
   };
 
-  const runSelected = async () => {
-    if (runPreview.length === 0) {
+  const runSelected = async (options = { startImmediately: true, navigateToJobs: true }) => {
+    const { startImmediately = true, navigateToJobs = true } = options || {};
+    const usingPreview = runPreview.length > 0;
+    const setsToRun = usingPreview ? [] : selectedRunnableSets;
+
+    if (!usingPreview && setsToRun.length === 0) {
+      addToast({ type: 'warning', message: 'Select at least one set to run or add test cases to the list first' });
+      return;
+    }
+    if (usingPreview && runPreview.length === 0) {
       addToast({ type: 'warning', message: 'Select test cases to run first' });
       return;
     }
@@ -6537,35 +6591,76 @@ const RunSetPage = ({ onNavigateJobs }) => {
       addToast({ type: 'warning', message: 'Select at least one board (or switch to Auto assign)' });
       return;
     }
-    // Auto-save current selection as a set so it appears in SAVED
-    saveCurrentRunSet({ showToast: false });
+
+    // แจ้งเตือนถ้ามี set ที่ถูกเลือกแต่กำลังรันอยู่ (จะถูกข้ามอัตโนมัติ)
+    if (!usingPreview) {
+      const inUseSelected = safeSets.filter((set) => selectedSetIds.includes(set.id) && isSetInUseByJobs(set));
+      if (inUseSelected.length > 0) {
+        const names = inUseSelected.map((s) => s.name || 'Unnamed').join(', ');
+        addToast({
+          type: 'info',
+          message: `ชุดที่กำลังรันอยู่จะไม่ถูกส่งซ้ำ: ${names}`,
+        });
+      }
+    } else {
+      // Auto-save current selection as a set so it appears in SAVED
+      saveCurrentRunSet({ showToast: false });
+    }
+
     const boardNames = boardSelectionMode === 'auto'
       ? []
       : safeBoards.filter((b) => selectedBoardIds.includes(b.id)).map((b) => b.name);
 
     const jobsToCreate = [];
     const errorsPerSet = [];
-    const virtualSet = { id: '__run__', name: (runSetName || '').trim() || 'Run' };
-    const cases = runPreview.map((item) => item.tc);
-    const { missing, filesPayload, firstBinName, pairsData } = buildJobFromSet(virtualSet, cases);
-    if (missing.length > 0) {
-      const list = missing.slice(0, 5).join(', ') + (missing.length > 5 ? ` +${missing.length - 5} files` : '');
-      errorsPerSet.push(`Files not found in Library — ${list}`);
-    } else if (filesPayload.length > 0) {
-      const jobName = (runSetName || '').trim() || virtualSet.name;
-      jobsToCreate.push({
-        name: jobName,
-        tag: tag || undefined,
-        firmware: firstBinName,
-        boards: boardNames,
-        priority: prioritize ? 'high' : undefined,
-        files: filesPayload,
-        configName: jobName,
-        pairsData,
+
+    if (usingPreview) {
+      const virtualSet = { id: '__run__', name: (runSetName || '').trim() || 'Run' };
+      const cases = runPreview.map((item) => item.tc);
+      const { missing, filesPayload, firstBinName, pairsData } = buildJobFromSet(virtualSet, cases);
+      if (missing.length > 0) {
+        const list = missing.slice(0, 5).join(', ') + (missing.length > 5 ? ` +${missing.length - 5} files` : '');
+        errorsPerSet.push(`Files not found in Library — ${list}`);
+      } else if (filesPayload.length > 0) {
+        const jobName = (runSetName || '').trim() || virtualSet.name;
+        jobsToCreate.push({
+          name: jobName,
+          tag: tag || undefined,
+          firmware: firstBinName,
+          boards: boardNames,
+          priority: prioritize ? 'high' : undefined,
+          files: filesPayload,
+          configName: jobName,
+          pairsData,
+        });
+      }
+      if (filesPayload.length === 0 && missing.length === 0) {
+        errorsPerSet.push('No test cases with both VCD and ERoM');
+      }
+    } else {
+      // Run ตามชุดที่เลือกไว้ (แต่ละ set = 1 job), ข้าม set ที่กำลังรัน
+      setsToRun.forEach((set) => {
+        const { missing, filesPayload, firstBinName, pairsData } = buildJobFromSet(set, null);
+        if (missing.length > 0) {
+          const list = missing.slice(0, 5).join(', ') + (missing.length > 5 ? ` +${missing.length - 5} files` : '');
+          errorsPerSet.push(`Set "${set.name || set.id}": Files not found in Library — ${list}`);
+        } else if (filesPayload.length > 0) {
+          const jobName = (set.name || '').trim() || `Set ${setsToRun.indexOf(set) + 1}`;
+          jobsToCreate.push({
+            name: jobName,
+            tag: tag || undefined,
+            firmware: firstBinName,
+            boards: boardNames,
+            priority: prioritize ? 'high' : undefined,
+            files: filesPayload,
+            configName: jobName,
+            pairsData,
+          });
+        }
       });
-    }
-    if (filesPayload.length === 0 && missing.length === 0) {
-      errorsPerSet.push('No test cases with both VCD and ERoM');
+      if (jobsToCreate.length === 0 && errorsPerSet.length === 0) {
+        errorsPerSet.push('No test cases with both VCD and ERoM in selected sets');
+      }
     }
 
     if (errorsPerSet.length > 0) {
@@ -6578,17 +6673,24 @@ const RunSetPage = ({ onNavigateJobs }) => {
     try {
       let created = 0;
       for (const payload of jobsToCreate) {
-        const result = await createJob(payload, { startImmediately: true });
+        const result = await createJob(payload, { startImmediately });
         if (result) created++;
       }
       if (created > 0) {
         if (refreshJobs) await refreshJobs();
-        addToast({ type: 'success', message: `${created} job(s) sent to queue — see Jobs Manager (Running)` });
-        setRunPreview([]);
-        setRunSetName('');
-        setTag('');
-        setSelectedBoardIds([]);
-        if (onNavigateJobs) onNavigateJobs();
+        addToast({
+          type: 'success',
+          message: startImmediately
+            ? `${created} job(s) sent to queue — see Jobs Manager (Running)`
+            : `${created} job(s) created in Pending — see Jobs Manager (Pending)`,
+        });
+        if (startImmediately) {
+          setRunPreview([]);
+          setRunSetName('');
+          setTag('');
+          setSelectedBoardIds([]);
+        }
+        if (navigateToJobs && onNavigateJobs) onNavigateJobs();
       }
       if (created < jobsToCreate.length) {
         addToast({ type: 'warning', message: `Created ${created}/${jobsToCreate.length} set(s)` });
@@ -6610,10 +6712,10 @@ const RunSetPage = ({ onNavigateJobs }) => {
       </div>
 
       <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-        {/* Two columns: left = Browse test cases, right = Set for run / grouping */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        {/* Two columns: left = Browse test cases, right = Set for run (larger — important process) */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.25fr] gap-4 mb-4">
           {/* Left — Library list (filter + scroll, draggable) */}
-          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-600 flex flex-col h-[420px]">
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-600 flex flex-col min-h-[480px] lg:h-[580px]">
             <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">1. Test cases in library</h3>
             <div className="flex flex-col sm:flex-row gap-2 mb-2 shrink-0">
               <input
@@ -6680,11 +6782,11 @@ const RunSetPage = ({ onNavigateJobs }) => {
             <p className="text-xs text-slate-500 mt-2 shrink-0">Drag to the right, or Copy (⌘/Ctrl+C) and Paste (⌘/Ctrl+V). <button type="button" onClick={() => setShowBrowseModal(true)} className="text-blue-600 hover:underline">Open picker</button></p>
           </div>
 
-          {/* Right — 2. Set for run (drop zone + list, reorder by drag only) */}
+          {/* Right — 2. Set for run (drop zone + list, reorder) — ใหญ่ขึ้นเพื่อให้จัดการ test cases ได้ง่าย */}
           <div
             ref={runSetRightRef}
             tabIndex={0}
-            className="p-4 rounded-xl border-2 border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 h-[420px] flex flex-col outline-none"
+            className="p-4 rounded-xl border-2 border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 min-h-[480px] lg:h-[580px] flex flex-col outline-none"
             onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; e.currentTarget.classList.add('ring-2', 'ring-blue-400'); }}
             onDragLeave={(e) => { e.currentTarget.classList.remove('ring-2', 'ring-blue-400'); }}
             onDrop={(e) => {
@@ -6809,7 +6911,7 @@ const RunSetPage = ({ onNavigateJobs }) => {
                 No saved sets yet — create and save on the Test Cases page.
               </p>
             ) : (
-            <div className="space-y-1 max-h-40 overflow-y-auto">
+            <div className="space-y-1 min-h-[120px] max-h-56 overflow-y-auto overflow-x-hidden pr-2">
               {safeSets.map((set, index) => {
                 const inUse = isSetInUseByJobs(set);
                 return (
@@ -6918,6 +7020,7 @@ const RunSetPage = ({ onNavigateJobs }) => {
                             order: idx + 1,
                           }));
                           setRunPreview(items);
+                          setRunSetName(set.name || '');
                           addToast({ type: 'success', message: `Loaded set "${set.name}" for run` });
                         }}
                         className="px-2 py-1 rounded font-semibold bg-blue-600 hover:bg-blue-700 text-white"
@@ -6936,6 +7039,7 @@ const RunSetPage = ({ onNavigateJobs }) => {
                             order: start + idx + 1,
                           }));
                           setRunPreview((prev) => prev.concat(items).map((it, i) => ({ ...it, order: i + 1 })));
+                          setRunSetName((prev) => (prev ? `${prev}, ${set.name || ''}` : (set.name || '')));
                           addToast({ type: 'success', message: `Appended set "${set.name}" to run list` });
                         }}
                         className="px-2 py-1 rounded font-semibold bg-slate-600 hover:bg-slate-700 text-white"
@@ -7006,12 +7110,11 @@ const RunSetPage = ({ onNavigateJobs }) => {
           </div>
         </div>
 
-        {/* Alternative: Run by Set (whole set) */}
+        {/* Alternative: Run by Set (whole set) — ติ๊กเลือก set ที่ต้องการรันได้เลย (แต่ละ set = 1 job). Set ที่กำลังรันอยู่จะถูกข้ามอัตโนมัติ. */}
         <div className="mb-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-600">
           <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Or run by Set — select whole set(s)</h3>
           <div className="flex items-center gap-2 mb-2">
-            <button type="button" onClick={() => setRunSelectionMode('set')} className="text-xs font-bold text-blue-600 hover:text-blue-800">Use sets</button>
-            <button type="button" onClick={() => setRunSelectionMode('browse')} className="text-xs font-bold text-slate-600 hover:text-slate-800">Use browse</button>
+            <span className="text-xs font-bold text-blue-600">Use sets</span>
             <span className="text-xs text-slate-500">{selectedSetIds.length} set(s) selected</span>
           </div>
           <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900">
@@ -7019,13 +7122,39 @@ const RunSetPage = ({ onNavigateJobs }) => {
               <div className="p-3 text-center text-slate-400 text-xs">No sets yet — create on Test Cases page (Save Set)</div>
             ) : (
               <ul className="divide-y divide-slate-100 dark:divide-slate-700">
-                {safeSets.map((set, index) => (
-                  <li key={set.id} className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                    <input type="checkbox" checked={selectedSetIds.includes(set.id)} onChange={() => toggleSet(set.id)} className="w-4 h-4 rounded border-slate-400 text-blue-600 shrink-0" />
-                    <span className="flex-1 text-sm font-medium text-slate-800 dark:text-slate-200 truncate">{set.name}</span>
-                    <span className="text-xs text-slate-500 shrink-0">{Array.isArray(set.items) ? set.items.length : 0} cases</span>
-                  </li>
-                ))}
+                {safeSets.map((set) => {
+                  const inUse = isSetInUseByJobs(set);
+                  const disabled = inUse;
+                  return (
+                    <li
+                      key={set.id}
+                      className={`flex items-center gap-2 px-3 py-2 ${
+                        disabled
+                          ? 'opacity-60 cursor-not-allowed bg-slate-50 dark:bg-slate-800'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedSetIds.includes(set.id)}
+                        onChange={() => !disabled && toggleSet(set.id)}
+                        disabled={disabled}
+                        className="w-4 h-4 rounded border-slate-400 text-blue-600 shrink-0"
+                      />
+                      <span className="flex-1 text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
+                        {set.name}
+                      </span>
+                      {inUse && (
+                        <span className="px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px] font-semibold border border-amber-200 dark:border-amber-700 shrink-0">
+                          In run
+                        </span>
+                      )}
+                      <span className="text-xs text-slate-500 shrink-0">
+                        {Array.isArray(set.items) ? set.items.length : 0} cases
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
@@ -7106,12 +7235,24 @@ const RunSetPage = ({ onNavigateJobs }) => {
         {/* Run & Save (not run) */}
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
-            onClick={runSelected}
-            disabled={isSubmitting || runPreview.length === 0}
+            onClick={() => runSelected({ startImmediately: true, navigateToJobs: true })}
+            disabled={isSubmitting || (runPreview.length === 0 && selectedRunnableCaseCount === 0)}
             className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isSubmitting ? <RefreshCw size={16} className="animate-spin" /> : <Play size={16} />}
-            Run ({runPreview.length} case{runPreview.length !== 1 ? 's' : ''})
+            {runPreview.length > 0
+              ? `Run (${runPreview.length} case${runPreview.length !== 1 ? 's' : ''})`
+              : `Run (${selectedRunnableCaseCount} case${selectedRunnableCaseCount !== 1 ? 's' : ''})`}
+          </button>
+          <button
+            type="button"
+            onClick={() => runSelected({ startImmediately: false, navigateToJobs: true })}
+            disabled={isSubmitting || (runPreview.length === 0 && selectedRunnableCaseCount === 0)}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-bold hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Create job(s) in Pending without starting. You can edit order or remove test cases in Jobs Manager."
+          >
+            <Clock size={16} />
+            Send to Pending
           </button>
           <button
             type="button"
@@ -8250,7 +8391,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
     <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-end gap-4">
       <div className="min-w-0">
     <h1 className="text-2xl sm:text-3xl font-bold text-slate-800 dark:text-slate-100">
-      {editJobId ? `Edit Batch #${editJobId}` : 'Test Case Setup'}
+      {editJobId ? `Edit Set #${editJobId}` : 'Test Case Setup'}
     </h1>
         <p className="text-slate-500 dark:text-slate-400 mt-1 text-sm sm:text-base">
           {editJobId 
@@ -8577,7 +8718,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
                         <div>
                           <div className="flex items-center gap-2">
                             <h3 className="text-lg font-bold text-slate-900">
-                              {editJobId ? `Edit Batch #${editJobId}` : 'Pair Files'}
+                              {editJobId ? `Edit Set #${editJobId}` : 'Pair Files'}
                             </h3>
                             {selectedPairs.length > 0 && (
                               <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs font-semibold">
@@ -9449,7 +9590,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
   };
 
 // 3. JOBS PAGE (Enhanced)
-const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
+const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLibrary }) => {
   const { 
     jobs, 
     startPendingJobs,
@@ -9497,6 +9638,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
   const [rerunSelections, setRerunSelections] = useState([]); // [{ vcd, erom, ulp }] per failed file for rerun modal
   const [selectedReportFileIds, setSelectedReportFileIds] = useState({}); // { [jobId]: fileId[] } for download report per test case
   const uploadedFiles = useTestStore((s) => s.uploadedFiles) || [];
+  const fileTags = useTestStore((s) => s.fileTags) || {};
 
   const toggleReportFile = (jobId, fileId) => {
     setSelectedReportFileIds((prev) => {
@@ -9515,6 +9657,18 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
 
   const getTestCaseDisplayNameForReport = (f) => (f?.testCaseName || f?.vcd || f?.name || 'N/A');
 
+  const getFileLibraryInfoForJobFile = (f) => {
+    const names = [f?.vcd, f?.erom, f?.ulp].filter(Boolean);
+    for (const n of names) {
+      const lib = uploadedFiles.find((x) => x.name === n);
+      if (lib) {
+        const dateStr = lib.uploadDate || lib.date ? new Date(lib.uploadDate || lib.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+        return { size: lib.sizeFormatted, date: dateStr, tag: fileTags[lib.id] };
+      }
+    }
+    return null;
+  };
+
   const downloadReportForJob = (jobId, fileIdsFilter = null) => {
     const job = jobs.find((j) => j.id === jobId);
     if (!job) return;
@@ -9531,16 +9685,16 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
           <td class="result-${file.result === 'pass' ? 'pass' : file.result === 'fail' ? 'fail' : ''}">${file.result || 'N/A'}</td>
           <td>${file.errorMessage || file.error || '—'}</td>
         </tr>`).join('');
-    const htmlContent = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Test Report - Batch #${jobId}</title>
+  const htmlContent = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Test Report - Set #${jobId}</title>
 <style>body{font-family:Arial,sans-serif;margin:20px;background:#f5f5f5}.container{max-width:900px;margin:0 auto;background:#fff;padding:24px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}h1{color:#1e293b;border-bottom:3px solid #3b82f6;padding-bottom:8px}.info{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin:16px 0}.info-item{padding:8px;background:#f8fafc;border-radius:4px}.info-label{font-weight:bold;color:#64748b;font-size:12px}.info-value{color:#1e293b;margin-top:4px}table{width:100%;border-collapse:collapse;margin-top:16px}th{background:#3b82f6;color:#fff;padding:10px;text-align:left}td{padding:8px;border-bottom:1px solid #e2e8f0}.status-completed{color:#10b981}.status-running{color:#3b82f6}.result-pass{color:#10b981}.result-fail{color:#ef4444}.footer{margin-top:24px;padding-top:16px;border-top:1px solid #e2e8f0;color:#64748b;font-size:12px}</style></head><body><div class="container">
-<h1>Test Report - Batch #${jobId}</h1><div class="info"><div class="info-item"><div class="info-label">Batch Name</div><div class="info-value">${job.name || 'N/A'}</div></div><div class="info-item"><div class="info-label">Tag</div><div class="info-value">${job.tag || '—'}</div></div><div class="info-item"><div class="info-label">Firmware</div><div class="info-value">${job.firmware || '—'}</div></div><div class="info-item"><div class="info-label">Test cases</div><div class="info-value">${toInclude.length}</div></div></div>
+<h1>Test Report - Set #${jobId}</h1><div class="info"><div class="info-item"><div class="info-label">Set Name</div><div class="info-value">${job.name || 'N/A'}</div></div><div class="info-item"><div class="info-label">Tag</div><div class="info-value">${job.tag || '—'}</div></div><div class="info-item"><div class="info-label">Firmware</div><div class="info-value">${job.firmware || '—'}</div></div><div class="info-item"><div class="info-label">Test cases</div><div class="info-value">${toInclude.length}</div></div></div>
 <table><thead><tr><th>Order</th><th>Test Case</th><th>Status</th><th>Result</th><th>Error</th></tr></thead><tbody>${rows}</tbody></table>
 <div class="footer">Generated ${new Date().toLocaleString()}</div></div></body></html>`;
     const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `batch_${jobId}_report_${toInclude.length === 1 ? getTestCaseDisplayNameForReport(toInclude[0]).replace(/[^a-z0-9]/gi, '_') : new Date().toISOString().split('T')[0]}.html`;
+    link.download = `set_${jobId}_report_${toInclude.length === 1 ? getTestCaseDisplayNameForReport(toInclude[0]).replace(/[^a-z0-9]/gi, '_') : new Date().toISOString().split('T')[0]}.html`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -9583,15 +9737,15 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
   };
   
   const handleStopAll = async () => {
-    if (window.confirm('Are you sure you want to stop all running jobs?')) {
+    if (window.confirm('ต้องการหยุดทุก job ที่กำลังรันทั้งหมดใช่หรือไม่?')) {
       if (isStoppingAll) return;
       setIsStoppingAll(true);
       const success = await stopAllJobs();
       setIsStoppingAll(false);
       if (success) {
-        addToast({ type: 'success', message: 'All jobs stopped.' });
+        addToast({ type: 'success', message: 'หยุดทุก job แล้ว' });
       } else {
-        addToast({ type: 'error', message: 'Failed to stop all jobs.' });
+        addToast({ type: 'error', message: 'หยุด jobs ไม่สำเร็จ' });
       }
     }
   };
@@ -9602,10 +9756,10 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
       return job && job.status === 'running';
     });
     if (runningSelected.length === 0) {
-      addToast({ type: 'warning', message: 'No running batch selected. Select running batch(es) to stop.' });
+      addToast({ type: 'warning', message: 'ไม่มี batch ที่กำลังรันถูกเลือก — กรุณาเลือก batch ที่กำลังรันเพื่อหยุด' });
       return;
     }
-    if (!window.confirm(`Stop ${runningSelected.length} selected running batch(es)?`)) return;
+    if (!window.confirm(`ต้องการหยุด ${runningSelected.length} batch ที่เลือกใช่หรือไม่?`)) return;
     if (isStoppingSelected) return;
     setIsStoppingSelected(true);
     const results = await Promise.allSettled(runningSelected.map((jobId) => stopJob(jobId)));
@@ -9613,20 +9767,20 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
     const ok = results.filter((r) => r.status === 'fulfilled' && r.value).length;
     const failed = results.length - ok;
     if (failed === 0) {
-      addToast({ type: 'success', message: `${ok} batch(es) stopped.` });
+      addToast({ type: 'success', message: `หยุด ${ok} batch แล้ว` });
       setSelectedJobIds((prev) => prev.filter((id) => !runningSelected.includes(id)));
     } else if (ok > 0) {
-      addToast({ type: 'warning', message: `${ok} stopped, ${failed} failed.` });
+      addToast({ type: 'warning', message: `หยุดได้ ${ok} batch, ล้มเหลว ${failed} รายการ` });
       setSelectedJobIds((prev) => prev.filter((id) => !runningSelected.includes(id)));
     } else {
-      addToast({ type: 'error', message: 'Failed to stop selected batches.' });
+      addToast({ type: 'error', message: 'หยุด batch ที่เลือกไม่สำเร็จ' });
     }
   };
 
   const handleRunBatch = async () => {
     const pendingJobs = jobs.filter(j => j.status === 'pending');
     if (pendingJobs.length === 0) {
-      addToast({ type: 'info', message: 'No pending jobs to run.' });
+      addToast({ type: 'info', message: 'ไม่มี job รอรัน' });
       return;
     }
     if (isRunningBatch) return;
@@ -9634,9 +9788,9 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
     const success = await startPendingJobs();
     setIsRunningBatch(false);
     if (success) {
-      addToast({ type: 'success', message: 'Batch started.' });
+      addToast({ type: 'success', message: 'เริ่มรัน batch แล้ว' });
     } else {
-      addToast({ type: 'error', message: 'Failed to start batch.' });
+      addToast({ type: 'error', message: 'เริ่มรัน batch ไม่สำเร็จ' });
     }
   };
 
@@ -9737,43 +9891,47 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
   // delete job function
 
   const handleDeleteJob = async (jobId, jobName) => {
-    if (!window.confirm(`Are you sure you want to delete batch #${jobId}?\n\nJob: ${jobName || 'N/A'}\n\nThis action cannot be undone.`)) {
+    if (!window.confirm(`ต้องการลบ batch #${jobId} ใช่หรือไม่?\n\nJob: ${jobName || 'N/A'}\n\nการดำเนินการนี้ไม่สามารถย้อนกลับได้`)) {
       return;
     }
-    
     const success = await deleteJob(jobId);
     if (success) {
-      addToast({ type: 'success', message: `Batch #${jobId} deleted successfully.` });
+      addToast({ type: 'success', message: `Deleted Set #${jobId} successfully` });
     } else {
-      addToast({ type: 'error', message: `Failed to delete batch #${jobId}.` });
+      addToast({ type: 'error', message: `Failed to delete Set #${jobId}` });
     }
   };
 
   const handleDeleteSelectedJobs = async () => {
     if (selectedJobIds.length === 0) {
-      addToast({ type: 'warning', message: 'Please select at least one batch to delete.' });
+      addToast({ type: 'warning', message: 'Please select at least one Set to delete' });
       return;
     }
 
     const selectedJobs = jobs.filter(j => selectedJobIds.includes(j.id));
     const jobNames = selectedJobs.map(j => `#${j.id} (${j.name || 'N/A'})`).join('\n');
-    
-    if (!window.confirm(`Are you sure you want to delete ${selectedJobIds.length} batch(es)?\n\n${jobNames}\n\nThis action cannot be undone.`)) {
+
+    if (!window.confirm(`Are you sure you want to delete ${selectedJobIds.length} Sets?\n\n${jobNames}\n\nThis action cannot be undone`)) {
       return;
     }
 
-    try {
-      const api = await import('./services/api');
-      await Promise.allSettled(selectedJobIds.map((jobId) => api.deleteJob(jobId)));
-      
-      const { refreshJobs } = useTestStore.getState();
-      await refreshJobs();
-      
-      addToast({ type: 'success', message: `Deleted ${selectedJobIds.length} batch(es) successfully.` });
-      setSelectedJobIds([]); // Clear selection after deleting
-    } catch (error) {
-      console.error('Failed to delete selected jobs', error);
-      addToast({ type: 'error', message: 'Failed to delete selected batches.' });
+    const { deleteJob: doDeleteJob, refreshJobs: doRefreshJobs } = useTestStore.getState();
+    const results = await Promise.allSettled(selectedJobIds.map((jobId) => doDeleteJob(jobId)));
+    const ok = results.filter((r) => r.status === 'fulfilled' && r.value === true).length;
+    const failed = results.length - ok;
+    const deletedIds = selectedJobIds.filter((_, i) => results[i].status === 'fulfilled' && results[i].value === true);
+
+    if (deletedIds.length > 0) {
+      await doRefreshJobs();
+    }
+    setSelectedJobIds((prev) => prev.filter((id) => !deletedIds.includes(id)));
+
+    if (failed === 0) {
+      addToast({ type: 'success', message: `Deleted ${ok} Sets successfully` });
+    } else if (ok > 0) {
+      addToast({ type: 'warning', message: `Deleted ${ok} Sets, failed to delete ${failed} Sets` });
+    } else {
+      addToast({ type: 'error', message: 'Failed to delete the selected Sets' });
     }
   };
   
@@ -9945,11 +10103,11 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
     
     return (
       <div 
-        key={job.id} 
-        id={`job-${job.id}`} 
-        className={`bg-white text-slate-900 rounded-xl border shadow-sm overflow-hidden transition-all ${getCardStatusStyle(job)} ${
-          selectedJobIds.includes(job.id) ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200'
-        } ${draggingJobId === job.id ? 'opacity-50' : ''}`}
+      key={job.id} 
+      id={`job-${job.id}`} 
+      className={`bg-white text-slate-900 rounded-xl border shadow-sm overflow-hidden transition-all ${getCardStatusStyle(job)} ${
+          selectedJobIds.includes(job.id) ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200 dark:border-slate-700'
+        } ${draggingJobId === job.id ? 'opacity-50' : ''} dark:bg-slate-900 dark:text-slate-100`}
         onClick={(e) => {
           if (e.target.closest('button') || e.target.closest('input') || e.target.closest('select') || e.target.closest('[data-no-select]')) {
             return;
@@ -9974,10 +10132,10 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
         onDragEnd={() => setDraggingJobId(null)}
       >
         {/* Job Header */}
-        <div className="p-3 border-b border-slate-100">
+        <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800">
           <div className="flex flex-col gap-0">
             {/* Top Row: Batch Info */}
-            <div className="flex justify-between items-center gap-3">
+            <div className="flex justify-between items-center gap-2.5">
               <div className="flex-1 min-w-0 overflow-hidden" data-no-select>
                 <div className="flex items-center gap-2 mb-0.5 flex-wrap" data-no-select>
                   {/* Checkbox for selection (hidden for demo job) */}
@@ -9998,16 +10156,18 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                   {isDemoJob && (
                     <span className="px-2 py-0.5 bg-slate-200 text-slate-500 rounded text-xs font-semibold">Demo</span>
                   )}
-                  <span className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
-                    <h3 className="text-lg font-bold text-slate-900 truncate" title={(job.name || job.configName || '').trim() || `Batch #${job.id}`}>
-                      {(job.name || job.configName || '').trim() || `Batch #${job.id}`}
+                  <span className="min-w-0 flex-1 flex items-center gap-1.5 flex-wrap">
+                    <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100 truncate" title={(job.name || job.configName || '').trim() || `Set #${job.id}`}>
+                      {(job.name || job.configName || '').trim() || `Set #${job.id}`}
                     </h3>
                     <span className={`px-2 py-0.5 rounded-full text-xs font-bold uppercase shrink-0 ${
-                    job.status === 'running' ? 'bg-blue-100 text-blue-700' :
-                    job.status === 'pending' ? 'bg-amber-100 text-amber-700' :
+                    job.status === 'running' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' :
+                    job.status === 'pending' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' :
                     (job.status === 'completed' || job.status === 'stopped')
-                      ? ((job.files || []).some(f => f.result === 'fail' || f.status === 'error') ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700')
-                      : 'bg-slate-100 text-slate-700'
+                      ? ((job.files || []).some(f => f.result === 'fail' || f.status === 'error')
+                        ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                        : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300')
+                      : 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
                   }`}>
                     {(job.status === 'completed' || job.status === 'stopped') && (job.files || []).some(f => f.result === 'fail')
                       ? 'Failed'
@@ -10035,7 +10195,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                     <span
                       onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleEditTag(job); }}
                       onMouseDown={(e) => e.stopPropagation()}
-                      className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-800 flex items-center gap-1 shrink-0 cursor-pointer hover:bg-purple-200 transition-colors"
+                      className="px-2 py-0.5 rounded-full text-xs font-bold bg-purple-100 text-purple-800 flex items-center gap-1 shrink-0 cursor-pointer hover:bg-purple-200 dark:bg-purple-900/40 dark:text-purple-300 dark:hover:bg-purple-800/60 transition-colors"
                       title={job.tag ? 'Click to edit tag' : 'Click to add tag'}
                     >
                       <Tag size={12} />
@@ -10050,7 +10210,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
               {!isDemoJob && job.status !== 'running' && (
               <div className="flex flex-col gap-1 shrink-0 items-center" data-no-select>
                 <div
-                  className="flex items-center justify-center p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-500 cursor-grab active:cursor-grabbing"
+                  className="flex items-center justify-center p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-500 dark:border-slate-700 dark:hover:bg-slate-800 dark:text-slate-300 cursor-grab active:cursor-grabbing"
                   draggable
                   onDragStart={(e) => {
                     e.stopPropagation();
@@ -10073,7 +10233,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                   }}
                   onMouseDown={(e) => e.stopPropagation()}
                   disabled={jobIndex === 0}
-                  className={`p-1.5 rounded-lg border text-slate-600 ${jobIndex === 0 ? 'opacity-30 cursor-not-allowed border-slate-200' : 'hover:bg-slate-50 border-slate-200'}`}
+                  className={`p-1.5 rounded-lg border text-slate-600 dark:text-slate-300 ${jobIndex === 0 ? 'opacity-30 cursor-not-allowed border-slate-200 dark:border-slate-700' : 'hover:bg-slate-50 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-700'}`}
                   title="Move batch up"
                 >
                   <ArrowUp size={14} />
@@ -10086,7 +10246,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                   }}
                   onMouseDown={(e) => e.stopPropagation()}
                   disabled={jobIndex === allJobs.length - 1}
-                  className={`p-1.5 rounded-lg border text-slate-600 ${jobIndex === allJobs.length - 1 ? 'opacity-30 cursor-not-allowed border-slate-200' : 'hover:bg-slate-50 border-slate-200'}`}
+                  className={`p-1.5 rounded-lg border text-slate-600 dark:text-slate-300 ${jobIndex === allJobs.length - 1 ? 'opacity-30 cursor-not-allowed border-slate-200 dark:border-slate-700' : 'hover:bg-slate-50 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-700'}`}
                   title="Move batch down"
                 >
                   <ArrowDown size={14} />
@@ -10095,12 +10255,12 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
               )}
             </div>
             {/* Action Row: Details (includes all test cases + progress), Edit, Delete */}
-            <div className="flex items-center gap-2 flex-wrap pt-1.5" data-no-select>
+            <div className="flex items-center gap-1.5 flex-wrap pt-1" data-no-select>
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); e.preventDefault(); toggleDetails(job.id); }}
                 onMouseDown={(e) => e.stopPropagation()}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors shrink-0"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 transition-colors shrink-0"
                 title="Show all details, progress and test cases"
               >
                 {showDetails ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -10138,15 +10298,15 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                   )}
             </div>
             {showDetails && (
-              <div className="mt-2 pt-2 border-t border-slate-100 space-y-2 text-xs text-slate-600">
+              <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2 text-xs text-slate-600 dark:text-slate-300">
                 {/* Summary line */}
                 <div className="flex items-center gap-3 flex-wrap">
-                  <span>Firmware: <strong className="text-slate-700">{job.firmware}</strong></span>
-                  <span>Boards: <strong className="text-slate-700">{job.boards?.join(', ')}</strong></span>
-                  <span>Progress: <strong className="text-slate-700">{job.progress}%</strong></span>
-                  <span>Files: <strong className="text-slate-700">{job.completedFiles}/{job.totalFiles}</strong></span>
+                  <span>Firmware: <strong className="text-slate-700 dark:text-slate-200">{job.firmware}</strong></span>
+                  <span>Boards: <strong className="text-slate-700 dark:text-slate-200">{job.boards?.join(', ')}</strong></span>
+                  <span>Progress: <strong className="text-slate-700 dark:text-slate-200">{job.progress}%</strong></span>
+                  <span>Files: <strong className="text-slate-700 dark:text-slate-200">{job.completedFiles}/{job.totalFiles}</strong></span>
                   {(job.completedAt || job.startedAt) && (
-                    <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs font-semibold">
+                    <span className="px-2 py-0.5 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 rounded text-xs font-semibold">
                       {(() => {
                         const date = job.completedAt ? new Date(job.completedAt) : new Date(job.startedAt);
                         const now = new Date();
@@ -10248,7 +10408,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                                     `[${idx + 1}] ${file.name || 'N/A'}\n    Order: ${file.order || 0}\n    Status: ${file.status || 'unknown'}\n    Result: ${file.result || 'N/A'}\n    Error: ${file.errorMessage || file.error || 'No error message available'}\n    Started: ${file.startedAt || 'N/A'}\n    Completed: ${file.completedAt || 'N/A'}`
                                   );
                                   const errorReport = [
-                                    `Failed Test Cases Report - Batch #${job.id}`,
+                                    `Failed Test Cases Report - Set #${job.id}`,
                                     `Generated: ${new Date().toISOString()}`,
                                     '========================================',
                                     '',
@@ -10292,7 +10452,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                           </p>
                         </div>
                       )}
-                      <div className="space-y-2">
+                      <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
                         {sortedFiles.map((file, index) => (
                           <FileRow
                             key={file.id}
@@ -10310,6 +10470,8 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob }) => {
                             reportChecked={getReportSelectedForJob(job.id).has(file.id)}
                             onToggleReport={() => toggleReportFile(job.id, file.id)}
                             onDownloadReport={() => downloadSingleFileReport(job, file)}
+                            fileLibraryInfo={getFileLibraryInfoForJobFile(file)}
+                            onOpenInLibrary={onNavigateToFileLibrary}
                           />
                         ))}
                       </div>
@@ -10558,11 +10720,11 @@ Duration: ${file.duration || 'N/A'}
               : displayCompletedJobs.filter(j => j.id !== 'demo-completed' && j.id !== 'demo-failed').map(j => j.id);
           const allSelectedInColumn = selectAllColumnIds.length > 0 && selectAllColumnIds.every(id => selectedJobIds.includes(id));
           return (
-            <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-lg border border-slate-200">
+            <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 rounded-lg border border-slate-200 dark:bg-slate-900 dark:border-slate-700">
               <select
                 value={selectAllColumn}
                 onChange={(e) => setSelectAllColumn(e.target.value)}
-                className="px-2 py-1.5 border border-slate-300 rounded-lg text-sm font-semibold bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                className="px-2 py-1.5 border border-slate-300 rounded-lg text-sm font-semibold bg-white text-slate-700 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
                 title="Select column first then click Select All"
               >
                 <option value="pending">Pending</option>
@@ -10576,7 +10738,7 @@ Duration: ${file.duration || 'N/A'}
                 className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                 title={`Select all batches in ${selectAllColumn} column`}
               />
-              <span className="text-sm font-semibold text-slate-700">
+              <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
                 {selectedJobIds.length > 0 ? `${selectedJobIds.length} selected` : `Select All (in ${selectAllColumn})`}
               </span>
             </div>
@@ -10642,21 +10804,21 @@ Duration: ${file.duration || 'N/A'}
     </div>
 
       {/* Single search + filter bar */}
-      <div className="rounded-xl border border-slate-200 bg-white p-3 mb-4 flex flex-wrap items-center gap-2">
+      <div className="rounded-xl border border-slate-200 bg-white dark:bg-slate-900 dark:border-slate-700 p-3 mb-4 flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[180px]">
           <Search size={16} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
-            type="text"
-            value={jobsSearch}
-            onChange={(e) => setJobsSearch(e.target.value)}
-            placeholder="Search by name, ID, firmware, boards..."
-            className="w-full pl-8 pr-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          type="text"
+          value={jobsSearch}
+          onChange={(e) => setJobsSearch(e.target.value)}
+          placeholder="Search by name, ID, firmware, boards..."
+          className="w-full pl-8 pr-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-lg text-sm bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
         <select
           value={jobsStatusFilter}
           onChange={(e) => setJobsStatusFilter(e.target.value)}
-          className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm font-medium bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+          className="px-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-medium bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
           title="Column / Status"
         >
           <option value="all">All columns</option>
@@ -10667,7 +10829,7 @@ Duration: ${file.duration || 'N/A'}
         <select
           value={jobsTagFilter}
           onChange={(e) => setJobsTagFilter(e.target.value)}
-          className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm font-medium bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer min-w-[120px]"
+          className="px-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-medium bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer min-w-[120px]"
           title="Tag"
         >
           <option value="">All Tags</option>
@@ -10678,7 +10840,7 @@ Duration: ${file.duration || 'N/A'}
         <select
           value={jobsConfigFilter}
           onChange={(e) => setJobsConfigFilter(e.target.value)}
-          className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm font-medium bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer min-w-[120px]"
+          className="px-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-medium bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer min-w-[120px]"
           title="Config"
         >
           <option value="">All Configs</option>
@@ -10689,7 +10851,7 @@ Duration: ${file.duration || 'N/A'}
         <select
           value={jobsTimeFilter}
           onChange={(e) => setJobsTimeFilter(e.target.value)}
-          className="px-3 py-1.5 border border-slate-300 rounded-lg text-sm font-medium bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+          className="px-3 py-1.5 border border-slate-300 dark:border-slate-700 rounded-lg text-sm font-medium bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
           title="Time"
         >
           <option value="all">All Time</option>
@@ -10705,7 +10867,7 @@ Duration: ${file.duration || 'N/A'}
               setJobsConfigFilter('');
               setJobsTimeFilter('all');
             }}
-            className="px-2 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold hover:bg-slate-300 flex items-center gap-1"
+            className="px-2 py-1.5 bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold hover:bg-slate-300 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 flex items-center gap-1"
             title="Clear all filters"
           >
             <X size={14} />
@@ -10716,35 +10878,37 @@ Duration: ${file.duration || 'N/A'}
       
       {(loading?.jobs || errors?.jobs) && (
         <div className={`rounded-xl border px-4 py-3 text-sm ${
-          errors?.jobs ? 'bg-red-50 border-red-200 text-red-700' : 'bg-blue-50 border-blue-200 text-blue-700'
+          errors?.jobs
+            ? 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/40 dark:border-red-700 dark:text-red-300'
+            : 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/40 dark:border-blue-700 dark:text-blue-300'
         }`}>
           {errors?.jobs ? `Failed to load jobs: ${errors.jobs}` : 'Loading jobs...'}
         </div>
       )}
 
       {(!loading?.jobs && !errors?.jobs && jobs.length === 0) && (
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-slate-500">
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-slate-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-400">
           No jobs yet
         </div>
       )}
 
       {/* Columns: 3 columns when "All", or 1 column when status selected */}
-      <div className={`grid gap-4 ${jobsStatusFilter === 'all' ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-1'}`}>
+      <div className={`grid gap-4 md:gap-5 ${jobsStatusFilter === 'all' ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-1'}`}>
         {/* Column 1: Pending - show when all or pending */}
         {(jobsStatusFilter === 'all' || jobsStatusFilter === 'pending') && (
-        <div className="space-y-4">
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+        <div className="space-y-3 rounded-2xl border border-slate-200 bg-white/80 p-3 shadow-sm dark:bg-slate-900/70 dark:border-slate-800">
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 dark:bg-amber-900/30 dark:border-amber-700">
             <div className="flex items-center gap-2">
               <div className="w-2.5 h-2.5 bg-amber-500 rounded-full"></div>
-              <h2 className="text-lg font-bold text-slate-800">Pending</h2>
-              <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs font-bold">
+              <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100">Pending</h2>
+              <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full text-xs font-bold dark:bg-amber-900/60 dark:text-amber-200">
                 {filteredPendingJobs.length}
               </span>
             </div>
           </div>
-          <div className="space-y-3 pr-2">
+          <div className="space-y-2 pt-1 pr-1 md:pr-2">
             {filteredPendingJobs.length === 0 ? (
-              <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-slate-400">
+              <div className="rounded-xl border border-slate-200 bg-white px-4 py-6 text-center text-slate-400 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-400">
                 <p>{hasActiveFilters ? 'No matching pending jobs' : 'No pending jobs'}</p>
               </div>
             ) : (
@@ -10759,19 +10923,19 @@ Duration: ${file.duration || 'N/A'}
 
         {/* Column 2: Running - show when all or running */}
         {(jobsStatusFilter === 'all' || jobsStatusFilter === 'running') && (
-        <div className="space-y-4">
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+        <div className="space-y-3 rounded-2xl border border-slate-200 bg-white/80 p-3 shadow-sm dark:bg-slate-900/70 dark:border-slate-800">
+          <div className="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 dark:bg-blue-900/30 dark:border-blue-700">
             <div className="flex items-center gap-2">
               <div className="w-2.5 h-2.5 bg-blue-500 rounded-full animate-pulse"></div>
-              <h2 className="text-lg font-bold text-slate-800">Running</h2>
-              <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">
+              <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100">Running</h2>
+              <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-bold dark:bg-blue-900/60 dark:text-blue-200">
                 {filteredRunningJobs.length}
               </span>
             </div>
           </div>
-          <div className="space-y-3 pr-2">
+          <div className="space-y-2 pt-1 pr-1 md:pr-2">
             {filteredRunningJobs.length === 0 ? (
-              <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-slate-400">
+              <div className="rounded-xl border border-slate-200 bg-white px-4 py-6 text-center text-slate-400 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-400">
                 <p>{hasActiveFilters ? 'No matching running jobs' : 'No running jobs'}</p>
               </div>
             ) : (
@@ -10786,19 +10950,19 @@ Duration: ${file.duration || 'N/A'}
 
         {/* Column 3: Completed - show when all or completed */}
         {(jobsStatusFilter === 'all' || jobsStatusFilter === 'completed') && (
-        <div className="space-y-4">
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+        <div className="space-y-3 rounded-2xl border border-slate-200 bg-white/80 p-3 shadow-sm dark:bg-slate-900/70 dark:border-slate-800">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 dark:bg-emerald-900/30 dark:border-emerald-700">
             <div className="flex items-center gap-2">
               <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full"></div>
-              <h2 className="text-lg font-bold text-slate-800">Completed</h2>
-              <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-xs font-bold">
+              <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100">Completed</h2>
+              <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-xs font-bold dark:bg-emerald-900/60 dark:text-emerald-200">
                 {displayCompletedJobs.length}
               </span>
             </div>
           </div>
-          <div className="space-y-3 pr-2">
+          <div className="space-y-2 pt-1 pr-1 md:pr-2">
             {displayCompletedJobs.length === 0 ? (
-              <div className="rounded-xl border border-slate-200 bg-white px-4 py-10 text-center text-slate-400">
+              <div className="rounded-xl border border-slate-200 bg-white px-4 py-6 text-center text-slate-400 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-400">
                 <p>{hasActiveFilters ? 'No matching completed jobs' : 'No completed jobs'}</p>
               </div>
             ) : (
@@ -11202,6 +11366,7 @@ const BoardsPage = () => {
                 <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">MAC Address</th>
                 <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Model</th>
                 <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Firmware</th>
+                <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">FPGA / ARM</th>
                 <th className="px-6 py-4 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Actions</th>
           </tr>
         </thead>
@@ -11489,7 +11654,7 @@ const HistoryPage = ({ onViewJob }) => {
 </head>
 <body>
   <div class="container">
-    <h1>Test Report - Batch #${jobId}</h1>
+    <h1>Test Report - Set #${jobId}</h1>
     <div class="info">
       <div class="info-item">
         <div class="info-label">Test Name</div>
@@ -11588,7 +11753,7 @@ const HistoryPage = ({ onViewJob }) => {
 </head>
 <body>
   <div class="container">
-    <h1>Test Report - Batch #${jobId}</h1>
+    <h1>Test Report - Set #${jobId}</h1>
     <div class="info">
       <div class="info-item">
         <div class="info-label">Test Name</div>
@@ -11657,7 +11822,7 @@ const HistoryPage = ({ onViewJob }) => {
     const job = jobs.find(j => j.id === jobId);
     if (!job) return;
     
-    const logContent = `Test Batch Log - Batch #${jobId}
+    const logContent = `Test Set Log - Set #${jobId}
 Generated: ${new Date().toISOString()}
 ========================================
 
@@ -11752,10 +11917,10 @@ Summary:
   <div className="space-y-6 min-w-0">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-2">
         <div className="min-w-0">
-    <h1 className="text-2xl sm:text-3xl font-bold">Test History</h1>
-          <p className="text-slate-500 mt-1 text-sm sm:text-base">View completed test batches and their results</p>
+    <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-slate-100">Test History</h1>
+          <p className="text-slate-500 dark:text-slate-400 mt-1 text-sm sm:text-base">View completed test batches and their results</p>
         </div>
-        <div className="text-sm text-slate-500 flex-shrink-0">
+        <div className="text-sm text-slate-500 dark:text-slate-400 flex-shrink-0">
           {completedJobs.length} completed batch{completedJobs.length !== 1 ? 'es' : ''}
         </div>
       </div>
@@ -11765,13 +11930,13 @@ Summary:
             <div 
               key={job.id} 
               onClick={() => onViewJob(job.id)}
-              className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 hover:bg-slate-50 hover:border-blue-300 transition-all group cursor-pointer min-w-0"
+              className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 hover:bg-slate-50 dark:hover:bg-slate-800 hover:border-blue-300 dark:hover:border-slate-600 transition-all group cursor-pointer min-w-0"
             >
           <div className="flex items-center gap-4 sm:gap-6 min-w-0">
             <div className={`h-14 w-14 rounded-2xl flex items-center justify-center ${
               hasFailedFiles(job) 
-                ? 'bg-red-50 text-red-600' 
-                : 'bg-emerald-50 text-emerald-600'
+                ? 'bg-red-50 text-red-600 dark:bg-red-900/40 dark:text-red-300' 
+                : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-300'
             }`}>
               {hasFailedFiles(job) ? (
                 <AlertCircle size={28} />
@@ -11780,26 +11945,26 @@ Summary:
               )}
             </div>
             <div className="min-w-0">
-                  <h4 className="font-bold text-slate-800 text-base sm:text-lg truncate">Batch #{job.id} - {job.name}</h4>
-                  <p className="text-slate-400 text-sm flex items-center gap-2">
+                  <h4 className="font-bold text-slate-800 dark:text-slate-100 text-base sm:text-lg truncate">{(job.name || job.configName || '').trim() || `Set #${job.id}`}</h4>
+                  <p className="text-slate-400 dark:text-slate-400 text-sm flex items-center gap-2">
                     <Clock size={14}/> {formatDate(job)} • {formatDuration(job)} duration
                   </p>
                   <div className="flex items-center gap-3 mt-2">
-                    <span className="text-xs font-bold text-slate-600">
+                    <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
                       {job.completedFiles}/{job.totalFiles} files
                     </span>
                     {hasFailedFiles(job) && (
-                      <span className="text-xs font-bold bg-red-100 text-red-700 px-2 py-0.5 rounded flex items-center gap-1">
+                      <span className="text-xs font-bold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 px-2 py-0.5 rounded flex items-center gap-1">
                         <AlertCircle size={12} />
                         {getFailedFilesCount(job)} failed
                       </span>
                     )}
                     {job.tag && (
-                      <span className="text-xs font-bold bg-purple-100 text-purple-700 px-2 py-0.5 rounded">
+                      <span className="text-xs font-bold bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 px-2 py-0.5 rounded">
                         {job.tag}
                       </span>
                     )}
-                    <span className="text-xs font-bold text-slate-600">
+                    <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
                       {job.firmware}
                     </span>
             </div>
@@ -11807,8 +11972,8 @@ Summary:
               </div>
               <div className="flex flex-wrap items-center gap-2 sm:gap-3 flex-shrink-0">
                 <div className="text-right">
-                  <div className="text-sm font-bold text-emerald-600">{job.progress}%</div>
-                  <div className="text-xs text-slate-400">Completed</div>
+                  <div className="text-sm font-bold text-emerald-600 dark:text-emerald-300">{job.progress}%</div>
+                  <div className="text-xs text-slate-400 dark:text-slate-400">Completed</div>
                 </div>
                 {hasFailedFiles(job) && (
                   <button
@@ -11829,10 +11994,10 @@ Summary:
                 <div className="relative download-menu-container">
                   <button
                     onClick={(e) => toggleDownloadMenu(e, job.id)}
-                    className="p-2 hover:bg-blue-50 rounded-lg transition-all group-hover:bg-blue-50"
+                    className="p-2 hover:bg-blue-50 dark:hover:bg-slate-800 rounded-lg transition-all group-hover:bg-blue-50 dark:group-hover:bg-slate-800"
                     title="Download files"
                   >
-                    <Download size={20} className="text-slate-400 group-hover:text-blue-600 transition-colors" />
+                    <Download size={20} className="text-slate-400 dark:text-slate-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors" />
                   </button>
                   
                   {downloadMenuOpen[job.id] && (
@@ -11889,7 +12054,7 @@ Summary:
                     </div>
                   )}
                 </div>
-                <ChevronRight className="text-slate-300 group-hover:text-blue-500 transition-colors" size={20} />
+                <ChevronRight className="text-slate-300 dark:text-slate-600 group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors" size={20} />
               </div>
             </div>
           ))}
@@ -11928,7 +12093,7 @@ const ActiveJobCard = ({ job, onClick }) => {
       <div className="flex justify-between items-start mb-3">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-bold text-slate-700 dark:text-slate-200">Batch #{job.id}</span>
+            <span className="font-bold text-slate-700 dark:text-slate-200">Set #{job.id}</span>
             <span className={`text-xs font-bold px-2 py-0.5 rounded ${
               job.status === 'running' ? 'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300' : 'bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
             }`}>
@@ -12520,7 +12685,7 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
   );
 };
 
-const FileRow = ({ file, jobId, index, totalFiles, onStop, onRerun, onRerunFailed, onMoveUp, onMoveDown, onShowError, job, reportChecked, onToggleReport, onDownloadReport }) => {
+const FileRow = ({ file, jobId, index, totalFiles, onStop, onRerun, onRerunFailed, onMoveUp, onMoveDown, onShowError, job, reportChecked, onToggleReport, onDownloadReport, fileLibraryInfo, onOpenInLibrary }) => {
   const getTestCaseDisplayName = (f) => formatTestCaseDisplayNameRaw(f?.testCaseName || f?.vcd || f?.name || 'N/A');
   const getStatusColor = (status) => {
     switch(status) {
@@ -12638,8 +12803,25 @@ ${file.notes || 'No additional notes available.'}
       <div className="flex-1 flex items-center gap-3 min-w-0">
         <FileCode size={20} className={`shrink-0 ${isFailed ? 'text-red-500' : 'text-slate-400'}`} />
         <div className="flex-1 min-w-0">
-          <div className={`font-bold truncate ${isFailed ? 'text-red-800' : 'text-slate-700'}`} title={getTestCaseDisplayName(file)}>{getTestCaseDisplayName(file)}</div>
-          <div className="text-xs text-slate-400">Order: {file.order || index + 1}{file.vcd && file.testCaseName ? ` · ${file.vcd}` : ''}</div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`font-bold truncate ${isFailed ? 'text-red-800' : 'text-slate-700'}`} title={getTestCaseDisplayName(file)}>{getTestCaseDisplayName(file)}</span>
+            {onOpenInLibrary && (file.vcd || file.erom || file.ulp) && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onOpenInLibrary(file.vcd || file.erom || file.ulp); }}
+                className="text-xs font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline shrink-0"
+                title="Show file in File Library"
+              >
+                Open in Library
+              </button>
+            )}
+          </div>
+          <div className="text-xs text-slate-400">
+            Order: {file.order || index + 1}{file.vcd && file.testCaseName ? ` · ${file.vcd}` : ''}
+            {fileLibraryInfo && (fileLibraryInfo.size || fileLibraryInfo.date) && (
+              <span className="ml-2"> · {[fileLibraryInfo.size, fileLibraryInfo.date].filter(Boolean).join(' · ')}</span>
+            )}
+          </div>
           {isFailed && file.errorMessage && (
             <div className="text-xs text-red-600 mt-1 font-medium truncate" title={file.errorMessage}>⚠ {file.errorMessage}</div>
           )}
@@ -12752,9 +12934,9 @@ const BatchDetailsModal = ({ batch, onClose }) => (
       <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="p-6 border-b border-slate-200 flex justify-between items-center sticky top-0 bg-white">
           <div>
-            <h2 className="text-2xl font-bold">Batch #{batch.id} - {batch.name}</h2>
+            <h2 className="text-2xl font-bold">{batch.name || `Set #${batch.id}`}</h2>
             <p className="text-sm text-slate-500 mt-1">
-              {batch.completedFiles}/{batch.totalFiles} files completed • {batch.progress}%
+              ID: {batch.id} • {batch.completedFiles}/{batch.totalFiles} files completed • {batch.progress}%
             </p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-lg">
@@ -12826,10 +13008,10 @@ const BatchDetailsModal = ({ batch, onClose }) => (
 
 // Board Card (Grid View)
 const BoardCard = ({ board, jobs = [], selected, onSelect, onClick, onRightClick, onViewDetails, onPauseQueue, onResumeQueue, onRestart, onShutdown }) => {
-  const jobId = (board.currentJob || '').replace(/^Batch #/, '');
+  const jobId = (board.currentJob || '').replace(/^(Batch|Set) #/, '');
   const currentJob = jobId ? (jobs || []).find(j => j.id === jobId) : null;
   const currentJobLabel = currentJob
-    ? `${(currentJob.configName || currentJob.name || 'Batch').trim()} · batch #${currentJob.id}`
+    ? `${(currentJob.configName || currentJob.name || 'Set').trim()} · ID #${currentJob.id}`
     : (board.currentJob || 'Idle');
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
@@ -12954,6 +13136,24 @@ const BoardCard = ({ board, jobs = [], selected, onSelect, onClick, onRightClick
           <span className="text-slate-400 dark:text-slate-500">Firmware:</span>
           <span className="font-bold text-slate-800 dark:text-slate-200">{board.firmware}</span>
         </div>
+        {(board.fpgaStatus || board.armStatus) && (
+          <div className="flex justify-between gap-2">
+            <span className="text-slate-400 dark:text-slate-500">FPGA / ARM:</span>
+            <span className="font-bold text-slate-800 dark:text-slate-200 flex gap-1.5">
+              <span className={board.fpgaStatus === 'active' ? 'text-emerald-600' : board.fpgaStatus === 'error' ? 'text-red-600' : 'text-slate-500'} title="FPGA">{board.fpgaStatus || '—'}</span>
+              <span className="text-slate-400">/</span>
+              <span className={board.armStatus === 'online' ? 'text-emerald-600' : board.armStatus === 'busy' ? 'text-blue-600' : board.armStatus === 'error' ? 'text-red-600' : 'text-slate-500'} title="ARM">{board.armStatus || '—'}</span>
+            </span>
+          </div>
+        )}
+        {board.lastHeartbeat && (
+          <div className="flex justify-between">
+            <span className="text-slate-400 dark:text-slate-500">Last heartbeat:</span>
+            <span className="font-bold text-slate-800 dark:text-slate-200 text-[10px]" title={board.lastHeartbeat}>
+              {new Date(board.lastHeartbeat).toLocaleTimeString()}
+            </span>
+          </div>
+        )}
         <div className="flex justify-between">
           <span className="text-slate-400 dark:text-slate-500">Current Job:</span>
           <span className="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[60%]" title={currentJobLabel}>{currentJobLabel}</span>
@@ -13016,6 +13216,15 @@ const BoardTableRow = ({ board, selected, onSelect, onClick, onSSHClick }) => {
       <td className="px-6 py-4 text-sm font-mono text-slate-500">{board.mac}</td>
       <td className="px-6 py-4 text-sm font-bold text-slate-600">{board.model}</td>
       <td className="px-6 py-4 text-sm font-bold text-slate-600">{board.firmware}</td>
+      <td className="px-6 py-4 text-xs">
+        {(board.fpgaStatus || board.armStatus) ? (
+          <span className="font-mono">
+            <span className={board.fpgaStatus === 'active' ? 'text-emerald-600' : board.fpgaStatus === 'error' ? 'text-red-600' : 'text-slate-500'}>{board.fpgaStatus || '—'}</span>
+            <span className="text-slate-400 mx-1">/</span>
+            <span className={board.armStatus === 'online' ? 'text-emerald-600' : board.armStatus === 'busy' ? 'text-blue-600' : board.armStatus === 'error' ? 'text-red-600' : 'text-slate-500'}>{board.armStatus || '—'}</span>
+          </span>
+        ) : '—'}
+      </td>
       <td className="px-6 py-4">
         <button
           onClick={(e) => {
@@ -13036,10 +13245,10 @@ const BoardTableRow = ({ board, selected, onSelect, onClick, onSSHClick }) => {
 const DeviceDetailsPanel = ({ board, onClose, onSSHClick }) => {
   const { updateBoardTag, updateBoardConnections, deleteBoard, jobs: storeJobs } = useTestStore();
   const jobs = storeJobs || [];
-  const jobId = (board.currentJob || '').replace(/^Batch #/, '');
+  const jobId = (board.currentJob || '').replace(/^(Batch|Set) #/, '');
   const currentJob = jobId ? jobs.find(j => j.id === jobId) : null;
   const currentJobLabel = currentJob
-    ? `${(currentJob.configName || currentJob.name || 'Batch').trim()} · batch #${currentJob.id}`
+    ? `${(currentJob.configName || currentJob.name || 'Set').trim()} · ID #${currentJob.id}`
     : (board.currentJob || 'Idle');
   const addToast = useTestStore((state) => state.addToast);
   const [boardTag, setBoardTag] = useState(board.tag || '');
@@ -13076,12 +13285,21 @@ const DeviceDetailsPanel = ({ board, onClose, onSSHClick }) => {
               <X size={24} />
             </button>
           </div>
-          <div className={`inline-block px-3 py-1 rounded-full text-xs font-bold uppercase ${
-            board.status === 'online' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300' :
-            board.status === 'busy' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300' :
-            'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300'
-          }`}>
-            {board.status}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold uppercase ${
+              board.status === 'online' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300' :
+              board.status === 'busy' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300' :
+              'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300'
+            }`}>
+              {board.status}
+            </span>
+            {(board.fpgaStatus || board.armStatus) && (
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                FPGA: <strong className={board.fpgaStatus === 'active' ? 'text-emerald-600' : board.fpgaStatus === 'error' ? 'text-red-600' : 'text-slate-600'}>{board.fpgaStatus || '—'}</strong>
+                {' · '}
+                ARM: <strong className={board.armStatus === 'online' ? 'text-emerald-600' : board.armStatus === 'busy' ? 'text-blue-600' : board.armStatus === 'error' ? 'text-red-600' : 'text-slate-600'}>{board.armStatus || '—'}</strong>
+              </span>
+            )}
           </div>
         </div>
         

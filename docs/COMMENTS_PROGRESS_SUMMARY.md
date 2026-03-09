@@ -6,7 +6,7 @@
 |--------|----------------|------------------|
 | **Test case — Re-run (fails), select erom/ulp/VCD** | ยังไม่ครบ | มีปุ่ม Re-run ไฟล์เดียวและ Re-run failed ทั้งชุดได้ แต่ยัง **ไม่มีการให้เลือก erom/ulp/VCD ใหม่** ตอน re-run (ส่งไฟล์เดิมตาม job) |
 | **แก้ Test case — กระทบ running** | ยังไม่ชัด | ระบบยังไม่ได้ออกแบบให้แก้ test case แล้ว sync กับ job ที่กำลังรันอยู่ (แก้ใน library/table ไม่กระทบ job ที่ส่งไปแล้ว) |
-| **Bug — delete/select/edit/stop + message** | มีบางส่วน | มี delete set, stop job, edit job (pairs/tag), reorder; ข้อความบางจุดอาจยังไม่ตรงหรือไม่ครบ ตามที่ comment ระบุ |
+| **Bug — delete/select/edit/stop + message** | ทำแล้ว (EVAL-43) | ลบ batch: รองรับผลลัพธ์บางส่วน (ลบได้ X, ล้มเหลว Y), เคลียร์ selection เฉพาะที่ลบสำเร็จ; หยุด/re-run test case: มี toast สำเร็จ/ไม่สำเร็จ; ข้อความใน Jobs ใช้ภาษาไทย (ลบ/หยุด/รัน) ให้ตรงและครบ |
 | **System/Profile — select forward profiles** | ทำได้แล้ว | เลือก profile ได้จาก ProfileSwitcher (create, switch, delete, rename, export/import) เก็บใน localStorage |
 | **Payload/Config — Set payload ให้ถูกต้อง** | ทำแล้ว | สร้าง job จาก Run Set ส่ง payload มี name, tag, firmware, files, pairsData, configName; backend รับตาม API |
 

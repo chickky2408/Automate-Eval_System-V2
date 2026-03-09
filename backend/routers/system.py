@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 from datetime import datetime
+from typing import Optional
 import os
 import shutil
 
@@ -34,6 +35,13 @@ async def _get_storage_summary() -> dict:
     }
 
 
+def _seconds_since(dt: Optional[datetime]) -> Optional[float]:
+    if dt is None:
+        return None
+    delta = datetime.utcnow() - dt
+    return delta.total_seconds()
+
+
 @router.get("/health")
 async def get_system_health():
     boards = await board_manager.get_all_boards()
@@ -41,12 +49,21 @@ async def get_system_health():
     online = sum(1 for b in boards if b.status.state.value == "online")
     busy = sum(1 for b in boards if b.status.state.value == "busy")
     error = sum(1 for b in boards if b.status.state.value in {"error", "offline"})
+    # Boards with no heartbeat in 60s (or never) = stale
+    STALE_THRESHOLD_SEC = 60
+    stale = sum(
+        1
+        for b in boards
+        if _seconds_since(b.status.last_heartbeat) is None
+        or _seconds_since(b.status.last_heartbeat) > STALE_THRESHOLD_SEC
+    )
     storage = await _get_storage_summary()
     return {
         "totalBoards": total,
         "onlineBoards": online,
         "busyBoards": busy,
         "errorBoards": error,
+        "staleBoards": stale,
         "storageUsage": storage["percentage"],
         "storageTotal": storage["total"],
         "storageUsed": storage["used"],

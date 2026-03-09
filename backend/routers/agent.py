@@ -24,6 +24,9 @@ class HeartbeatRequest(BaseModel):
     cpu_load: float
     ram_usage: float
     status: str  # "IDLE", "BUSY", "ERROR"
+    fpga_status: Optional[str] = None  # "active" | "idle" | "error" | "unknown"
+    arm_status: Optional[str] = None   # "online" | "busy" | "error" | "unknown"
+
 
 @router.post("/register")
 async def register_board(payload: BoardRegisterRequest, request: Request):
@@ -57,7 +60,9 @@ async def heartbeat(payload: HeartbeatRequest, request: Request):
     success = await board_manager.update_heartbeat(
         board_id=payload.board_id,
         ip=client_ip,
-        temp=payload.cpu_temp
+        temp=payload.cpu_temp,
+        fpga_status=payload.fpga_status,
+        arm_status=payload.arm_status,
     )
     
     if not success:

@@ -129,6 +129,8 @@ class BoardORM(Base):
     ram_usage = Column(Float, nullable=True)
     current_job_id = Column(String(32), nullable=True)
     last_heartbeat = Column(DateTime, nullable=True)
+    fpga_status = Column(String(32), nullable=True)  # 'active' | 'idle' | 'error' | 'unknown'
+    arm_status = Column(String(32), nullable=True)   # 'online' | 'busy' | 'error' | 'unknown'
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

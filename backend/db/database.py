@@ -92,6 +92,25 @@ async def init_db():
                             pass
             await conn.run_sync(_add_job_columns)
 
+        # Migration: add fpga_status, arm_status to boards if not present
+        async with engine.begin() as conn:
+            def _add_board_status_columns(sync_conn):
+                is_sqlite = "sqlite" in DATABASE_URL
+                if is_sqlite:
+                    cur = sync_conn.execute(text("PRAGMA table_info(boards)"))
+                    cols = [row[1] for row in cur.fetchall()]
+                    if "fpga_status" not in cols:
+                        sync_conn.execute(text("ALTER TABLE boards ADD COLUMN fpga_status VARCHAR(32)"))
+                    if "arm_status" not in cols:
+                        sync_conn.execute(text("ALTER TABLE boards ADD COLUMN arm_status VARCHAR(32)"))
+                else:
+                    for col in ["fpga_status", "arm_status"]:
+                        try:
+                            sync_conn.execute(text(f"ALTER TABLE boards ADD COLUMN {col} VARCHAR(32)"))
+                        except Exception:
+                            pass
+            await conn.run_sync(_add_board_status_columns)
+
         print(f"[DB] Database ready at {DATABASE_URL}")
     except Exception as e:
         print(f"[DB] Connection failed: {e}")

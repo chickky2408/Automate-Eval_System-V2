@@ -45,6 +45,8 @@ class BoardManager:
                 ram_usage=orm.ram_usage,
                 current_job_id=orm.current_job_id,
                 last_heartbeat=orm.last_heartbeat,
+                fpga_status=getattr(orm, 'fpga_status', None),
+                arm_status=getattr(orm, 'arm_status', None),
             ),
         )
 
@@ -134,19 +136,28 @@ class BoardManager:
             board = result.scalar_one_or_none()
             return self._orm_to_model(board) if board else None
 
-    async def update_heartbeat(self, board_id: str, ip: str, temp: float) -> bool:
+    async def update_heartbeat(
+        self,
+        board_id: str,
+        ip: str,
+        temp: float,
+        fpga_status: Optional[str] = None,
+        arm_status: Optional[str] = None,
+    ) -> bool:
         """Process heartbeat from board."""
         async with async_session() as session:
+            values = {
+                "ip_address": ip,
+                "cpu_temp": temp,
+                "last_heartbeat": datetime.utcnow(),
+                "state": BoardState.ONLINE.value,
+            }
+            if fpga_status is not None:
+                values["fpga_status"] = fpga_status
+            if arm_status is not None:
+                values["arm_status"] = arm_status
             result = await session.execute(
-                update(BoardORM)
-                .where(BoardORM.id == board_id)
-                .values(
-                    ip_address=ip,
-                    cpu_temp=temp,
-                    last_heartbeat=datetime.utcnow(),
-                    # If it was offline, bring it back online (unless it's BUSY)
-                    state=BoardState.ONLINE.value 
-                )
+                update(BoardORM).where(BoardORM.id == board_id).values(**values)
             )
             await session.commit()
             return result.rowcount > 0

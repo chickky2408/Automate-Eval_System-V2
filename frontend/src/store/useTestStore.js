@@ -317,6 +317,7 @@ export const useTestStore = create((set, get) => ({
     onlineBoards: 0,
     busyBoards: 0,
     errorBoards: 0,
+    staleBoards: 0,
     storageUsage: 0, // percentage
     storageTotal: '0B',
     storageUsed: '0B',
@@ -378,6 +379,11 @@ export const useTestStore = create((set, get) => ({
   libraryEditContext: null, // { loadSetId: string, focusTcIndex?: number } | null
   setLibraryEditContext: (ctx) => set({ libraryEditContext: ctx }),
   clearLibraryEditContext: () => set({ libraryEditContext: null }),
+
+  // When JobsPage (or other) wants to navigate to File Library and focus a file
+  libraryFocusFileNameOnNavigate: null,
+  setLibraryFocusFileNameOnNavigate: (name) => set({ libraryFocusFileNameOnNavigate: name }),
+  clearLibraryFocusFileNameOnNavigate: () => set({ libraryFocusFileNameOnNavigate: null }),
 
   // UI State
   theme: (() => {
@@ -1050,20 +1056,69 @@ export const useTestStore = create((set, get) => ({
   appendSavedTestCaseSet: (id) => set((state) => {
     const setEntry = state.savedTestCaseSets.find((s) => s.id === id);
     if (!setEntry) return state;
-    const existingNames = new Set(state.workingTestCases.map((t) => (t.name || '').trim()).filter(Boolean));
-    const ensureUnique = (baseName) => {
-      const base = (baseName || 'Test case').trim() || 'Test case';
-      if (!existingNames.has(base)) return base;
-      let n = 2;
-      while (existingNames.has(`${base} (${n})`)) n++;
-      return `${base} (${n})`;
-    };
-    const appended = (setEntry.items || []).map((t) => {
-      const name = ensureUnique((t.name || '').trim() || 'Test case');
-      existingNames.add(name);
-      return {
+
+    // ถ้ากำลังแก้ไข Set ใดอยู่ → append เข้า table ของ Set นั้น (loadedSetTable)
+    if (state.loadedSetId) {
+      const baseList = Array.isArray(state.loadedSetTable) ? state.loadedSetTable : [];
+      const existingNames = new Set(baseList.map((t) => (t.name || '').trim()).filter(Boolean));
+      const appended = (setEntry.items || [])
+        // ถ้าใน 2 set มี test case ชื่อซ้ำ ให้ใช้แค่ตัวที่มีอยู่แล้ว (ไม่สร้างซ้ำ)
+        .filter((t) => {
+          const name = (t.name || '').trim();
+          if (!name) return true;
+          if (existingNames.has(name)) return false;
+          existingNames.add(name);
+          return true;
+        })
+        .map((t) => {
+          const name = (t.name || '').trim() || 'Test case';
+          const extra = t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {};
+          const commands = [];
+          ['VCD2', 'VCD3', 'VCD4', 'ERoM2', 'ERoM3', 'ULP2', 'ULP3'].forEach((col) => {
+            const v = (extra[col] ?? '').toString().trim();
+            if (v) {
+              const type = col.startsWith('VCD') ? 'vcd' : col.startsWith('ERoM') ? 'erom' : 'ulp';
+              commands.push({ id: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`, type, file: v });
+              delete extra[col];
+            }
+          });
+          return {
+            id: `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+            name,
+            vcdName: t.vcdName || '',
+            binName: t.binName || '',
+            linName: t.linName || '',
+            boardId: t.boardId || '',
+            tryCount: typeof t.tryCount === 'number' && t.tryCount > 0 ? t.tryCount : 1,
+            extraColumns: extra,
+            commands,
+            createdAt: t.createdAt || new Date().toISOString(),
+          };
+        });
+      if (!appended.length) return state;
+      return { loadedSetTable: [...baseList, ...appended] };
+    }
+
+    // กรณีไม่ได้แก้ไข Set ใดอยู่ → append เข้า Library test cases (savedTestCases)
+    const baseList = Array.isArray(state.savedTestCases) ? state.savedTestCases : [];
+    const contentKey = (tc) => [
+      (tc.name || '').trim(),
+      (tc.vcdName || '').trim(),
+      (tc.binName || '').trim(),
+      (tc.linName || '').trim(),
+    ].join('\0');
+    const seen = new Set(baseList.map(contentKey));
+
+    const appended = (setEntry.items || [])
+      .filter((t) => {
+        const key = contentKey(t);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .map((t) => ({
         id: `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        name,
+        name: t.name || 'Test case',
         vcdName: t.vcdName || '',
         binName: t.binName || '',
         linName: t.linName || '',
@@ -1071,9 +1126,12 @@ export const useTestStore = create((set, get) => ({
         tryCount: typeof t.tryCount === 'number' && t.tryCount > 0 ? t.tryCount : 1,
         extraColumns: t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {},
         createdAt: t.createdAt || new Date().toISOString(),
-      };
-    });
-    return { workingTestCases: [...state.workingTestCases, ...appended] };
+      }));
+
+    if (!appended.length) return state;
+    const next = [...baseList, ...appended];
+    saveSavedTestCases(next);
+    return { savedTestCases: next };
   }),
 
   // Profile Management (no login/logout)
@@ -1447,7 +1505,15 @@ export const useTestStore = create((set, get) => ({
           });
         });
         const localNotifications = [...newLocal, ...(state.localNotifications || [])];
-        return { jobs: data, localNotifications };
+        // ใช้ชื่อ test case ไม่ใช่ชื่อไฟล์ — แมป test_case_name จาก API ถ้า testCaseName ว่าง
+        const jobs = (data || []).map((j) => ({
+          ...j,
+          files: (j.files || []).map((f) => ({
+            ...f,
+            testCaseName: f.testCaseName ?? f.test_case_name,
+          })),
+        }));
+        return { jobs, localNotifications };
       });
       return data;
     } catch (error) {
@@ -1499,7 +1565,11 @@ export const useTestStore = create((set, get) => ({
           });
         });
         const localNotifications = [...newLocal, ...(state.localNotifications || [])];
-        return { jobs: data, localNotifications };
+        const jobs = (data || []).map((j) => ({
+          ...j,
+          files: (j.files || []).map((f) => ({ ...f, testCaseName: f.testCaseName ?? f.test_case_name })),
+        }));
+        return { jobs, localNotifications };
       });
       return data;
     } catch (error) {
@@ -1843,7 +1913,11 @@ export const useTestStore = create((set, get) => ({
     }));
     void api.stopJobFile(jobId, fileId)
       .then(() => get().refreshJobs())
-      .catch((error) => console.error('Failed to stop job file', error));
+      .then(() => get().addToast({ type: 'success', message: 'หยุด test case นี้แล้ว' }))
+      .catch((error) => {
+        console.error('Failed to stop job file', error);
+        get().addToast({ type: 'error', message: 'หยุด test case ไม่สำเร็จ' });
+      });
   },
 
   rerunFile: (jobId, fileId) => {
@@ -1863,7 +1937,11 @@ export const useTestStore = create((set, get) => ({
     }));
     void api.rerunJobFile(jobId, fileId)
       .then(() => get().refreshJobs())
-      .catch((error) => console.error('Failed to re-run job file', error));
+      .then(() => get().addToast({ type: 'success', message: 'ส่ง re-run test case นี้แล้ว' }))
+      .catch((error) => {
+        console.error('Failed to re-run job file', error);
+        get().addToast({ type: 'error', message: 're-run test case ไม่สำเร็จ' });
+      });
   },
   
   moveFileUp: (jobId, fileId) => {
