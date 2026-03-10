@@ -426,10 +426,16 @@ export const checkFile = (payload) => apiRequest(API_ENDPOINTS.FILE_CHECK, {
 export const uploadFile = (file, metadata = {}) => {
   const formData = new FormData();
   formData.append('file', file);
-  Object.keys(metadata).forEach(key => {
-    formData.append(key, metadata[key]);
+  const formMeta = { ...metadata };
+  if (formMeta.forceNew != null) {
+    formMeta.force_new = formMeta.forceNew ? 'true' : 'false';
+    delete formMeta.forceNew;
+  }
+  Object.keys(formMeta).forEach(key => {
+    const val = formMeta[key];
+    if (val != null && val !== '') formData.append(key, String(val));
   });
-  
+
   return apiRequest(API_ENDPOINTS.FILE_UPLOAD, {
     method: 'POST',
     headers: {}, // Let browser set Content-Type for FormData

@@ -171,9 +171,10 @@ class JobQueueService:
 
     async def update_job_meta(
         self, job_id: str, *, name: Optional[str] = None,
-        vcd_filename: Optional[str] = None, firmware_filename: Optional[str] = None
+        vcd_filename: Optional[str] = None, firmware_filename: Optional[str] = None,
+        pairs_data: Optional[dict] = None,
     ) -> bool:
-        """Update job metadata (name, vcd_filename, firmware_filename). Only for pending jobs."""
+        """Update job metadata. Only for pending jobs."""
         async with async_session() as session:
             values = {}
             if name is not None:
@@ -182,6 +183,8 @@ class JobQueueService:
                 values["vcd_filename"] = vcd_filename
             if firmware_filename is not None:
                 values["firmware_filename"] = firmware_filename
+            if pairs_data is not None:
+                values["pairs_data"] = pairs_data
             if not values:
                 return True
             result = await session.execute(

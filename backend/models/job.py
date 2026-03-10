@@ -1,7 +1,7 @@
 """Job-related Pydantic models."""
 from pydantic import BaseModel
 from enum import Enum
-from typing import Optional, List
+from typing import Optional, List, Union
 from datetime import datetime
 
 
@@ -39,7 +39,7 @@ class JobCreate(BaseModel):
     tag: Optional[str] = None
     client_id: Optional[str] = None
     config_name: Optional[str] = None
-    pairs_data: Optional[dict] = None
+    pairs_data: Optional[Union[dict, list]] = None  # List of pair dicts from frontend
 
 
 class Job(BaseModel):
@@ -66,7 +66,7 @@ class Job(BaseModel):
     tag: Optional[str] = None
     client_id: Optional[str] = None
     config_name: Optional[str] = None
-    pairs_data: Optional[dict] = None
+    pairs_data: Optional[Union[dict, list]] = None
 
     class Config:
         from_attributes = True

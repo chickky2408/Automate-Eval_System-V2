@@ -92,6 +92,28 @@ async def init_db():
                             pass
             await conn.run_sync(_add_job_columns)
 
+        # Migration: add owner_id, visibility to files if not present
+        async with engine.begin() as conn:
+            def _add_file_owner_visibility(sync_conn):
+                is_sqlite = "sqlite" in DATABASE_URL
+                if is_sqlite:
+                    cur = sync_conn.execute(text("PRAGMA table_info(files)"))
+                    cols = [row[1] for row in cur.fetchall()]
+                    if "owner_id" not in cols:
+                        sync_conn.execute(text("ALTER TABLE files ADD COLUMN owner_id VARCHAR(128)"))
+                    if "visibility" not in cols:
+                        sync_conn.execute(text("ALTER TABLE files ADD COLUMN visibility VARCHAR(32)"))
+                else:
+                    try:
+                        sync_conn.execute(text("ALTER TABLE files ADD COLUMN owner_id VARCHAR(128)"))
+                    except Exception:
+                        pass
+                    try:
+                        sync_conn.execute(text("ALTER TABLE files ADD COLUMN visibility VARCHAR(32)"))
+                    except Exception:
+                        pass
+            await conn.run_sync(_add_file_owner_visibility)
+
         # Migration: add fpga_status, arm_status to boards if not present
         async with engine.begin() as conn:
             def _add_board_status_columns(sync_conn):

@@ -25,6 +25,8 @@ class FileORM(Base):
     size_bytes = Column(BigInteger, default=0)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     set_id = Column(String(128), nullable=True)  # null = main library; set id = stored with that set
+    owner_id = Column(String(128), nullable=True)  # client_id or profile_id of uploader
+    visibility = Column(String(32), default="public")  # 'private' | 'team' | 'public'
 
 
 class JobORM(Base):

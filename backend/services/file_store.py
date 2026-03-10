@@ -65,6 +65,8 @@ class FileStore:
                 "uploadDate": f.uploaded_at.isoformat() + "Z",
                 "checksum": f.checksum_sha256,
                 "set_id": f.set_id,
+                "ownerId": getattr(f, "owner_id", None),
+                "visibility": getattr(f, "visibility", None) or "public",
             }
 
     async def find_by_name(self, name: str, set_id: Optional[str] = None) -> List[dict]:
@@ -89,6 +91,8 @@ class FileStore:
         content: bytes,
         set_id: Optional[str] = None,
         force_new: bool = False,
+        owner_id: Optional[str] = None,
+        visibility: str = "public",
     ) -> dict:
         """Save file to disk and DB. set_id=None for main library; set_id=id for set storage.
         Detects duplicates: by content (checksum) returns existing record without saving, unless force_new=True;
@@ -133,6 +137,8 @@ class FileStore:
                 size_bytes=size,
                 uploaded_at=datetime.utcnow(),
                 set_id=set_id,
+                owner_id=owner_id,
+                visibility=visibility or "public",
             )
             session.add(orm)
             await session.commit()
@@ -146,6 +152,8 @@ class FileStore:
                 "uploadDate": orm.uploaded_at.isoformat() + "Z",
                 "checksum": orm.checksum_sha256,
                 "set_id": orm.set_id,
+                "ownerId": getattr(orm, "owner_id", None),
+                "visibility": getattr(orm, "visibility", None) or "public",
             }
             if existing_by_name:
                 out["duplicateByName"] = True
@@ -169,6 +177,8 @@ class FileStore:
                     "type": f.file_type.value,
                     "uploadDate": f.uploaded_at.isoformat() + "Z",
                     "checksum": f.checksum_sha256,
+                    "ownerId": getattr(f, "owner_id", None),
+                    "visibility": getattr(f, "visibility", None) or "public",
                 }
                 for f in files
             ]

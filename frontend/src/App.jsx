@@ -7,7 +7,8 @@ import {
   RefreshCw, Download, Activity, XCircle, Eye, MoreVertical,
   ArrowUp, ArrowDown, Square, Tag, FileJson, StopCircle, Plus,
   Command, Copy, Play, Layers, Monitor, ChevronDown, ChevronUp, GripVertical, ChevronLeft, CheckSquare, Pencil,
-  Pause, ZoomIn, ZoomOut, Trash2, Gauge, User, UserPlus, LogOut, Save, FileDown, FileUp, FolderOpen
+  Pause, ZoomIn, ZoomOut, Trash2, Gauge, User, UserPlus, LogOut, Save, FileDown, FileUp, FolderOpen,
+  Lock, Globe, Users
 } from 'lucide-react';
 import { useTestStore } from './store/useTestStore';
 import { Terminal as XTerm } from '@xterm/xterm';
@@ -16,6 +17,7 @@ import '@xterm/xterm/css/xterm.css';
 import API_ENDPOINTS from './utils/apiEndpoints';
 import api from './services/api';
 import { computeFileSignature } from './utils/fileSignature';
+import { getClientId } from './utils/sessionStorage';
 
 // Modal: per-file choice "Reuse ของเดิม" or "Upload ใหม่" before upload
 const UploadChoiceModal = ({ open, prepared = [], onConfirm, onCancel }) => {
@@ -2667,6 +2669,10 @@ const getTestCasesUsingFile = (fileName, savedTestCases, savedTestCaseSets) => {
 // FILE LIBRARY PAGE — default: Test Case Library (เรียง set ลงมา แต่ละ set มีตารางแนวนอน + แสดงไฟล์); ปุ่มสลับView files in Library
 const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const { uploadedFiles, removeUploadedFile, loading, errors, savedTestCaseSets, savedTestCases, removeSavedTestCase, updateSavedTestCaseSet, removeSavedTestCaseSet, fileTags, setFileTag } = useTestStore();
+  const activeProfileId = useTestStore((s) => s.activeProfileId);
+  const profiles = useTestStore((s) => s.profiles) || [];
+  const activeProfile = profiles.find((p) => p.id === activeProfileId) || { id: 'default', name: 'Default' };
+  const currentClientId = getClientId();
   const jobs = useTestStore((s) => s.jobs);
   const refreshFiles = useTestStore((s) => s.refreshFiles);
   const addToast = useTestStore((s) => s.addToast);
@@ -2713,12 +2719,8 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
       if (setName) update(setStatus, setName, status);
 
       (job.files || []).forEach((f) => {
-        const tcName = (f.testCaseName || f.name || '').trim();
+        const tcName = (f.testCaseName || '').trim();
         if (tcName) update(tcStatus, tcName, status);
-        ['vcd', 'erom', 'ulp'].forEach((field) => {
-          const nm = (f[field] || '').trim();
-          if (nm) update(fileStatus, nm, status);
-        });
       });
     });
 
@@ -2761,6 +2763,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const isDragSelectingFileRef = useRef(false);
   const [libraryFocusFileName, setLibraryFocusFileName] = useState(null);
   const focusedLibraryFileRef = useRef(null);
+  const [libraryCreatedByFilter, setLibraryCreatedByFilter] = useState('all'); // 'all' | 'mine' | 'shared' — for files and test cases
 
   const getFileKind = (f) => {
     const ext = String(f?.name || '').split('.').pop()?.toLowerCase();
@@ -2779,6 +2782,11 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
         if (fileStatusFilter !== status) return false;
       }
       if (fileSearch.trim()) return f.name.toLowerCase().includes(fileSearch.trim().toLowerCase());
+      if (libraryCreatedByFilter === 'mine') {
+        if ((f.ownerId || '') !== currentClientId) return false;
+      } else if (libraryCreatedByFilter === 'shared') {
+        if (!f.ownerId || f.ownerId === currentClientId) return false;
+      }
       return true;
     })
     .sort((a, b) => (fileSort === 'time' ? (b.uploadDate || 0) - (a.uploadDate || 0) : (a.name || '').localeCompare(b.name || '')));
@@ -2904,6 +2912,8 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
         ...tc,
         _key: `current-${tc.id}`,
         _source: 'current',
+        _owner: activeProfile.name,
+        _ownerId: activeProfileId,
       })
     );
     const seen = new Set(fromCurrent.map((tc) => contentKey(tc)));
@@ -2915,6 +2925,8 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
           _source: 'set',
           _setId: set.id,
           _itemIndex: tcIdx,
+          _owner: activeProfile.name,
+          _ownerId: activeProfileId,
         })
       )
     );
@@ -2925,21 +2937,23 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
       return true;
     });
     return [...fromCurrent, ...fromSetsDeduped];
-  }, [libraryView, savedTestCases, savedTestCaseSets, getTestCaseStatusFromJobs]);
+  }, [libraryView, savedTestCases, savedTestCaseSets, getTestCaseStatusFromJobs, activeProfile, activeProfileId]);
 
   const libraryFilteredRows = useMemo(() => {
     return libraryRawRows.filter((tc) => {
       if (libraryTcNameFilter.trim() && !(tc.name || '').toLowerCase().includes(libraryTcNameFilter.trim().toLowerCase())) return false;
       const tagVal = (tc.extraColumns && (tc.extraColumns.tag || tc.extraColumns.Tag)) || '';
       if (libraryTcTagFilter.trim() && !String(tagVal).toLowerCase().includes(libraryTcTagFilter.trim().toLowerCase())) return false;
-       if (libraryTcStatusFilter !== 'all') {
-         const status = tc._status || null;
-         if (!status) return false;
-         if (libraryTcStatusFilter !== status) return false;
-       }
+      if (libraryTcStatusFilter !== 'all') {
+        const status = tc._status || null;
+        if (!status) return false;
+        if (libraryTcStatusFilter !== status) return false;
+      }
+      if (libraryCreatedByFilter === 'mine' && tc._ownerId !== activeProfileId) return false;
+      if (libraryCreatedByFilter === 'shared' && (tc._ownerId === activeProfileId || !tc._ownerId)) return false;
       return true;
     });
-  }, [libraryRawRows, libraryTcNameFilter, libraryTcTagFilter, libraryTcStatusFilter]);
+  }, [libraryRawRows, libraryTcNameFilter, libraryTcTagFilter, libraryTcStatusFilter, libraryCreatedByFilter, activeProfileId]);
 
   useEffect(() => {
     const onMouseUp = () => {
@@ -3049,6 +3063,16 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
           return (
             <div className="space-y-6">
               <div className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 flex flex-wrap items-center gap-3">
+                <select
+                  value={libraryCreatedByFilter}
+                  onChange={(e) => setLibraryCreatedByFilter(e.target.value)}
+                  className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800"
+                  title="Filter by creator"
+                >
+                  <option value="all">All</option>
+                  <option value="mine">Mine</option>
+                  <option value="shared">Shared with me</option>
+                </select>
                 <input type="text" value={librarySetTcNameFilter} onChange={(e) => setLibrarySetTcNameFilter(e.target.value)} placeholder="Filter by name" className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 w-40" />
                 <input type="text" value={librarySetTcTagFilter} onChange={(e) => setLibrarySetTcTagFilter(e.target.value)} placeholder="Filter by tag" className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 w-32" />
                 <select
@@ -3150,6 +3174,8 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                               <th className="w-9 px-2 py-2 border-r border-slate-200 dark:border-slate-600">#</th>
                               <th className="w-8 px-2 py-2 border-r border-slate-200 dark:border-slate-600">#</th>
                               <th className="min-w-[120px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">Name</th>
+                              <th className="w-24 px-2 py-2 border-r border-slate-200 dark:border-slate-600" title="Owner">Owner</th>
+                              <th className="w-10 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center" title="Visibility">Vis</th>
                               <th className="w-24 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Date</th>
                               <th className="min-w-[100px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">ERoM</th>
                               <th className="min-w-[100px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">ULP</th>
@@ -3163,7 +3189,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                           <tbody>
                             {filteredItems.length === 0 ? (
                               <tr>
-                                <td colSpan={10 + extraCols.length} className="px-2 py-4 text-center text-slate-400 text-xs">No test cases in this set{items.length > 0 ? ' (or no match for filter)' : ''}</td>
+                                <td colSpan={12 + extraCols.length} className="px-2 py-4 text-center text-slate-400 text-xs">No test cases in this set{items.length > 0 ? ' (or no match for filter)' : ''}</td>
                               </tr>
                             ) : (
                               filteredItems.map((tc, idx) => {
@@ -3191,6 +3217,8 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                     </td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-500">{idx + 1}</td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 font-medium text-slate-800 dark:text-slate-200">{tc.name || '—'}</td>
+                                    <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400 truncate max-w-[80px]" title={activeProfile.name}>{activeProfile.name}</td>
+                                    <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center" title="public"><span className="inline-flex items-center justify-center text-slate-400 dark:text-slate-500"><Globe size={14} /></span></td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center text-slate-500 dark:text-slate-400 text-xs">{tc.createdAt ? new Date(tc.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">{tc.binName || '—'}</td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">{tc.linName || '—'}</td>
@@ -3202,21 +3230,21 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                         const status = tc._status || null;
                                         if (status === 'running') {
                                           return (
-                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[10px] font-semibold" title="Running in current set(s)">
+                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-semibold" title="Running in current set(s)">
                                               Running
                                             </span>
                                           );
                                         }
                                         if (status === 'pending') {
                                           return (
-                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-yellow-50 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-700 text-[10px] font-semibold" title="Pending in run queue">
+                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-700 border border-yellow-200 text-[10px] font-semibold" title="Pending in run queue">
                                               Pending
                                             </span>
                                           );
                                         }
                                         if (status === 'completed') {
                                           return (
-                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700 text-[10px] font-semibold" title="Completed in past run(s)">
+                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 text-[10px] font-semibold" title="Completed in past run(s)">
                                               Completed
                                             </span>
                                           );
@@ -3349,6 +3377,16 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1"></p>
               </div>
               <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-700 flex flex-wrap items-center gap-3">
+                <select
+                  value={libraryCreatedByFilter}
+                  onChange={(e) => setLibraryCreatedByFilter(e.target.value)}
+                  className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800"
+                  title="Filter by creator"
+                >
+                  <option value="all">All</option>
+                  <option value="mine">Mine</option>
+                  <option value="shared">Shared with me</option>
+                </select>
                 <input
                   type="text"
                   value={libraryTcNameFilter}
@@ -3404,6 +3442,8 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                       </th>
                       <th className="w-8 px-2 py-2 border-r border-slate-200 dark:border-slate-600">#</th>
                       <th className="min-w-[120px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">Name</th>
+                      <th className="w-24 px-2 py-2 border-r border-slate-200 dark:border-slate-600" title="Owner">Owner</th>
+                      <th className="w-10 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center" title="Visibility">Vis</th>
                       <th className="w-28 px-2 py-2 border-r border-slate-200 dark:border-slate-600">Tag</th>
                       <th className="w-24 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Date</th>
                       <th className="min-w-[100px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">ERoM</th>
@@ -3420,7 +3460,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                   <tbody>
                     {libraryFilteredRows.length === 0 ? (
                       <tr>
-                        <td colSpan={11 + extraCols.length} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400 text-sm">
+                        <td colSpan={13 + extraCols.length} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400 text-sm">
                           No test cases yet — or no match for filter. Create on Test Cases page or clear filters.
                         </td>
                       </tr>
@@ -3470,6 +3510,12 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                             </td>
                             <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 font-medium text-slate-800 dark:text-slate-200 min-w-[120px]">
                               {tc.name || '—'}
+                            </td>
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400 truncate max-w-[80px]" title={tc._owner || '—'}>
+                              {tc._owner || '—'}
+                            </td>
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center" title="public">
+                              <span className="inline-flex items-center justify-center text-slate-400 dark:text-slate-500" title="public"><Globe size={14} /></span>
                             </td>
                             <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700">
                               {(() => {
@@ -3624,21 +3670,21 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                 const status = tc._status || null;
                                 if (status === 'running') {
                                   return (
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[10px] font-semibold" title="Running in current set(s)">
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200 text-[10px] font-semibold" title="Running in current set(s)">
                                       Running
                                     </span>
                                   );
                                 }
                                 if (status === 'pending') {
                                   return (
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-yellow-50 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-700 text-[10px] font-semibold" title="Pending in run queue">
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-700 border border-yellow-200 text-[10px] font-semibold" title="Pending in run queue">
                                       Pending
                                     </span>
                                   );
                                 }
                                 if (status === 'completed') {
                                   return (
-                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700 text-[10px] font-semibold" title="Completed in past run(s)">
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 text-[10px] font-semibold" title="Completed in past run(s)">
                                       Completed
                                     </span>
                                   );
@@ -3741,6 +3787,16 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
           return (
             <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
               <div className="p-3 flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-600">
+                <select
+                  value={libraryCreatedByFilter}
+                  onChange={(e) => setLibraryCreatedByFilter(e.target.value)}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800"
+                  title="Filter by creator"
+                >
+                  <option value="all">All</option>
+                  <option value="mine">Mine</option>
+                  <option value="shared">Shared with me</option>
+                </select>
                 <div className="flex rounded-lg border border-slate-200 dark:border-slate-600 overflow-hidden shrink-0">
                   <button type="button" onClick={() => setFileViewMode('all')} className={`px-3 py-1.5 text-xs font-semibold ${fileViewMode === 'all' ? 'bg-slate-200 dark:bg-slate-600 text-slate-800 dark:text-slate-100' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}>All</button>
                   <button type="button" onClick={() => setFileViewMode('bySet')} className={`px-3 py-1.5 text-xs font-semibold ${fileViewMode === 'bySet' ? 'bg-slate-200 dark:bg-slate-600 text-slate-800 dark:text-slate-100' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}>Separate by Set</button>
@@ -3803,6 +3859,12 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                         >
                           <input type="checkbox" checked={isSelected} onChange={() => toggleFileSelect(f.id, index, { shiftKey: false, ctrlKey: false, metaKey: false })} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded cursor-pointer shrink-0" />
                           <span className="flex-1 min-w-0 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
+                          <span className="text-[11px] text-slate-500 dark:text-slate-400 shrink-0 max-w-[70px] truncate" title={f.ownerId ? `Owner: ${f.ownerId}` : '—'}>
+                            {f.ownerId === currentClientId ? 'Me' : (f.ownerId ? 'Other' : '—')}
+                          </span>
+                          <span className="shrink-0 text-slate-400 dark:text-slate-500" title={f.visibility || 'public'}>
+                            {f.visibility === 'private' ? <Lock size={14} /> : f.visibility === 'team' ? <Users size={14} /> : <Globe size={14} />}
+                          </span>
                           <input
                             type="text"
                             value={tagVal}
@@ -3872,6 +3934,12 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                     >
                                       <input type="checkbox" checked={isSelected} onChange={() => toggleFileSelect(f.id, globalIndex >= 0 ? globalIndex : fileIdx, { shiftKey: false, ctrlKey: false, metaKey: false })} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded cursor-pointer shrink-0" />
                                       <span className="flex-1 min-w-0 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
+                                      <span className="text-[11px] text-slate-500 dark:text-slate-400 shrink-0 max-w-[70px] truncate" title={f.ownerId ? `Owner: ${f.ownerId}` : '—'}>
+                                        {f.ownerId === currentClientId ? 'Me' : (f.ownerId ? 'Other' : '—')}
+                                      </span>
+                                      <span className="shrink-0 text-slate-400 dark:text-slate-500" title={f.visibility || 'public'}>
+                                        {f.visibility === 'private' ? <Lock size={14} /> : f.visibility === 'team' ? <Users size={14} /> : <Globe size={14} />}
+                                      </span>
                                       {inUseByBatch && (
                                         <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[10px] font-semibold shrink-0" title="In use by a running or pending set">In use by set</span>
                                       )}
@@ -6520,10 +6588,11 @@ const RunSetPage = ({ onNavigateJobs }) => {
       });
     }
     const missing = [...missingNames];
-    const pairsData = items.map((tc) => {
+    const pairsData = items.map((tc, idx) => {
       const vcdFile = safeFiles.find((f) => f.name === (tc.vcdName || ''));
       const binFile = safeFiles.find((f) => f.name === (tc.binName || ''));
       const linFile = (tc.linName && safeFiles.find((f) => f.name === tc.linName)) || null;
+      const tcName = (tc.name || '').trim() || `Test case ${idx + 1}`;
       return {
         vcdId: vcdFile?.id,
         binId: binFile?.id,
@@ -6534,6 +6603,7 @@ const RunSetPage = ({ onNavigateJobs }) => {
         try: typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1,
         boardId: tc.boardId || null,
         boardName: tc.boardId ? (safeBoards.find((b) => b.id === tc.boardId)?.name) : null,
+        testCaseName: tcName, // ชื่อ test case สำหรับ persist หลัง restart
       };
     });
     return { missing, filesPayload, firstBinName, pairsData };
@@ -9655,7 +9725,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
   };
   const getReportSelectedForJob = (jobId) => new Set(selectedReportFileIds[jobId] || []);
 
-  const getTestCaseDisplayNameForReport = (f) => (f?.testCaseName || f?.vcd || f?.name || 'N/A');
+  const getTestCaseDisplayNameForReport = (f) => (f?.testCaseName || (f?.order != null ? `Test case ${f.order}` : '—'));
 
   const getFileLibraryInfoForJobFile = (f) => {
     const names = [f?.vcd, f?.erom, f?.ulp].filter(Boolean);
@@ -10501,7 +10571,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
     );
   };
   
-  const getTestCaseDisplayNameForModal = (f) => formatTestCaseDisplayNameRaw(f?.testCaseName || f?.vcd || f?.name || 'N/A');
+  const getTestCaseDisplayNameForModal = (f) => formatTestCaseDisplayNameRaw(f?.testCaseName || (f?.order != null ? `Test case ${f.order}` : '—'));
 
   return (
   <div className="space-y-4 min-w-0">
@@ -10620,7 +10690,7 @@ Duration: ${file.duration || 'N/A'}
             </p>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {failedFiles.map((f, i) => {
-                const displayName = f.testCaseName || f.vcd || f.name || `Test case ${i + 1}`;
+                const displayName = f.testCaseName || (f.order != null ? `Test case ${f.order}` : `Test case ${i + 1}`);
                 const sel = rerunSelections[i] || { vcd: '', erom: '', ulp: '' };
                 const vcdNames = new Set(vcdOptions.map((o) => o.name));
                 const eromNames = new Set(eromOptions.map((o) => o.name));
@@ -11590,8 +11660,8 @@ const HistoryPage = ({ onViewJob }) => {
   const displayCompletedJobs =
     completedJobs.length === 0 ? [DEMO_COMPLETED_HISTORY, DEMO_FAILED_HISTORY] : completedJobs;
 
-  // ชื่อแสดงของ test case: ใช้ชื่อจาก set (testCaseName) ก่อน แล้วค่อย VCD/ชื่อไฟล์
-  const getTestCaseDisplayName = (file) => (file?.testCaseName || file?.vcd || file?.name || 'N/A');
+  // ชื่อแสดงของ test case: ใช้ชื่อจาก set (testCaseName) เท่านั้น
+  const getTestCaseDisplayName = (file) => (file?.testCaseName || (file?.order != null ? `Test case ${file.order}` : '—'));
   
   // Export functions for different formats
   const exportToCSV = (jobId) => {
@@ -12288,7 +12358,7 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
   const [selectedFileIds, setSelectedFileIds] = useState([]);
   const [showDetails, setShowDetails] = useState(false); // collapse details to get more space for file list / drop
 
-  const getTestCaseDisplayName = (file) => formatTestCaseDisplayNameRaw(file?.testCaseName || file?.vcd || file?.name || 'N/A');
+  const getTestCaseDisplayName = (file) => formatTestCaseDisplayNameRaw(file?.testCaseName || (file?.order != null ? `Test case ${file.order}` : '—'));
   
   // Filter and search files
   const filteredFiles = files.filter(file => {
@@ -12686,7 +12756,7 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
 };
 
 const FileRow = ({ file, jobId, index, totalFiles, onStop, onRerun, onRerunFailed, onMoveUp, onMoveDown, onShowError, job, reportChecked, onToggleReport, onDownloadReport, fileLibraryInfo, onOpenInLibrary }) => {
-  const getTestCaseDisplayName = (f) => formatTestCaseDisplayNameRaw(f?.testCaseName || f?.vcd || f?.name || 'N/A');
+  const getTestCaseDisplayName = (f) => formatTestCaseDisplayNameRaw(f?.testCaseName || (f?.order != null ? `Test case ${f.order}` : '—'));
   const getStatusColor = (status) => {
     switch(status) {
       case 'completed': return 'bg-emerald-100 text-emerald-700';
@@ -12971,7 +13041,7 @@ const BatchDetailsModal = ({ batch, onClose }) => (
                   <div key={file.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
                     <div className="flex items-center gap-3">
                       <FileCode size={18} className="text-slate-400" />
-                      <span className="text-sm font-bold">{file.testCaseName || file.vcd || file.name}</span>
+                      <span className="text-sm font-bold">{file.testCaseName || (file.order != null ? `Test case ${file.order}` : '—')}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className={`text-xs font-bold px-2 py-1 rounded ${

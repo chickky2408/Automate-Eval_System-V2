@@ -119,6 +119,7 @@ async def _build_fe_job(job) -> dict:
         job.id,
         firmware=job.firmware_filename,
         default_file_name=job.vcd_filename,
+        pairs_data=getattr(job, "pairs_data", None),  # Restore from DB after restart
     )
     status = _map_job_state(job.status.state)
     files = fe_job_store.sync_files_for_status(job.id, status)
@@ -184,6 +185,7 @@ async def create_job(payload: JobCreatePayload):
         target_board_id=None,
         priority=0,
         timeout_seconds=60,
+        pairs_data=payload.pairsData,  # Persist for restore after restart
     )
     job = await job_queue_service.add_job(job_data)
 
@@ -224,6 +226,7 @@ async def update_job(job_id: str, payload: JobCreatePayload):
         name=payload.name,
         vcd_filename=vcd_filename,
         firmware_filename=firmware_filename or None,
+        pairs_data=payload.pairsData if payload.pairsData is not None else None,
     )
     fe_job_store.create_from_payload(
         job_id,
@@ -247,7 +250,7 @@ async def start_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
 
-    fe_job_store.ensure_meta(job.id, default_file_name=job.vcd_filename)
+    fe_job_store.ensure_meta(job.id, default_file_name=job.vcd_filename, pairs_data=getattr(job, "pairs_data", None))
     job_files = fe_job_store.list_files(job.id)
     file_names = set()
     for f in job_files:
@@ -361,7 +364,7 @@ async def get_job_files(job_id: str):
     job = await job_queue_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-    fe_job_store.ensure_meta(job.id, default_file_name=job.vcd_filename)
+    fe_job_store.ensure_meta(job.id, default_file_name=job.vcd_filename, pairs_data=getattr(job, "pairs_data", None))
     files = fe_job_store.list_files(job.id)
     return _serialize_files(files)
 
@@ -372,8 +375,17 @@ async def get_job_pairs(job_id: str):
     job = await job_queue_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    # Restore from DB when fe_job_store is empty (e.g. after restart)
+    fe_job_store.ensure_meta(
+        job.id,
+        default_file_name=job.vcd_filename,
+        pairs_data=getattr(job, "pairs_data", None),
+    )
     pairs_data = fe_job_store.get_pairs_data(job.id)
     if pairs_data is None:
+        db_pairs = getattr(job, "pairs_data", None)
+        if db_pairs is not None:
+            return {"pairsData": db_pairs}
         raise HTTPException(status_code=404, detail="Pairs data not found for this job")
     return {"pairsData": pairs_data}
 
@@ -384,7 +396,7 @@ async def stop_job_file(job_id: str, file_id: int):
     job = await job_queue_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-    fe_job_store.ensure_meta(job.id, default_file_name=job.vcd_filename)
+    fe_job_store.ensure_meta(job.id, default_file_name=job.vcd_filename, pairs_data=getattr(job, "pairs_data", None))
     file_item = fe_job_store.update_file(job.id, file_id, status="stopped")
     if not file_item:
         raise HTTPException(status_code=404, detail="File not found")
@@ -397,7 +409,7 @@ async def rerun_job_file(job_id: str, file_id: int):
     job = await job_queue_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-    fe_job_store.ensure_meta(job.id, default_file_name=job.vcd_filename)
+    fe_job_store.ensure_meta(job.id, default_file_name=job.vcd_filename, pairs_data=getattr(job, "pairs_data", None))
     files = fe_job_store.list_files(job.id)
     file_before = next((f for f in files if f.id == file_id), None)
     if not file_before:
@@ -414,7 +426,7 @@ async def move_job_file(job_id: str, file_id: int, payload: FileMoveRequest):
     job = await job_queue_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-    fe_job_store.ensure_meta(job.id, default_file_name=job.vcd_filename)
+    fe_job_store.ensure_meta(job.id, default_file_name=job.vcd_filename, pairs_data=getattr(job, "pairs_data", None))
     files = fe_job_store.move_file(job.id, file_id, payload.direction)
     return {
         "success": True,

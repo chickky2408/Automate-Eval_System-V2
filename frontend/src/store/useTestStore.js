@@ -579,7 +579,9 @@ export const useTestStore = create((set, get) => ({
     }
 
     try {
-      const uploaded = await api.uploadFile(uploadTarget);
+      const ownerId = getClientId();
+      const meta = (typeof file === 'object' && file?.metadata ? file.metadata : {}) || {};
+      const uploaded = await api.uploadFile(uploadTarget, { ...meta, owner_id: ownerId, visibility: meta.visibility || 'public' });
       if (uploaded.duplicateByContent) {
         get().addToast({ type: 'info', message: `"${uploaded.name}" has the same content as an existing file — reusing existing file` });
       }
@@ -596,6 +598,8 @@ export const useTestStore = create((set, get) => ({
         type: inferFileType(uploaded.name, uploaded.type),
         file: null,
         uploadDate: uploaded.uploadDate,
+        ownerId: uploaded.ownerId ?? null,
+        visibility: uploaded.visibility || 'public',
       };
       set((prev) => {
         const alreadyInList = prev.uploadedFiles.some((f) => f.id === uploaded.id);
@@ -1624,6 +1628,8 @@ export const useTestStore = create((set, get) => ({
         file: null,
         uploadDate: file.uploadDate,
         checksum: file.checksum || null,
+        ownerId: file.ownerId ?? file.owner_id ?? null,
+        visibility: file.visibility || 'public',
       }));
       set({
         uploadedFiles: mapped,
@@ -1655,6 +1661,8 @@ export const useTestStore = create((set, get) => ({
         file: null,
         uploadDate: file.uploadDate,
         checksum: file.checksum || null,
+        ownerId: file.ownerId ?? file.owner_id ?? null,
+        visibility: file.visibility || 'public',
       }));
       set({
         uploadedFiles: mapped,

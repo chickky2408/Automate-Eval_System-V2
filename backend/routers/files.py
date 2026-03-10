@@ -80,15 +80,26 @@ async def upload_file(
     file: UploadFile = File(...),
     metadata: Optional[str] = Form(None),
     force_new: Optional[str] = Form(None),
+    owner_id: Optional[str] = Form(None),
+    visibility: Optional[str] = Form(None),
 ):
-    """Upload file. If force_new is 'true', save a new copy even when content (checksum) already exists."""
+    """Upload file. If force_new is 'true', save a new copy even when content (checksum) already exists.
+    owner_id: client_id or profile_id of uploader. visibility: 'private' | 'team' | 'public'."""
     content = await file.read()
     filename = file.filename or "upload.bin"
     file_type = (os.path.splitext(filename)[1] or "").lstrip(".") or (file.content_type or "bin")
     force_save_new = str(force_new or "").lower() in ("true", "1", "yes")
+    vis = (visibility or "public").lower()
+    if vis not in ("private", "team", "public"):
+        vis = "public"
 
     record = await file_store.add_file(
-        name=filename, file_type=file_type, content=content, force_new=force_save_new
+        name=filename,
+        file_type=file_type,
+        content=content,
+        force_new=force_save_new,
+        owner_id=owner_id,
+        visibility=vis,
     )
 
     response = {
@@ -98,7 +109,8 @@ async def upload_file(
         "type": record["type"],
         "uploadDate": record["uploadDate"],
         "checksum": record.get("checksum"),
-        # "set_id": record.get["set_id"]
+        "ownerId": record.get("ownerId"),
+        "visibility": record.get("visibility", "public"),
     }
     if record.get("duplicateByContent"):
         response["duplicateByContent"] = True
@@ -109,9 +121,8 @@ async def upload_file(
 
 @router.get("")
 async def list_files():
-    # Include checksum so frontend can compare before upload (filename, signature, size, modify)
     files = await file_store.list_files()
-    return [
+    result = [
         {
             "id": f["id"],
             "name": f["name"],
@@ -119,9 +130,12 @@ async def list_files():
             "type": f["type"],
             "uploadDate": f["uploadDate"],
             "checksum": f.get("checksum"),
+            "ownerId": f.get("ownerId"),
+            "visibility": f.get("visibility", "public"),
         }
         for f in files
     ]
+    return result
 
 
 @router.get("/{file_id}")

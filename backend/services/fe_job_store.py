@@ -119,9 +119,43 @@ class FEJobStore:
         firmware: Optional[str] = None,
         boards: Optional[List[str]] = None,
         default_file_name: Optional[str] = None,
+        pairs_data: Optional[List[dict]] = None,
     ) -> dict:
+        """Ensure meta exists. Restore from pairs_data (DB) when store is empty after restart."""
         if job_id in self._meta:
             return self._meta[job_id]
+
+        # Restore files from pairs_data when available (e.g. after server restart)
+        if pairs_data and isinstance(pairs_data, list):
+            files_from_pairs = []
+            for idx, p in enumerate(pairs_data):
+                vcd = (p.get("vcdName") or p.get("vcd") or "").strip()
+                erom = (p.get("binName") or p.get("erom") or "").strip()
+                ulp = (p.get("linName") or p.get("ulp") or "").strip() or None
+                tc_name = (p.get("testCaseName") or "").strip() or None
+                name = vcd or f"file_{idx + 1}.vcd"
+                files_from_pairs.append({
+                    "name": name,
+                    "order": idx + 1,
+                    "vcd": vcd or None,
+                    "erom": erom or None,
+                    "ulp": ulp,
+                    "try_count": p.get("try") or p.get("try_count") or 1,
+                    "testCaseName": tc_name,
+                })
+            if files_from_pairs:
+                meta = self.create_from_payload(
+                    job_id,
+                    tag=tag,
+                    firmware=firmware or "",
+                    boards=boards or [],
+                    files=files_from_pairs,
+                    client_id=None,
+                    config_name=None,
+                    default_file_name=default_file_name,
+                )
+                self.save_pairs_data(job_id, pairs_data)
+                return meta
 
         return self.create_from_payload(
             job_id,
