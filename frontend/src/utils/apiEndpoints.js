@@ -96,6 +96,7 @@ export const API_ENDPOINTS = {
 
   // Profiles (Option B1: no login; profile id = share key)
   PROFILES: `${API_BASE_URL}/profiles`,
+  PROFILES_ALL_TEST_CASES: `${API_BASE_URL}/profiles/all-test-cases`,
   PROFILE_BY_ID: (id) => `${API_BASE_URL}/profiles/${id}`,
   PROFILE_DATA: (id) => `${API_BASE_URL}/profiles/${id}/data`,
 

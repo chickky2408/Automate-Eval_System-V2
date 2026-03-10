@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 import uuid
 
@@ -41,6 +41,45 @@ async def list_profiles():
             }
             for p in profiles
         ]
+
+
+@router.get("/all-test-cases")
+async def get_all_test_cases():
+    """
+    Aggregate savedTestCases and savedTestCaseSets from all profiles.
+    Used for 'All' / 'Shared with me' filters in Test Case Library & Set Library.
+    """
+    async with async_session() as session:
+        result = await session.execute(select(ProfileORM))
+        profiles: List[ProfileORM] = result.scalars().all()
+
+    saved_cases: list[dict] = []
+    saved_sets: list[dict] = []
+
+    for p in profiles:
+        data = p.data or {}
+        cases = data.get("savedTestCases") or []
+        sets = data.get("savedTestCaseSets") or []
+
+        for tc in cases:
+            saved_cases.append(
+                {
+                    **tc,
+                    "_ownerId": p.id,
+                    "_ownerName": p.name or p.id,
+                }
+            )
+
+        for s in sets:
+            saved_sets.append(
+                {
+                    **s,
+                    "_ownerId": p.id,
+                    "_ownerName": p.name or p.id,
+                }
+            )
+
+    return {"savedTestCases": saved_cases, "savedTestCaseSets": saved_sets}
 
 
 @router.post("")

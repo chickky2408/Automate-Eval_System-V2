@@ -2763,7 +2763,36 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const isDragSelectingFileRef = useRef(false);
   const [libraryFocusFileName, setLibraryFocusFileName] = useState(null);
   const focusedLibraryFileRef = useRef(null);
-  const [libraryCreatedByFilter, setLibraryCreatedByFilter] = useState('all'); // 'all' | 'mine' | 'shared' — for files and test cases
+  const [libraryCreatedByFilter, setLibraryCreatedByFilter] = useState('mine'); // 'all' | 'mine' | 'shared' — default = Mine
+  const [allProfilesTestData, setAllProfilesTestData] = useState({ savedTestCases: [], savedTestCaseSets: [] });
+  const [allProfilesTestDataLoading, setAllProfilesTestDataLoading] = useState(false);
+
+  // Load test cases/sets from all profiles when filtering by "all" or "shared"
+  useEffect(() => {
+    if (libraryCreatedByFilter === 'mine') return;
+    let cancelled = false;
+    setAllProfilesTestDataLoading(true);
+    api
+      .getAllTestCasesFromProfiles()
+      .then((res) => {
+        if (cancelled) return;
+        setAllProfilesTestData({
+          savedTestCases: Array.isArray(res?.savedTestCases) ? res.savedTestCases : [],
+          savedTestCaseSets: Array.isArray(res?.savedTestCaseSets) ? res.savedTestCaseSets : [],
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAllProfilesTestData({ savedTestCases: [], savedTestCaseSets: [] });
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setAllProfilesTestDataLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [libraryCreatedByFilter]);
 
   const getFileKind = (f) => {
     const ext = String(f?.name || '').split('.').pop()?.toLowerCase();
@@ -2783,9 +2812,13 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
       }
       if (fileSearch.trim()) return f.name.toLowerCase().includes(fileSearch.trim().toLowerCase());
       if (libraryCreatedByFilter === 'mine') {
-        if ((f.ownerId || '') !== currentClientId) return false;
+        const owner = f.ownerId || null; // owner profile (or null for legacy files)
+        // Mine: include files with no owner or owned by active profile
+        if (owner && owner !== activeProfileId) return false;
       } else if (libraryCreatedByFilter === 'shared') {
-        if (!f.ownerId || f.ownerId === currentClientId) return false;
+        const owner = f.ownerId || null;
+        // Shared: files explicitly owned by other profiles
+        if (!owner || owner === activeProfileId) return false;
       }
       return true;
     })
@@ -2907,17 +2940,40 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
       ...tc,
       _status: getTestCaseStatusFromJobs(tc),
     });
-    const fromCurrent = (savedTestCases || []).map((tc) =>
+
+    const hasRemoteData =
+      (allProfilesTestData.savedTestCases && allProfilesTestData.savedTestCases.length > 0) ||
+      (allProfilesTestData.savedTestCaseSets && allProfilesTestData.savedTestCaseSets.length > 0);
+    const useRemote = libraryCreatedByFilter !== 'mine' && hasRemoteData;
+
+    // Choose source: current profile only vs all profiles (when remote data available)
+    const sourceCases = useRemote
+      ? allProfilesTestData.savedTestCases || []
+      : (savedTestCases || []).map((tc) => ({
+          ...tc,
+          _ownerId: activeProfileId,
+          _ownerName: activeProfile.name,
+        }));
+
+    const sourceSets = useRemote
+      ? allProfilesTestData.savedTestCaseSets || []
+      : (savedTestCaseSets || []).map((set) => ({
+          ...set,
+          _ownerId: activeProfileId,
+          _ownerName: activeProfile.name,
+        }));
+
+    const fromCurrent = sourceCases.map((tc) =>
       withStatus({
         ...tc,
-        _key: `current-${tc.id}`,
+        _key: `current-${tc.id || `${tc._ownerId || 'unknown'}-${tc.name || ''}`}`,
         _source: 'current',
-        _owner: activeProfile.name,
-        _ownerId: activeProfileId,
+        _owner: tc._ownerName ?? activeProfile.name,
+        _ownerId: tc._ownerId ?? activeProfileId,
       })
     );
     const seen = new Set(fromCurrent.map((tc) => contentKey(tc)));
-    const fromSets = (savedTestCaseSets || []).flatMap((set) =>
+    const fromSets = (sourceSets || []).flatMap((set) =>
       (Array.isArray(set.items) ? set.items : []).map((tc, tcIdx) =>
         withStatus({
           ...tc,
@@ -2925,8 +2981,8 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
           _source: 'set',
           _setId: set.id,
           _itemIndex: tcIdx,
-          _owner: activeProfile.name,
-          _ownerId: activeProfileId,
+          _owner: set._ownerName ?? activeProfile.name,
+          _ownerId: set._ownerId ?? activeProfileId,
         })
       )
     );
@@ -2937,7 +2993,16 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
       return true;
     });
     return [...fromCurrent, ...fromSetsDeduped];
-  }, [libraryView, savedTestCases, savedTestCaseSets, getTestCaseStatusFromJobs, activeProfile, activeProfileId]);
+  }, [
+    libraryView,
+    savedTestCases,
+    savedTestCaseSets,
+    getTestCaseStatusFromJobs,
+    activeProfile,
+    activeProfileId,
+    libraryCreatedByFilter,
+    allProfilesTestData,
+  ]);
 
   const libraryFilteredRows = useMemo(() => {
     return libraryRawRows.filter((tc) => {
@@ -3091,12 +3156,25 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                 {selectedSetKeys.size > 0 && <span className="text-xs text-slate-500">{selectedSetKeys.size} selected</span>}
                 <span className="text-xs text-slate-400">Click, Shift+click range, Ctrl/Cmd+click toggle, or drag to select. Double-click a row to edit in Test Cases page.</span>
               </div>
-              {!savedTestCaseSets?.length ? (
+              {libraryCreatedByFilter !== 'mine' && allProfilesTestDataLoading ? (
+                <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-8 text-center text-slate-500 dark:text-slate-400">
+                  Loading sets from all profiles…
+                </div>
+              ) : !(
+                (libraryCreatedByFilter === 'mine' ? savedTestCaseSets : allProfilesTestData.savedTestCaseSets) || []
+              )?.length ? (
                 <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-8 text-center text-slate-500 dark:text-slate-400">
                   No sets yet — create test cases and Save Set on the Test Cases page
                 </div>
               ) : (
-                savedTestCaseSets.map((set, setIdx) => {
+                (libraryCreatedByFilter === 'mine'
+                  ? (savedTestCaseSets || []).map((set) => ({
+                      ...set,
+                      _ownerId: activeProfileId,
+                      _ownerName: activeProfile.name,
+                    }))
+                  : allProfilesTestData.savedTestCaseSets || []
+                ).map((set, setIdx) => {
                   const items = Array.isArray(set.items) ? set.items : [];
                   const itemsWithIndex = items.map((tc, i) => ({ ...tc, _origIndex: i, _status: getTestCaseStatusFromJobs(tc) }));
                   const filteredItems = itemsWithIndex.filter((tc) => {
@@ -5755,7 +5833,7 @@ const TestCasesPage = () => {
                         className="w-full px-1 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-center"
                       />
                     </td>
-                    <td className="px-2 py-1.5 flex items-center justify-center gap-0.5">
+                    <td className="px-2 py-1.5 flex items-center justify-center gap-0.5 relative">
                       <span
                         draggable
                         onDragStart={(e) => handleRowDragStart(e, idx)}
@@ -5778,6 +5856,64 @@ const TestCasesPage = () => {
                       >
                         <Copy size={14} />
                       </button>
+                      {/* Add extra file/command (MDI / VCD / ERoM / ULP) — same behavior as Vertical tab */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setCommandMenuTcId(commandMenuTcId === tc.id ? null : tc.id)}
+                          className="p-1 rounded border border-slate-200 dark:border-slate-600 text-blue-600 hover:text-blue-800 hover:bg-slate-100 dark:hover:bg-slate-700"
+                          title="Add extra file (MDI / VCD / ERoM / ULP)"
+                        >
+                          <Plus size={14} />
+                        </button>
+                        {commandMenuTcId === tc.id && (
+                          <>
+                            <div className="absolute right-0 top-full mt-1 z-10 py-1 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-lg min-w-[180px]">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  addDisplayedTestCaseCommand(tc.id, { type: 'mdi', file: '' });
+                                  setCommandMenuTcId(null);
+                                }}
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-slate-100 dark:hover:bg-slate-700"
+                              >
+                                Add MDI (text file)
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  addDisplayedTestCaseCommand(tc.id, { type: 'vcd', file: '' });
+                                  setCommandMenuTcId(null);
+                                }}
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-slate-100 dark:hover:bg-slate-700"
+                              >
+                                Add VCD
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  addDisplayedTestCaseCommand(tc.id, { type: 'erom', file: '' });
+                                  setCommandMenuTcId(null);
+                                }}
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-slate-100 dark:hover:bg-slate-700"
+                              >
+                                Add EROM
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  addDisplayedTestCaseCommand(tc.id, { type: 'ulp', file: '' });
+                                  setCommandMenuTcId(null);
+                                }}
+                                className="w-full text-left px-3 py-2 text-xs hover:bg-slate-100 dark:hover:bg-slate-700"
+                              >
+                                Add ULP
+                              </button>
+                            </div>
+                            <div className="fixed inset-0 z-[5]" aria-hidden onClick={() => setCommandMenuTcId(null)} />
+                          </>
+                        )}
+                      </div>
                       <button
                         type="button"
                         onClick={() => moveSavedTestCaseUp(tc.id)}

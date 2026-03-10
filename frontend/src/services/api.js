@@ -512,6 +512,11 @@ export const createProfileApi = (name) => {
 export const getProfile = (profileId) => apiRequest(API_ENDPOINTS.PROFILE_BY_ID(profileId));
 
 /**
+ * Get all test cases and sets from all profiles (for Library "All"/"Shared" filters)
+ */
+export const getAllTestCasesFromProfiles = () => apiRequest(API_ENDPOINTS.PROFILES_ALL_TEST_CASES);
+
+/**
  * Get profile data (savedTestCases, savedTestCaseSets) — read-only for shared view
  */
 export const getProfileData = (profileId) => apiRequest(API_ENDPOINTS.PROFILE_DATA(profileId));
@@ -705,6 +710,7 @@ export default {
   // Profiles
   createProfileApi,
   getProfile,
+  getAllTestCasesFromProfiles,
   getProfileData,
   putProfileData,
   updateProfileNameApi,
