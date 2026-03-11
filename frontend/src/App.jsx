@@ -978,14 +978,14 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
           icon={<AlertCircle className="text-red-500" />} 
           label="Job Errors" 
           value={jobErrorCount} 
-          sub="Batches with failed tests" 
+          sub="Set with failed tests" 
           onClick={goToJobManager}
         />
         <StatCard 
           icon={<Activity className="text-purple-500" />} 
           label="Job Queue" 
           value={jobQueueCount} 
-          sub="Batches waiting to run" 
+          sub="Set waiting to run" 
           onClick={goToJobManager}
         />
       <StatCard 
