@@ -846,6 +846,7 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
     loading,
     errors
   } = useTestStore();
+  const boardQueuePaused = useTestStore((state) => state.boardQueuePaused || {});
   
   const [selectedBatch, setSelectedBatch] = useState(null);
   const [showBatchDetails, setShowBatchDetails] = useState(false);
@@ -857,12 +858,146 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
   const [editingSystemTagId, setEditingSystemTagId] = useState(null);
   const [systemTagEditInput, setSystemTagEditInput] = useState('');
   const [systemModalJobId, setSystemModalJobId] = useState(null);
+  const [systemModalBoardId, setSystemModalBoardId] = useState(null);
+
+  // ใช้ข้อมูลเดียวกับ Fleet Manager (รวม mock boards) เพื่อให้ Dashboard แสดงสถานะตรงกัน
+  const dashboardDemoBoards = useMemo(
+    () => [
+      // ONLINE
+      {
+        id: 'BOARD-1',
+        name: 'Demo Board 1',
+        status: 'online',
+        ip: '192.168.0.10',
+        mac: '00:11:22:33:44:55',
+        firmware: 'v1.0.0',
+        model: 'Zybo',
+        tag: 'paused',
+        fpgaStatus: 'unknown',
+        armStatus: 'online',
+        currentJob: 'Idle',
+        voltage: '3.3',
+        queuePaused: true,
+        isDemo: true,
+      },
+      {
+        id: 'BOARD-2',
+        name: 'Line A – Ready',
+        status: 'online',
+        ip: '192.168.0.11',
+        mac: '00:11:22:33:44:66',
+        firmware: 'v1.0.3',
+        model: 'Zybo',
+        tag: 'line-a',
+        fpgaStatus: 'active',
+        armStatus: 'online',
+        currentJob: 'Idle',
+        voltage: '3.3',
+        queuePaused: false,
+        isDemo: true,
+      },
+      // BUSY
+      {
+        id: 'BOARD-3',
+        name: 'Burn-in Tester 1',
+        status: 'busy',
+        ip: '192.168.0.21',
+        mac: '00:11:22:33:44:88',
+        firmware: 'v1.1.0',
+        model: 'Zybo',
+        tag: 'burn-in',
+        fpgaStatus: 'active',
+        armStatus: 'busy',
+        currentJob: 'Batch #123 · Functional',
+        voltage: '3.3',
+        queuePaused: false,
+        isDemo: true,
+      },
+      {
+        id: 'BOARD-4',
+        name: 'Demo Board – Busy',
+        status: 'busy',
+        ip: '192.168.0.22',
+        mac: '00:11:22:33:44:99',
+        firmware: 'v1.0.5',
+        model: 'Zybo',
+        tag: 'running',
+        fpgaStatus: 'active',
+        armStatus: 'busy',
+        currentJob: 'Set 02 · Regression',
+        voltage: '3.3',
+        queuePaused: false,
+        isDemo: true,
+      },
+      // ERROR / OFFLINE
+      {
+        id: 'BOARD-ERR',
+        name: 'Demo Error Board',
+        status: 'error',
+        ip: '192.168.0.31',
+        mac: '00:11:22:33:44:77',
+        firmware: 'v1.0.0',
+        model: 'Zybo',
+        tag: 'error',
+        fpgaStatus: 'error',
+        armStatus: 'offline',
+        currentJob: 'Idle',
+        voltage: '3.3',
+        queuePaused: false,
+        isDemo: true,
+      },
+      {
+        id: 'BOARD-OFF',
+        name: 'Spare Board (offline)',
+        status: 'error',
+        ip: '192.168.0.32',
+        mac: '00:11:22:33:44:AA',
+        firmware: 'v0.9.0',
+        model: 'Zybo',
+        tag: 'maintenance',
+        fpgaStatus: 'offline',
+        armStatus: 'offline',
+        currentJob: '—',
+        voltage: '0.0',
+        queuePaused: false,
+        isDemo: true,
+      },
+    ],
+    []
+  );
+
+  const fleetBoards = useMemo(() => {
+    const realBoards = boards || [];
+    const byId = new Map();
+    realBoards.forEach((b) => {
+      byId.set(String(b.id), b);
+    });
+    dashboardDemoBoards.forEach((demo) => {
+      const id = String(demo.id);
+      const base = byId.get(id) || {};
+      byId.set(id, { ...base, ...demo });
+    });
+    const merged = Array.from(byId.values());
+    return merged.map((b) => {
+      const override = boardQueuePaused[String(b.id)];
+      return override === undefined ? b : { ...b, queuePaused: override };
+    });
+  }, [boards, dashboardDemoBoards, boardQueuePaused]);
+
+  const fleetTotalBoards = fleetBoards.length;
+  const fleetOnlineBoards = fleetBoards.filter((b) => b.status === 'online').length;
+  const fleetBusyBoards = fleetBoards.filter((b) => b.status === 'busy').length;
   
   const pendingJobs = jobs.filter(j => j.status === 'pending');
   const jobQueueCount = pendingJobs.length;
-  const jobErrorCount = jobs.filter(
-    (job) => (job.files || []).some((f) => f.result === 'fail' || f.status === 'error')
-  ).length;
+  const jobErrorCount = jobs.filter((job) => {
+    if (job.status !== 'completed' && job.status !== 'stopped') return false;
+    return (job.files || []).some((f) => {
+      const result = (f.result || '').toLowerCase();
+      const status = (f.status || '').toLowerCase();
+      return result === 'fail' || status === 'error';
+    });
+  }).length;
 
   const systemSearchLower = systemSearch.trim().toLowerCase();
   const systemTagOptions = [...new Set(jobs.map((j) => j.tag).filter(Boolean))].sort();
@@ -886,11 +1021,13 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
   });
 
   // System Summary: สรุปว่า system ไหน run อะไรอยู่ (ตาม filter)
+  const clientId = getClientId();
   const systemSummary = systemSummaryJobs.map(job => {
     const rawAt = job.startedAt || job.createdAt;
     const d = rawAt ? new Date(rawAt) : null;
     const displayDate = d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : null;
     const displayTime = d && !Number.isNaN(d.getTime()) ? d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false }) : null;
+    const ownerLabel = job.clientId && job.clientId === clientId ? 'Me' : job.clientId ? 'Other client' : '—';
     return {
       jobId: job.id,
       jobName: job.name,
@@ -899,22 +1036,41 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
       status: job.status,
       totalFiles: job.totalFiles ?? (job.files ? job.files.length : 0),
       firmware: job.firmware,
+      ownerLabel,
       displayDate,
       displayTime
     };
   });
   
-  const availableBoards = boards.filter(b => b.status === 'online' && !b.currentJob).length;
+  const availableBoards = fleetBoards.filter(b => b.status === 'online' && !b.currentJob).length;
   const queuedBoardsLeft = availableBoards; // simplified
-  const deviceProgressRows = boards.map(b => {
-  const jobId = (b.currentJob || '').replace(/^(Batch|Set) #/, '');
-    const job = jobs.find(j => j.id === jobId);
+  const deviceProgressRows = fleetBoards.map((b) => {
+    const boardKey = (b.name || b.id || '').toString();
+    let jobId = (b.currentJob || '').replace(/^(Batch|Set) #/, '');
+    let job = jobs.find((j) => j.id === jobId);
+    // Fallback: if board.currentJob ไม่ถูกเซ็ต ให้หา job ที่ assign board นี้อยู่ (running ก่อน, ถ้าไม่มีก็ pending)
+    if (!job) {
+      job =
+        jobs.find(
+          (j) =>
+            (j.status === 'running') &&
+            (j.boards || []).some((jb) => (jb || '').toString() === boardKey)
+        ) ||
+        jobs.find(
+          (j) =>
+            (j.status === 'pending') &&
+            (j.boards || []).some((jb) => (jb || '').toString() === boardKey)
+        ) ||
+        null;
+    }
     const progress = job ? job.progress : 0;
-    const completedFiles = job ? (job.completedFiles ?? 0) : 0;
-    const totalFiles = job ? (job.totalFiles ?? (job.files ? job.files.length : 0)) : 0;
+    const completedFiles = job ? job.completedFiles ?? 0 : 0;
+    const totalFiles = job ? job.totalFiles ?? (job.files ? job.files.length : 0) : 0;
     const remainingFiles = Math.max(0, totalFiles - completedFiles);
     const jobsWaitingForBoard = pendingJobs.filter(
-      (j) => !(j.boards || []).length || (j.boards || []).some((jb) => (jb || '').toString() === (b.name || b.id || '').toString())
+      (j) =>
+        !(j.boards || []).length ||
+        (j.boards || []).some((jb) => (jb || '').toString() === boardKey)
     ).length;
     return { board: b, progress, job, completedFiles, totalFiles, remainingFiles, jobsWaitingForBoard };
   });
@@ -944,6 +1100,49 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
     ? jobs.find((j) => j.id === systemModalJobId)
     : null;
 
+  const systemModalBoardRow = systemModalBoardId
+    ? deviceProgressRows.find((r) => (r.board?.id || r.board?.name) === systemModalBoardId)
+    : null;
+
+  const getDashboardTestCaseDisplayName = (file) =>
+    file?.testCaseName || (file?.order != null ? `Test case ${file.order}` : '—');
+
+  const systemModalFiles = systemModalJob?.files
+    ? [...systemModalJob.files].sort((a, b) => (a.order || 0) - (b.order || 0))
+    : [];
+  const systemModalRunningFiles = systemModalFiles.filter((f) => (f.status || '').toLowerCase() === 'running');
+  const systemModalFailedFiles = systemModalFiles.filter((f) => {
+    const result = (f.result || '').toLowerCase();
+    const status = (f.status || '').toLowerCase();
+    return result === 'fail' || status === 'error' || status === 'failed';
+  });
+  let systemModalSummaryText = '';
+  if (systemModalJob) {
+    const status = (systemModalJob.status || '').toLowerCase();
+    if (status === 'pending') {
+      systemModalSummaryText = 'Pending — waiting to start';
+    } else if (status === 'running') {
+      if (systemModalRunningFiles.length > 0) {
+        const names = systemModalRunningFiles
+          .slice(0, 2)
+          .map((f) => getDashboardTestCaseDisplayName(f))
+          .join(', ');
+        systemModalSummaryText =
+          systemModalRunningFiles.length > 1
+            ? `Running test cases: ${names}${systemModalRunningFiles.length > 2 ? ` +${systemModalRunningFiles.length - 2} more` : ''}`
+            : `Running test case: ${names}`;
+      } else {
+        systemModalSummaryText = 'Running — waiting for next test case';
+      }
+    } else if (status === 'completed' || status === 'stopped') {
+      if (systemModalFailedFiles.length > 0) {
+        systemModalSummaryText = `Completed with ${systemModalFailedFiles.length} failed test case(s)`;
+      } else {
+        systemModalSummaryText = 'Set completed';
+      }
+    }
+  }
+
   return (
     <div className="space-y-2.5 min-w-0">
       {(hasDashboardError || isDashboardLoading) && (
@@ -963,15 +1162,15 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
         <StatCard 
           icon={<CheckCircle2 className="text-emerald-500" />} 
           label="Online" 
-          value={systemHealth.onlineBoards} 
-          sub={`${systemHealth.totalBoards} Total Boards`} 
+          value={fleetOnlineBoards} 
+          sub={`${fleetTotalBoards} Total Boards`} 
           onClick={goToBoardStatus}
         />
         <StatCard 
           icon={<Zap className="text-blue-500"/>} 
           label="Busy" 
-          value={systemHealth.busyBoards} 
-          sub="Running Tests" 
+          value={fleetBusyBoards} 
+          sub="Running Board" 
           onClick={goToBoardStatus}
         />
         <StatCard 
@@ -1177,7 +1376,7 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
                   )}
                   <div className="text-xs text-slate-500 dark:text-slate-400">
                     <div className="mb-0.5">
-                      {sys.totalFiles ?? 0} Files{sys.firmware ? ` | ${sys.firmware}` : ''}
+                      Owner: {sys.ownerLabel || '—'}
                     </div>
                     <div>
                       Boards:{' '}
@@ -1250,23 +1449,6 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
               </div>
             </div>
             <div className="px-5 py-4 space-y-3">
-              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
-                <span>
-                  <span className="font-semibold">Firmware:</span>{' '}
-                  {systemModalJob.firmware || 'N/A'}
-                </span>
-                <span>
-                  <span className="font-semibold">Boards:</span>{' '}
-                  {(systemModalJob.boards && systemModalJob.boards.length > 0)
-                    ? systemModalJob.boards.join(', ')
-                    : '—'}
-                </span>
-                <span>
-                  <span className="font-semibold">Files:</span>{' '}
-                  {systemModalJob.totalFiles ??
-                    (systemModalJob.files ? systemModalJob.files.length : 0)}
-                </span>
-              </div>
               <div className="border border-slate-200 rounded-xl overflow-hidden">
                 <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
                   <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
@@ -1288,7 +1470,9 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
                       .map((file) => {
                         const isRunning = file.status === 'running';
                         const isFailed =
-                          file.result === 'fail' || file.status === 'error';
+                          (file.result || '').toLowerCase() === 'fail' ||
+                          (file.status || '').toLowerCase() === 'error' ||
+                          (file.status || '').toLowerCase() === 'failed';
                         const rowBg = isFailed
                           ? 'bg-red-50'
                           : isRunning
@@ -1304,7 +1488,7 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
                                 #{file.order || file.id}
                               </span>
                               <span className="truncate font-medium text-slate-700">
-                                {file.name || 'N/A'}
+                                {getDashboardTestCaseDisplayName(file)}
                               </span>
                             </div>
                             <div className="flex items-center gap-2 shrink-0">
@@ -1354,6 +1538,96 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
         </div>
       )}
 
+      {/* Board popup: คลิกที่ Device Progress card → แสดง board กำลัง run set ไหน ของใคร + ปุ่มไป Board Status */}
+      {systemModalBoardRow && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4"
+          onClick={() => setSystemModalBoardId(null)}
+        >
+          <div
+            className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800">
+              <div className="flex items-center gap-2">
+                <Cpu size={18} className="text-blue-600 dark:text-blue-400" />
+                <h2 className="font-bold text-slate-900 dark:text-slate-100 text-sm sm:text-base">
+                  {systemModalBoardRow.board?.name || 'Board'}
+                </h2>
+              </div>
+              <button
+                onClick={() => setSystemModalBoardId(null)}
+                className="p-1.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500"
+                title="Close"
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              {systemModalBoardRow.job ? (
+                <>
+                  <div className="text-sm">
+                    <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-0.5">Running set</div>
+                    <div className="font-semibold text-slate-800 dark:text-slate-200">
+                      {(systemModalBoardRow.job.name || systemModalBoardRow.job.configName || '').trim() || `Set #${systemModalBoardRow.job.id}`}
+                    </div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">ID: {systemModalBoardRow.job.id}</div>
+                  </div>
+                  <div className="text-sm">
+                    <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-0.5">Owner</div>
+                    <div className="font-medium text-slate-700 dark:text-slate-300">
+                      {systemModalBoardRow.job.clientId && systemModalBoardRow.job.clientId === clientId
+                        ? 'Me'
+                        : systemModalBoardRow.job.clientId
+                        ? 'Other client'
+                        : '—'}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="text-sm">
+                  <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-0.5">Status</div>
+                  <div className="font-medium text-slate-700 dark:text-slate-300">Idle</div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Queue: {systemModalBoardRow.jobsWaitingForBoard} waiting
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-4 border-t border-slate-200 dark:border-slate-700 flex flex-wrap gap-2 justify-end">
+              <button
+                onClick={() => setSystemModalBoardId(null)}
+                className="px-3 py-1.5 text-xs font-semibold text-slate-600 dark:text-slate-400 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  setSystemModalBoardId(null);
+                  goToBoardStatus();
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+              >
+                <Activity size={14} />
+                Board Status
+              </button>
+              {systemModalBoardRow.job && (
+                <button
+                  onClick={() => {
+                    setSystemModalBoardId(null);
+                    goToJobManager();
+                  }}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-600 text-white hover:bg-slate-700"
+                >
+                  <Monitor size={14} />
+                  Job Manager
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="w-full">
         {/* Device Progress - compact cards */}
         <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm min-w-0">
@@ -1365,10 +1639,16 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
               </div>
             ) : (
               deviceProgressRows.map(({ board, progress, job, completedFiles, totalFiles, remainingFiles, jobsWaitingForBoard }) => {
-                const isBusy = !!board.currentJob;
-                const isOnline = board.status === 'online';
+                const status = (board.status || '').toLowerCase();
+                const isBusy = status === 'busy';
+                const isOnline = status === 'online';
                 return (
-                  <div key={board.id} className="p-2.5 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700">
+                  <div
+                    key={board.id}
+                    className="p-2.5 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-100 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-500 cursor-pointer"
+                    onClick={() => setSystemModalBoardId(board.id)}
+                    title="Click to view board details"
+                  >
                     <div className="flex items-center justify-between gap-1.5 mb-1">
                       <span className="font-semibold text-sm text-slate-800 dark:text-slate-200 truncate">{board.name}</span>
                       <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0 ${
@@ -3173,7 +3453,11 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                       _ownerId: activeProfileId,
                       _ownerName: activeProfile.name,
                     }))
-                  : allProfilesTestData.savedTestCaseSets || []
+                  : (allProfilesTestData.savedTestCaseSets || []).filter(
+                      (set) =>
+                        libraryCreatedByFilter !== 'shared' ||
+                        (set._ownerId && set._ownerId !== activeProfileId)
+                    )
                 ).map((set, setIdx) => {
                   const items = Array.isArray(set.items) ? set.items : [];
                   const itemsWithIndex = items.map((tc, i) => ({ ...tc, _origIndex: i, _status: getTestCaseStatusFromJobs(tc) }));
@@ -4079,7 +4363,17 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                     {sorted.map(({ job, fileIndex }, i) => {
                       const status = (job.status || '').toLowerCase();
                       const date = getJobDate(job);
-                      const statusCls = status === 'running' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200' : status === 'pending' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-200' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200';
+                      // Use the same palette as Job Management status column
+                      const statusCls =
+                        status === 'completed'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : status === 'running'
+                          ? 'bg-blue-100 text-blue-700'
+                          : status === 'stopped'
+                          ? 'bg-red-100 text-red-700'
+                          : status === 'pending'
+                          ? 'bg-yellow-100 text-yellow-700'
+                          : 'bg-slate-100 text-slate-700';
                       return (
                         <li key={`${job.id}-${fileIndex}-${i}`} className="flex items-center justify-between gap-2 py-2 px-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700">
                           <div className="min-w-0">
@@ -7410,6 +7704,59 @@ const RunSetPage = ({ onNavigateJobs }) => {
                 <span className="text-sm text-slate-700 dark:text-slate-200">Prioritize (high priority)</span>
               </label>
             </div>
+            {boardSelectionMode === 'auto' && (
+              <div className="mt-3 flex flex-col gap-2">
+                <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                  <span className="font-semibold uppercase tracking-wide">Preferred boards (optional)</span>
+                  <span className="text-[11px] italic">System will still auto assign, but prefer selected boards first.</span>
+                </div>
+                <div className="flex flex-wrap gap-2 mt-1">
+                  {safeBoards.length === 0 ? (
+                    <span className="text-xs text-slate-500">No boards loaded</span>
+                  ) : (
+                    safeBoards.map((b) => {
+                      const status = (b.status || '').toLowerCase();
+                      const isSelected = selectedBoardIds.includes(b.id);
+                      const isOnline = status === 'online';
+                      const isBusy = status === 'busy';
+                      return (
+                        <button
+                          key={b.id}
+                          type="button"
+                          onClick={() => {
+                            const next = isSelected
+                              ? selectedBoardIds.filter((id) => id !== b.id)
+                              : [...selectedBoardIds, b.id];
+                            setSelectedBoardIds(next);
+                            setRunBoardSelection({ mode: 'auto', boardIds: next });
+                          }}
+                          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                            isSelected
+                              ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-300 dark:border-blue-700 text-blue-800 dark:text-blue-200'
+                              : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:border-slate-300'
+                          }`}
+                        >
+                          <span className={`w-3 h-3 rounded border flex items-center justify-center ${
+                            isSelected
+                              ? 'bg-blue-600 border-blue-600'
+                              : 'border-slate-400 bg-white dark:bg-slate-800'
+                          }`}>
+                            {isSelected && <span className="w-1.5 h-1.5 rounded-sm bg-white" />}
+                          </span>
+                          <span>{b.name || b.id}</span>
+                          {isOnline && !isBusy && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="Online" />
+                          )}
+                          {isBusy && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" title="Busy" />
+                          )}
+                        </button>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
             {boardSelectionMode === 'manual' && (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <button type="button" onClick={selectAllBoards} className="text-xs font-bold text-blue-600 hover:text-blue-800">Select all</button>
@@ -11205,6 +11552,129 @@ const BoardsPage = () => {
     errors
   } = useTestStore();
   const addToast = useTestStore((state) => state.addToast);
+  const setBoardQueuePaused = useTestStore((state) => state.setBoardQueuePaused);
+  const boardQueuePaused = useTestStore((state) => state.boardQueuePaused || {});
+
+  const realBoards = boards || [];
+
+  const demoBoards = useMemo(
+    () => [
+      // ONLINE group (idle / ready)
+      {
+        id: 'BOARD-1',
+        name: 'Demo Board 1',
+        status: 'online',
+        ip: '192.168.0.10',
+        mac: '00:11:22:33:44:55',
+        firmware: 'v1.0.0',
+        model: 'Zybo',
+        tag: 'paused',
+        fpgaStatus: 'unknown',
+        armStatus: 'online',
+        currentJob: 'Idle',
+        voltage: '3.3',
+        queuePaused: true,
+        isDemo: true,
+      },
+      {
+        id: 'BOARD-2',
+        name: 'Line A – Ready',
+        status: 'online',
+        ip: '192.168.0.11',
+        mac: '00:11:22:33:44:66',
+        firmware: 'v1.0.3',
+        model: 'Zybo',
+        tag: 'line-a',
+        fpgaStatus: 'active',
+        armStatus: 'online',
+        currentJob: 'Idle',
+        voltage: '3.3',
+        queuePaused: false,
+        isDemo: true,
+      },
+
+      // BUSY group (กำลังรันงาน)
+      {
+        id: 'BOARD-3',
+        name: 'Burn-in Tester 1',
+        status: 'busy',
+        ip: '192.168.0.21',
+        mac: '00:11:22:33:44:88',
+        firmware: 'v1.1.0',
+        model: 'Zybo',
+        tag: 'burn-in',
+        fpgaStatus: 'active',
+        armStatus: 'busy',
+        currentJob: 'Batch #123 · Functional',
+        voltage: '3.3',
+        queuePaused: false,
+        isDemo: true,
+      },
+      {
+        id: 'BOARD-4',
+        name: 'Demo Board – Busy',
+        status: 'busy',
+        ip: '192.168.0.22',
+        mac: '00:11:22:33:44:99',
+        firmware: 'v1.0.5',
+        model: 'Zybo',
+        tag: 'running',
+        fpgaStatus: 'active',
+        armStatus: 'busy',
+        currentJob: 'Set 02 · Regression',
+        voltage: '3.3',
+        queuePaused: false,
+        isDemo: true,
+      },
+
+      // ERROR / OFFLINE group
+      {
+        id: 'BOARD-ERR',
+        name: 'Demo Error Board',
+        status: 'error',
+        ip: '192.168.0.31',
+        mac: '00:11:22:33:44:77',
+        firmware: 'v1.0.0',
+        model: 'Zybo',
+        tag: 'error',
+        fpgaStatus: 'error',
+        armStatus: 'offline',
+        currentJob: 'Idle',
+        voltage: '3.3',
+        queuePaused: false,
+        isDemo: true,
+      },
+      {
+        id: 'BOARD-OFF',
+        name: 'Spare Board (offline)',
+        status: 'error',
+        ip: '192.168.0.32',
+        mac: '00:11:22:33:44:AA',
+        firmware: 'v0.9.0',
+        model: 'Zybo',
+        tag: 'maintenance',
+        fpgaStatus: 'offline',
+        armStatus: 'offline',
+        currentJob: '—',
+        voltage: '0.0',
+        queuePaused: false,
+        isDemo: true,
+      },
+    ],
+    []
+  );
+
+  const boardsWithDemo = useMemo(() => {
+    const realIds = new Set(realBoards.map((b) => String(b.id)));
+    const merged = [
+      ...demoBoards.filter((b) => !realIds.has(String(b.id))),
+      ...realBoards,
+    ];
+    return merged.map((b) => {
+      const override = boardQueuePaused[String(b.id)];
+      return override === undefined ? b : { ...b, queuePaused: override };
+    });
+  }, [realBoards, demoBoards, boardQueuePaused]);
 
   const notSupportedMessage = 'This feature is pending backend support';
 
@@ -11214,22 +11684,24 @@ const BoardsPage = () => {
   };
 
   const handlePauseQueue = async (board) => {
+    setBoardQueuePaused(board.id, true);
+    addToast({ type: 'success', message: `Paused queue: ${board.name || board.id}` });
     try {
       await api.pauseBoardQueue(board.id);
       await refreshBoards();
-      addToast({ type: 'success', message: `Paused queue: ${board.name || board.id}` });
     } catch (e) {
-      addToast({ type: 'warning', message: notSupportedMessage });
+      // demo-only: ไม่ทำอะไรเพิ่ม ให้ใช้ state ฝั่ง frontend เป็นหลัก
     }
   };
 
   const handleResumeQueue = async (board) => {
+    setBoardQueuePaused(board.id, false);
+    addToast({ type: 'success', message: `Resumed queue: ${board.name || board.id}` });
     try {
       await api.resumeBoardQueue(board.id);
       await refreshBoards();
-      addToast({ type: 'success', message: `Resumed queue: ${board.name || board.id}` });
     } catch (e) {
-      addToast({ type: 'warning', message: notSupportedMessage });
+      // demo-only: ไม่ทำอะไรเพิ่ม ให้ใช้ state ฝั่ง frontend เป็นหลัก
     }
   };
 
@@ -11264,8 +11736,8 @@ const BoardsPage = () => {
   const [isBatchActionRunning, setIsBatchActionRunning] = useState(false);
   const [isRefreshingBoards, setIsRefreshingBoards] = useState(false);
   
-  // Filter boards
-  const filteredBoards = boards.filter(board => {
+  // Filter boards (real + demo)
+  const filteredBoards = boardsWithDemo.filter(board => {
     if (fleetFilters.status && board.status !== fleetFilters.status) return false;
     if (fleetFilters.model && board.model !== fleetFilters.model) return false;
     if (fleetFilters.firmware && board.firmware !== fleetFilters.firmware) return false;
@@ -11347,7 +11819,7 @@ const BoardsPage = () => {
       <div className="flex flex-col sm:flex-row sm:flex-wrap sm:justify-between sm:items-center gap-3">
         <div className="min-w-0">
           <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-slate-100">Fleet Manager</h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1 text-sm sm:text-base">Manage {boards.length} boards across the facility</p>
+          <p className="text-slate-500 dark:text-slate-400 mt-1 text-sm sm:text-base">Manage {boardsWithDemo.length} boards across the facility</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <button
@@ -13463,10 +13935,12 @@ const DeviceDetailsPanel = ({ board, onClose, onSSHClick }) => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [statusDetail, setStatusDetail] = useState(null);
   const [statusLoading, setStatusLoading] = useState(true);
+  const [availability, setAvailability] = useState('available');
 
   useEffect(() => {
     setBoardTag(board.tag || '');
     setConnectionsText((board.connections || []).join(', '));
+    setAvailability(board.isDisabled ? 'disabled' : 'available');
   }, [board]);
 
   useEffect(() => {
@@ -13525,7 +13999,11 @@ const DeviceDetailsPanel = ({ board, onClose, onSSHClick }) => {
                 </div>
                 <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-600 text-center">
                   <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide">Storage</div>
-                  <div className="text-lg font-bold text-slate-800 dark:text-slate-200 mt-1">—</div>
+                  <div className="text-lg font-bold text-slate-800 dark:text-slate-200 mt-1">
+                    {statusDetail?.storage_usage != null
+                      ? `${Math.round(Number(statusDetail.storage_usage))}%`
+                      : '—'}
+                  </div>
                 </div>
                 <div className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-600 text-center">
                   <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide">CPU</div>
@@ -13540,6 +14018,13 @@ const DeviceDetailsPanel = ({ board, onClose, onSSHClick }) => {
           <div className="bg-slate-50 dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
             <div className="flex justify-between items-center mb-3">
               <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300">Tag & Connections</h3>
+              <span className={`text-xs font-bold px-2 py-1 rounded-full mr-auto ml-3 ${
+                availability === 'available'
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-slate-200 text-slate-700'
+              }`}>
+                {availability === 'available' ? 'Available' : 'Disabled'}
+              </span>
               {!isEditing ? (
                 <button
                   onClick={() => setIsEditing(true)}
@@ -13548,7 +14033,31 @@ const DeviceDetailsPanel = ({ board, onClose, onSSHClick }) => {
                   Edit
                 </button>
               ) : (
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
+                  <div className="flex gap-1 mr-4">
+                    <button
+                      type="button"
+                      onClick={() => setAvailability('available')}
+                      className={`px-2 py-1 rounded-full text-[10px] font-bold border ${
+                        availability === 'available'
+                          ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                          : 'bg-white text-slate-600 border-slate-300'
+                      }`}
+                    >
+                      Available
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAvailability('disabled')}
+                      className={`px-2 py-1 rounded-full text-[10px] font-bold border ${
+                        availability === 'disabled'
+                          ? 'bg-slate-200 text-slate-800 border-slate-400'
+                          : 'bg-white text-slate-600 border-slate-300'
+                      }`}
+                    >
+                      Disabled
+                    </button>
+                  </div>
                   <button
                     onClick={() => {
                       updateBoardTag(board.id, boardTag.trim());
@@ -13987,6 +14496,7 @@ const AddBoardModal = ({ onClose }) => {
     model: 'STM32',
     tag: '',
     connections: 'REST API, SSH',
+    availability: 'available',
   });
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState('');
@@ -14067,6 +14577,33 @@ const AddBoardModal = ({ onClose }) => {
                 <option value="busy">busy</option>
                 <option value="error">error</option>
               </select>
+            </div>
+            <div>
+              <label className="text-xs font-bold text-slate-400 uppercase">Availability</label>
+              <div className="flex gap-2 mt-1">
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, availability: 'available' })}
+                  className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold border ${
+                    form.availability === 'available'
+                      ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                      : 'bg-white text-slate-600 border-slate-300'
+                  }`}
+                >
+                  Available
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, availability: 'disabled' })}
+                  className={`flex-1 px-3 py-2 rounded-xl text-xs font-bold border ${
+                    form.availability === 'disabled'
+                      ? 'bg-slate-200 text-slate-800 border-slate-400'
+                      : 'bg-white text-slate-600 border-slate-300'
+                  }`}
+                >
+                  Disabled
+                </button>
+              </div>
             </div>
             <div>
               <label className="text-xs font-bold text-slate-400 uppercase">IP</label>

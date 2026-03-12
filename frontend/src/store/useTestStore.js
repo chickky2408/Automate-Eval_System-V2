@@ -326,6 +326,7 @@ export const useTestStore = create((set, get) => ({
   
   // Boards/Devices
   boards: [],
+  boardQueuePaused: {},
   
   // Jobs/Batches
   jobs: [],
@@ -484,6 +485,21 @@ export const useTestStore = create((set, get) => ({
       else next[fileId] = value;
       saveFileTags(next);
       return { fileTags: next };
+    });
+  },
+  setBoardQueuePaused: (boardId, queuePaused) => {
+    if (!boardId) return;
+    set((state) => {
+      const nextMap = {
+        ...(state.boardQueuePaused || {}),
+        [boardId]: !!queuePaused,
+      };
+      return {
+        boardQueuePaused: nextMap,
+        boards: (state.boards || []).map((b) =>
+          b.id === boardId ? { ...b, queuePaused: !!queuePaused } : b
+        ),
+      };
     });
   },
   addBoard: async (boardInput) => {
@@ -1444,7 +1460,42 @@ export const useTestStore = create((set, get) => ({
         errors: { ...state.errors, boards: null },
       }));
       const data = await api.getBoards();
-      set({ boards: data });
+      set((state) => {
+        const prevBoards = state.boards || [];
+        const now = new Date().toISOString();
+        const newLocal = [];
+        (data || []).forEach((b) => {
+          const prev = prevBoards.find((p) => p.id === b.id);
+          const prevStatus = (prev?.status || '').toLowerCase();
+          const newStatus = (b.status || '').toLowerCase();
+          const prevArm = (prev?.armStatus || '').toLowerCase();
+          const newArm = (b.armStatus || '').toLowerCase();
+          const prevFpga = (prev?.fpgaStatus || '').toLowerCase();
+          const newFpga = (b.fpgaStatus || '').toLowerCase();
+          const wasError =
+            prevStatus === 'error' ||
+            prevStatus === 'offline' ||
+            prevArm === 'error' ||
+            prevFpga === 'error';
+          const isError =
+            newStatus === 'error' ||
+            newStatus === 'offline' ||
+            newArm === 'error' ||
+            newFpga === 'error';
+          if (!wasError && isError) {
+            newLocal.push({
+              id: `local-board-${b.id}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+              title: 'Board error',
+              message: `${b.name || b.id} is in error state`,
+              type: 'error',
+              read: false,
+              createdAt: now,
+            });
+          }
+        });
+        const localNotifications = [...newLocal, ...(state.localNotifications || [])];
+        return { boards: data, localNotifications };
+      });
       return data;
     } catch (error) {
       console.error('Failed to refresh boards', error);
@@ -1459,7 +1510,42 @@ export const useTestStore = create((set, get) => ({
   silentRefreshBoards: async () => {
     try {
       const data = await api.getBoards();
-      set({ boards: data });
+      set((state) => {
+        const prevBoards = state.boards || [];
+        const now = new Date().toISOString();
+        const newLocal = [];
+        (data || []).forEach((b) => {
+          const prev = prevBoards.find((p) => p.id === b.id);
+          const prevStatus = (prev?.status || '').toLowerCase();
+          const newStatus = (b.status || '').toLowerCase();
+          const prevArm = (prev?.armStatus || '').toLowerCase();
+          const newArm = (b.armStatus || '').toLowerCase();
+          const prevFpga = (prev?.fpgaStatus || '').toLowerCase();
+          const newFpga = (b.fpgaStatus || '').toLowerCase();
+          const wasError =
+            prevStatus === 'error' ||
+            prevStatus === 'offline' ||
+            prevArm === 'error' ||
+            prevFpga === 'error';
+          const isError =
+            newStatus === 'error' ||
+            newStatus === 'offline' ||
+            newArm === 'error' ||
+            newFpga === 'error';
+          if (!wasError && isError) {
+            newLocal.push({
+              id: `local-board-${b.id}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+              title: 'Board error',
+              message: `${b.name || b.id} is in error state`,
+              type: 'error',
+              read: false,
+              createdAt: now,
+            });
+          }
+        });
+        const localNotifications = [...newLocal, ...(state.localNotifications || [])];
+        return { boards: data, localNotifications };
+      });
       return data;
     } catch (error) {
       console.error('Failed to silent refresh boards', error);
