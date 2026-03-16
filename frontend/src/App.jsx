@@ -280,7 +280,7 @@ const App = () => {
           {activePage === 'testCases' && <TestCasesPage />}
           {activePage === 'runSet' && <RunSetPage onNavigateJobs={() => setActivePage('jobs')} />}
           {activePage === 'setup' && <SetupPage editJobId={expandJobId} onEditComplete={() => setExpandJobId(null)} />}
-          {activePage === 'jobs' && <JobsPage expandJobId={expandJobId} onExpandComplete={() => setExpandJobId(null)} onEditJob={(jobId) => { setExpandJobId(jobId); setActivePage('setup'); }} onNavigateToFileLibrary={(fileName) => { useTestStore.getState().setLibraryFocusFileNameOnNavigate(fileName); setActivePage('fileLibrary'); }} />}
+          {activePage === 'jobs' && <JobsPage expandJobId={expandJobId} onExpandComplete={() => setExpandJobId(null)} onEditJob={(jobId) => { setExpandJobId(jobId); setActivePage('setup'); }} onNavigateToFileLibrary={(fileName) => { useTestStore.getState().setLibraryFocusFileNameOnNavigate(fileName); setActivePage('fileLibrary'); }} onNavigateToTestCases={(focus) => { useTestStore.getState().setTestCaseLibraryFocusOnNavigate(focus); setActivePage('testCases'); }} />}
           {activePage === 'boards' && <BoardsPage />}
           {activePage === 'history' && <HistoryPage onViewJob={(jobId) => { setExpandJobId(jobId); setActivePage('jobs'); }} />}
           {activePage === 'waveform' && <WaveformPage />}
@@ -837,14 +837,14 @@ const ToastContainer = () => {
 
 // 1. DASHBOARD PAGE (Enhanced)
 const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
-  const { 
-    systemHealth, 
+  const {
+    systemHealth,
     boards,
-    jobs, 
+    jobs,
     commonCommands,
     updateJobTag,
     loading,
-    errors
+    errors,
   } = useTestStore();
   const boardQueuePaused = useTestStore((state) => state.boardQueuePaused || {});
   
@@ -855,6 +855,7 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
   const [systemSearch, setSystemSearch] = useState('');
   const [systemStatusFilter, setSystemStatusFilter] = useState('running'); // 'all' | 'pending' | 'running' | 'completed' | 'stopped'
   const [systemTagFilter, setSystemTagFilter] = useState('');
+  const [systemOwnerFilter, setSystemOwnerFilter] = useState('all'); // 'all' | 'mine' | 'others'
   const [editingSystemTagId, setEditingSystemTagId] = useState(null);
   const [systemTagEditInput, setSystemTagEditInput] = useState('');
   const [systemModalJobId, setSystemModalJobId] = useState(null);
@@ -908,7 +909,7 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
         tag: 'burn-in',
         fpgaStatus: 'active',
         armStatus: 'busy',
-        currentJob: 'Batch #123 · Functional',
+        currentJob: 'hihi ',
         voltage: '3.3',
         queuePaused: false,
         isDemo: true,
@@ -924,7 +925,7 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
         tag: 'running',
         fpgaStatus: 'active',
         armStatus: 'busy',
-        currentJob: 'Set 02 · Regression',
+        currentJob: '9Mar',
         voltage: '3.3',
         queuePaused: false,
         isDemo: true,
@@ -999,12 +1000,15 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
     });
   }).length;
 
+  const clientId = getClientId();
   const systemSearchLower = systemSearch.trim().toLowerCase();
   const systemTagOptions = [...new Set(jobs.map((j) => j.tag).filter(Boolean))].sort();
 
   const systemSummaryJobs = jobs.filter((job) => {
     if (systemStatusFilter !== 'all' && job.status !== systemStatusFilter) return false;
     if (systemTagFilter && (job.tag || '').toLowerCase() !== systemTagFilter.toLowerCase()) return false;
+    if (systemOwnerFilter === 'mine' && job.clientId !== clientId) return false;
+    if (systemOwnerFilter === 'others' && (job.clientId === clientId || !job.clientId)) return false;
     if (systemSearchLower) {
       const name = (job.name || '').toLowerCase();
       const id = (job.id || '').toLowerCase();
@@ -1021,7 +1025,6 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
   });
 
   // System Summary: สรุปว่า system ไหน run อะไรอยู่ (ตาม filter)
-  const clientId = getClientId();
   const systemSummary = systemSummaryJobs.map(job => {
     const rawAt = job.startedAt || job.createdAt;
     const d = rawAt ? new Date(rawAt) : null;
@@ -1062,6 +1065,20 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
             (j.boards || []).some((jb) => (jb || '').toString() === boardKey)
         ) ||
         null;
+    }
+    // Demo UX: ถ้า board เป็นสถานะ Busy แต่ยังไม่มี job จริง ให้ใช้ currentJob ของ board เป็นชื่อ set ที่กำลัง run
+    if (!job && (b.status || '').toLowerCase() === 'busy' && b.currentJob) {
+      job = {
+        id: `DEMO-${b.id}`,
+        name: (b.currentJob || '').toString(),
+        status: 'running',
+        boards: [boardKey],
+        clientId: clientId,
+        files: [],
+        progress: 0,
+        completedFiles: 0,
+        totalFiles: 0,
+      };
     }
     const progress = job ? job.progress : 0;
     const completedFiles = job ? job.completedFiles ?? 0 : 0;
@@ -1222,6 +1239,16 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
               />
             </div>
             <div className="flex items-center gap-1 bg-slate-50 dark:bg-slate-800 rounded-full px-1 py-0.5">
+              <select
+                value={systemOwnerFilter}
+                onChange={(e) => setSystemOwnerFilter(e.target.value)}
+                className="px-3 py-1.5 text-[11px] border border-slate-200 dark:border-slate-600 rounded-full bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                title="Owner"
+              >
+                <option value="all">All owners</option>
+                <option value="mine">Me</option>
+                <option value="others">Other clients</option>
+              </select>
               <select
                 value={systemStatusFilter}
                 onChange={(e) => setSystemStatusFilter(e.target.value)}
@@ -1459,9 +1486,9 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
                   </div>
                 </div>
                 <div className="max-h-72 overflow-y-auto text-xs">
-                  {(!systemModalJob.files || systemModalJob.files.length === 0) ? (
+                      {(!systemModalJob.files || systemModalJob.files.length === 0) ? (
                     <div className="px-4 py-6 text-center text-slate-400">
-                      No test cases in this batch.
+                      No test cases in this set.
                     </div>
                   ) : (
                     (systemModalJob.files || [])
@@ -1568,9 +1595,15 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
                 <>
                   <div className="text-sm">
                     <div className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase mb-0.5">Running set</div>
-                    <div className="font-semibold text-slate-800 dark:text-slate-200">
-                      {(systemModalBoardRow.job.name || systemModalBoardRow.job.configName || '').trim() || `Set #${systemModalBoardRow.job.id}`}
-                    </div>
+                    {(() => {
+                      const rawName = (systemModalBoardRow.job.name || systemModalBoardRow.job.configName || '').trim();
+                      const displayName = rawName.replace(/^Batch\\s*#/i, 'Set ');
+                      return (
+                        <div className="font-semibold text-slate-800 dark:text-slate-200">
+                          {displayName || `Set #${systemModalBoardRow.job.id}`}
+                        </div>
+                      );
+                    })()}
                     <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">ID: {systemModalBoardRow.job.id}</div>
                   </div>
                   <div className="text-sm">
@@ -1661,8 +1694,8 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
                         {isBusy ? 'Busy' : isOnline ? 'Online' : (board.status || '—')}
                       </span>
                     </div>
-                    <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate mb-1" title={job ? `${(job.configName || job.name || 'Batch').trim()} · batch #${job.id}` : 'Idle'}>
-                      {job ? `${(job.configName || job.name || 'Batch').trim()} · #${job.id}` : 'Idle'}
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate mb-1" title={job ? `${((job.configName || job.name || 'Set').trim()).replace(/^Batch\\s*#/i, 'Set ')} · set #${job.id}` : 'Idle'}>
+                      {job ? `${((job.configName || job.name || 'Set').trim()).replace(/^Batch\\s*#/i, 'Set ')} · #${job.id}` : 'Idle'}
                     </div>
                     {isBusy && (
                       <>
@@ -2977,10 +3010,11 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
     return STATUS_PRIORITY[b] > STATUS_PRIORITY[a] ? b : a;
   };
 
-  const { setStatusByName, testCaseStatusByName, fileStatusByName } = useMemo(() => {
+  const { setStatusByName, testCaseStatusByName, fileStatusByName, testCaseStatusByFileKey } = useMemo(() => {
     const setStatus = new Map();
     const tcStatus = new Map();
     const fileStatus = new Map();
+    const tcStatusByFileKey = new Map();
 
     const update = (map, key, rawStatus) => {
       const status = normalizeJobStatusForLibrary(rawStatus);
@@ -3001,10 +3035,28 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
       (job.files || []).forEach((f) => {
         const tcName = (f.testCaseName || '').trim();
         if (tcName) update(tcStatus, tcName, status);
+
+        const v = (f.vcd || f.vcdName || f.name || '').trim().toLowerCase();
+        const b = (f.erom || f.binName || '').trim().toLowerCase();
+        const l = (f.ulp || f.linName || '').trim().toLowerCase();
+        const key = `${v}||${b}||${l}`;
+        if (key !== '||||') update(tcStatusByFileKey, key, status);
+
+        if (f.vcd) update(fileStatus, f.vcd, status);
+        if (f.erom) update(fileStatus, f.erom, status);
+        if (f.ulp) update(fileStatus, f.ulp, status);
+        if (f.vcdName) update(fileStatus, f.vcdName, status);
+        if (f.binName) update(fileStatus, f.binName, status);
+        if (f.linName) update(fileStatus, f.linName, status);
       });
     });
 
-    return { setStatusByName: setStatus, testCaseStatusByName: tcStatus, fileStatusByName: fileStatus };
+    return {
+      setStatusByName: setStatus,
+      testCaseStatusByName: tcStatus,
+      fileStatusByName: fileStatus,
+      testCaseStatusByFileKey: tcStatusByFileKey,
+    };
   }, [jobs]);
 
   const fileNamesInUseByBatch = useMemo(() => {
@@ -3078,13 +3130,20 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
     const ext = String(f?.name || '').split('.').pop()?.toLowerCase();
     if (ext === 'vcd') return 'vcd';
     if (['bin', 'hex', 'elf', 'erom'].includes(ext)) return 'bin';
-    if (['lin', 'txt', 'ulp'].includes(ext)) return 'lin';
+    // Text-based MDI files (manual commands / scripts)
+    if (ext === 'txt') return 'mdi';
+    if (['lin', 'ulp'].includes(ext)) return 'lin';
     return 'other';
   };
   const filteredFiles = [...(uploadedFiles || [])]
     .filter((f) => {
       const k = getFileKind(f);
-      if (fileFilter !== 'all' && (fileFilter === 'vcd' ? k !== 'vcd' : fileFilter === 'bin' ? k !== 'bin' : k !== 'lin')) return false;
+      if (fileFilter !== 'all') {
+        if (fileFilter === 'vcd' && k !== 'vcd') return false;
+        if (fileFilter === 'bin' && k !== 'bin') return false;
+        if (fileFilter === 'lin' && k !== 'lin') return false;
+        if (fileFilter === 'mdi' && k !== 'mdi') return false;
+      }
       const status = fileStatusByName.get(f.name) || null;
       if (fileStatusFilter !== 'all') {
         if (!status) return false;
@@ -3092,13 +3151,16 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
       }
       if (fileSearch.trim()) return f.name.toLowerCase().includes(fileSearch.trim().toLowerCase());
       if (libraryCreatedByFilter === 'mine') {
-        const owner = f.ownerId || null; // owner profile (or null for legacy files)
-        // Mine: include files with no owner or owned by active profile
-        if (owner && owner !== activeProfileId) return false;
-      } else if (libraryCreatedByFilter === 'shared') {
         const owner = f.ownerId || null;
-        // Shared: files explicitly owned by other profiles
-        if (!owner || owner === activeProfileId) return false;
+        // Mine: แสดงเฉพาะไฟล์ที่เราเป็น owner (ownerId === currentClientId) หรือไม่มี owner — ตรงกับ badge "Me"
+        if (owner != null && owner !== currentClientId) return false;
+        return true;
+      }
+      if (libraryCreatedByFilter === 'shared') {
+        const owner = f.ownerId || null;
+        // Shared with me: แสดงเฉพาะไฟล์ที่คนอื่นเป็น owner (badge "Other") ไม่รวมของเรา
+        if (owner == null || owner === currentClientId) return false;
+        return true;
       }
       return true;
     })
@@ -3118,13 +3180,23 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const getTestCaseStatusFromJobs = useCallback(
     (tc) => {
       if (!tc) return null;
+      const v = (tc.vcdName || '').trim().toLowerCase();
+      const b = (tc.binName || '').trim().toLowerCase();
+      const l = (tc.linName || '').trim().toLowerCase();
+      const fileKey = `${v}||${b}||${l}`;
+      if (fileKey !== '||||') {
+        if (testCaseStatusByFileKey.has(fileKey)) {
+          return testCaseStatusByFileKey.get(fileKey);
+        }
+        return null;
+      }
       const name = (tc.name || '').trim();
       if (name && testCaseStatusByName.has(name)) {
         return testCaseStatusByName.get(name);
       }
       return null;
     },
-    [testCaseStatusByName]
+    [testCaseStatusByName, testCaseStatusByFileKey]
   );
 
   // Test case history: jobs/sets where this test case (vcd+erom+ulp or testCaseName) was used
@@ -3313,31 +3385,41 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const handleDeleteAll = async () => {
     if (!uploadedFiles?.length) return;
     const inUseCount = uploadedFiles.filter((f) => fileNamesInUseByBatch.has(f.name)).length;
-    if (!window.confirm(`Delete all files in Library?${inUseCount > 0 ? `\n\n${inUseCount} file(s) are in use by a set and will be skipped.` : ''}`)) return;
+    const toDelete = uploadedFiles.filter((f) => !fileNamesInUseByBatch.has(f.name));
+    if (toDelete.length === 0) {
+      addToast({ type: 'warning', message: 'ไฟล์ทั้งหมดกำลังถูกใช้โดย set (running/pending) — ไม่สามารถลบได้จนกว่า process จะจบ' });
+      return;
+    }
+    if (!window.confirm(`Delete ${toDelete.length} file(s) from Library?${inUseCount > 0 ? `\n\n${inUseCount} file(s) กำลังถูกใช้ (running/pending) จะไม่ถูกลบ` : ''}`)) return;
     setIsDeleting(true);
     let deleted = 0;
-    for (const f of uploadedFiles) {
+    for (const f of toDelete) {
       const ok = await removeUploadedFile(f.id);
       if (ok) deleted++;
     }
     setIsDeleting(false);
     if (deleted > 0) addToast({ type: 'success', message: `Deleted ${deleted} file(s)` });
-    if (inUseCount > 0) addToast({ type: 'info', message: `${inUseCount} file(s) skipped (in use by set)` });
+    if (inUseCount > 0) addToast({ type: 'info', message: `${inUseCount} file(s) ไม่ถูกลบ (กำลังถูกใช้โดย set)` });
   };
 
   const handleDeleteBox = async (setId, files) => {
     if (!files?.length) return;
-    const inUseCount = files.filter((f) => fileNamesInUseByBatch.has(f.name)).length;
-    if (!window.confirm(`Delete all ${files.length} file(s) in this box from Library?${inUseCount > 0 ? `\n\n${inUseCount} file(s) are in use by a set and will be skipped.` : ''}`)) return;
+    const toDelete = files.filter((f) => !fileNamesInUseByBatch.has(f.name));
+    const inUseCount = files.length - toDelete.length;
+    if (toDelete.length === 0) {
+      addToast({ type: 'warning', message: 'ไฟล์ในกล่องนี้ทั้งหมดกำลังถูกใช้ (running/pending) — ไม่สามารถลบได้' });
+      return;
+    }
+    if (!window.confirm(`Delete ${toDelete.length} file(s) in this box from Library?${inUseCount > 0 ? `\n\n${inUseCount} file(s) กำลังถูกใช้ จะไม่ถูกลบ` : ''}`)) return;
     setDeletingBoxId(setId);
     let deleted = 0;
-    for (const f of files) {
+    for (const f of toDelete) {
       const ok = await removeUploadedFile(f.id);
       if (ok) deleted++;
     }
     setDeletingBoxId(null);
     if (deleted > 0) addToast({ type: 'success', message: `Deleted ${deleted} file(s) from box` });
-    if (inUseCount > 0) addToast({ type: 'info', message: `${inUseCount} skipped (in use by set)` });
+    if (inUseCount > 0) addToast({ type: 'info', message: `${inUseCount} file(s) ไม่ถูกลบ (กำลังถูกใช้)` });
   };
 
   return (
@@ -3474,6 +3556,9 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                   });
                   const extraCols = [...new Set((items || []).flatMap((t) => Object.keys(t.extraColumns || {})))].sort();
                   const setName = set.name || `Set ${setIdx + 1}`;
+                  const setStatusRaw = setStatusByName.get(setName) || null;
+                  const setStatus = (setStatusRaw || '').toLowerCase();
+                  const isSetLocked = setStatus === 'running';
                   const toggleSetTc = (key, rowIndex, e) => {
                     const last = lastClickedLibrarySetTcRef.current;
                     if (e.shiftKey && last.setId === set.id) {
@@ -3498,21 +3583,73 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                   return (
                     <div key={set.id} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
                       <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-600 flex items-center justify-between">
-                        <h2 className="text-sm font-bold text-slate-700 dark:text-slate-200">
-                          {setName}
-                          <span className="ml-2 text-xs font-normal text-slate-500">({filteredItems.length} test case{filteredItems.length !== 1 ? 's' : ''}{filteredItems.length !== items.length ? `, filtered from ${items.length}` : ''})</span>
-                        </h2>
                         <div className="flex items-center gap-2">
-                          {setSelectedKeysInSet > 0 && <span className="text-xs text-slate-500">{setSelectedKeysInSet} selected</span>}
+                          <h2 className="text-sm font-bold text-slate-700 dark:text-slate-200">
+                            {setName}
+                            <span className="ml-2 text-xs font-normal text-slate-500">
+                              ({filteredItems.length} test case{filteredItems.length !== 1 ? 's' : ''}{filteredItems.length !== items.length ? `, filtered from ${items.length}` : ''})
+                            </span>
+                          </h2>
+                          {setStatus && (
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
+                                setStatus === 'running'
+                                  ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/40 dark:text-blue-200 dark:border-blue-700'
+                                  : setStatus === 'pending'
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/40 dark:text-amber-200 dark:border-amber-700'
+                                  : 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600'
+                              }`}
+                            >
+                              {setStatus.charAt(0).toUpperCase() + setStatus.slice(1)}
+                            </span>
+                          )}
+                          {isSetLocked && (
+                            <span className="text-[11px] text-slate-400 italic">
+                              (locked while set is {setStatus})
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {setSelectedKeysInSet > 0 && (
+                            <span className="text-xs text-slate-500">{setSelectedKeysInSet} selected</span>
+                          )}
                           {onNavigateToTestCases && (
-                            <button type="button" onClick={onNavigateToTestCases} className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isSetLocked) {
+                                  addToast({
+                                    type: 'warning',
+                                    message:
+                                      'ชุด Set นี้กำลังถูกใช้รันอยู่ (pending/running) — กรุณารอให้จบก่อนจึงจะแก้ไขได้',
+                                  });
+                                  return;
+                                }
+                                onNavigateToTestCases();
+                              }}
+                              className={`text-xs font-medium hover:underline ${
+                                isSetLocked
+                                  ? 'text-slate-400 dark:text-slate-500 cursor-not-allowed'
+                                  : 'text-blue-600 dark:text-blue-400'
+                              }`}
+                              disabled={isSetLocked}
+                              title={
+                                isSetLocked
+                                  ? 'Set is running or pending — cannot edit test cases now'
+                                  : 'Edit test cases in this set'
+                              }
+                            >
                               Edit Test Cases
                             </button>
                           )}
                           <button
                             type="button"
                             onClick={async () => {
-                              if (!window.confirm(`Delete set "${setName}"? This will remove it from the library and from the database.`)) return;
+                              if (isSetLocked) {
+                                addToast({ type: 'warning', message: 'Set กำลังรันหรือรอคิว — ไม่สามารถลบได้จนกว่าจะจบ process' });
+                                return;
+                              }
+                              if (!window.confirm(`Delete set "${setName}"? This will remove it from Saved sets only (test cases and files in Library will stay).`)) return;
                               try {
                                 await api.deleteSet(set.id);
                               } catch (e) {
@@ -3522,8 +3659,9 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                               setSelectedLibrarySetTcKeys((prev) => prev.filter((k) => !k.startsWith(set.id + '::')));
                               addToast({ type: 'success', message: `Deleted set "${setName}"` });
                             }}
-                            className="p-1.5 rounded hover:bg-red-600/10 text-red-600 dark:text-red-400"
-                            title="Delete set (from library and database)"
+                            disabled={isSetLocked}
+                            className={`p-1.5 rounded ${isSetLocked ? 'opacity-50 cursor-not-allowed text-slate-400' : 'hover:bg-red-600/10 text-red-600 dark:text-red-400'}`}
+                            title={isSetLocked ? 'ไม่สามารถลบได้ — Set กำลัง running/pending' : 'Delete set from Saved (ไม่ลบ test cases หรือไฟล์ใน Library)'}
                           >
                             <Trash2 size={14} />
                           </button>
@@ -3643,6 +3781,9 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
         /* Raw Test Cases — filter name/tag, multi-select (shift/ctrl + drag), delete selected */
         (() => {
           const selectedSet = new Set(selectedLibraryTcKeys);
+          const isTcRowLocked = (row) => (row._status === 'running' || row._status === 'pending');
+          const selectableTcKeys = libraryFilteredRows.filter((r) => !isTcRowLocked(r)).map((r) => r._key).filter(Boolean);
+          const hasRunningOrPendingInSelection = libraryFilteredRows.some((r) => selectedSet.has(r._key) && isTcRowLocked(r));
           const getExtraColKeys = (t) => {
             const fromExtra = Object.keys(t.extraColumns || {});
             const fromCmds = [];
@@ -3677,11 +3818,13 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
            .filter((col) => !/^tag(color)?$/i.test(col))
            .filter((col) => libraryFilteredRows.some((t) => (getExtraVal(t, col) ?? '').toString().trim() !== ''));
           const toggleSelect = (key, idx, e) => {
+            const row = libraryFilteredRows[idx];
+            if (row && isTcRowLocked(row)) return;
             if (e.shiftKey) {
               const last = lastClickedLibraryTcIndexRef.current;
               const from = last != null ? Math.min(last, idx) : idx;
               const to = last != null ? Math.max(last, idx) : idx;
-              const keysToAdd = libraryFilteredRows.slice(from, to + 1).map((r) => r._key).filter(Boolean);
+              const keysToAdd = libraryFilteredRows.slice(from, to + 1).filter((r) => !isTcRowLocked(r)).map((r) => r._key).filter(Boolean);
               setSelectedLibraryTcKeys((prev) => [...new Set([...prev, ...keysToAdd])]);
               lastClickedLibraryTcIndexRef.current = idx;
               return;
@@ -3693,17 +3836,20 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
               lastClickedLibraryTcIndexRef.current = idx;
               return;
             }
-            // Simple click: toggle this row (multi-select — user can tick 3–4 items)
             setSelectedLibraryTcKeys((prev) =>
               selectedSet.has(key) ? prev.filter((k) => k !== key) : [...prev, key]
             );
             lastClickedLibraryTcIndexRef.current = idx;
           };
           const handleRowMouseDown = (key, idx) => {
+            const row = libraryFilteredRows[idx];
+            if (row && isTcRowLocked(row)) return;
             isDragSelectingLibraryRef.current = true;
             if (!selectedSet.has(key)) setSelectedLibraryTcKeys((prev) => [...prev, key]);
           };
           const handleRowMouseEnter = (key, idx) => {
+            const row = libraryFilteredRows[idx];
+            if (row && isTcRowLocked(row)) return;
             if (!isDragSelectingLibraryRef.current) return;
             if (!selectedSet.has(key)) setSelectedLibraryTcKeys((prev) => [...prev, key]);
           };
@@ -3712,8 +3858,12 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
               addToast({ type: 'info', message: 'Select test case(s) first' });
               return;
             }
+            if (hasRunningOrPendingInSelection) {
+              addToast({ type: 'warning', message: 'Test case ที่มีสถานะ Running/Pending ไม่สามารถลบได้ — รอให้ process จบก่อน' });
+              return;
+            }
             if (!window.confirm(`Delete ${selectedSet.size} selected test case(s)?`)) return;
-            const toRemove = libraryRawRows.filter((r) => r._key && selectedSet.has(r._key));
+            const toRemove = libraryRawRows.filter((r) => r._key && selectedSet.has(r._key)).filter((r) => !isTcRowLocked(r));
             const bySet = {};
             toRemove.forEach((row) => {
               if (row._source === 'current' && row.id) {
@@ -3776,14 +3926,14 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                 <button
                   type="button"
                   onClick={handleDeleteSelected}
-                  disabled={selectedSet.size === 0}
+                  disabled={selectedSet.size === 0 || hasRunningOrPendingInSelection}
                   className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:pointer-events-none transition-colors"
-                  title={selectedSet.size > 0 ? `Delete ${selectedSet.size} selected` : 'Select test cases to delete'}
+                  title={hasRunningOrPendingInSelection ? 'ไม่สามารถลบได้ — มี test case ที่กำลัง Running/Pending' : selectedSet.size > 0 ? `Delete ${selectedSet.size} selected` : 'Select test cases to delete'}
                 >
                   <Trash2 size={18} strokeWidth={2} />
                 </button>
                 {selectedSet.size > 0 && (
-                  <span className="text-xs text-slate-500">{selectedSet.size} selected</span>
+                  <span className="text-xs text-slate-500">{selectedSet.size} selected{hasRunningOrPendingInSelection ? ' (มีรายการที่ล็อก)' : ''}</span>
                 )}
               </div>
               <div className="overflow-x-auto overflow-y-visible rounded-b-xl table-scroll-smooth" style={{ scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch' }}>
@@ -3793,13 +3943,13 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                       <th className="w-9 px-2 py-2 border-r border-slate-200 dark:border-slate-600 sticky left-0 bg-slate-100 dark:bg-slate-800 z-10">
                         <input
                           type="checkbox"
-                          checked={libraryFilteredRows.length > 0 && libraryFilteredRows.every((r) => selectedSet.has(r._key))}
+                          checked={selectableTcKeys.length > 0 && selectableTcKeys.every((k) => selectedSet.has(k))}
                           onChange={(e) => {
-                            if (e.target.checked) setSelectedLibraryTcKeys(libraryFilteredRows.map((r) => r._key).filter(Boolean));
+                            if (e.target.checked) setSelectedLibraryTcKeys([...selectableTcKeys]);
                             else setSelectedLibraryTcKeys([]);
                           }}
                           className="w-4 h-4 rounded cursor-pointer"
-                          title="Select all"
+                          title="Select all (excluding running/pending)"
                         />
                       </th>
                       <th className="w-8 px-2 py-2 border-r border-slate-200 dark:border-slate-600">#</th>
@@ -3830,17 +3980,23 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                       libraryFilteredRows.map((tc, idx) => {
                         const key = tc._key || `row-${idx}`;
                         const isSelected = selectedSet.has(key);
+                        const isRowLocked = isTcRowLocked(tc);
                         const historyCount = getTestCaseHistory(tc).length;
                         return (
                           <tr
                             key={key}
-                            className={`border-b border-slate-100 dark:border-slate-700 cursor-pointer select-none ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}
+                            className={`border-b border-slate-100 dark:border-slate-700 select-none ${isRowLocked ? 'opacity-75 bg-slate-50 dark:bg-slate-800/50 cursor-not-allowed' : 'cursor-pointer'} ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : !isRowLocked ? 'hover:bg-slate-50 dark:hover:bg-slate-800/50' : ''}`}
                             onClick={(e) => {
                               if (e.target.closest('input[type="checkbox"]')) return;
+                              if (isRowLocked) return;
                               toggleSelect(key, idx, e);
                             }}
                             onDoubleClick={(e) => {
                               if (e.target.closest('input[type="checkbox"]')) return;
+                              if (isRowLocked) {
+                                addToast({ type: 'warning', message: 'Test case กำลัง Running/Pending — ไม่สามารถแก้ไขได้จนกว่า process จะจบ' });
+                                return;
+                              }
                               if (onNavigateToTestCases && setLibraryEditContext) {
                                 if (tc._source === 'current' && tc.id) {
                                   setLibraryEditContext({ focusTcId: tc.id });
@@ -3852,19 +4008,22 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                 onNavigateToTestCases();
                               }
                             }}
-                            title="Double-click to edit in Test Cases page"
+                            title={isRowLocked ? 'กำลัง Running/Pending — ล็อกการแก้ไข/ลบ' : 'Double-click to edit in Test Cases page'}
                             onMouseDown={(e) => {
                               if (e.target.closest('input[type="checkbox"]')) return;
+                              if (isRowLocked) return;
                               if (e.button === 0) handleRowMouseDown(key, idx);
                             }}
-                            onMouseEnter={() => handleRowMouseEnter(key, idx)}
+                            onMouseEnter={() => { if (!isRowLocked) handleRowMouseEnter(key, idx); }}
                           >
                             <td className={`px-2 py-2 border-r border-slate-100 dark:border-slate-700 sticky left-0 z-[1] ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : 'bg-white dark:bg-slate-900'}`} onClick={(e) => e.stopPropagation()}>
                               <input
                                 type="checkbox"
                                 checked={isSelected}
-                                onChange={() => toggleSelect(key, idx, { shiftKey: false, ctrlKey: false, metaKey: false })}
-                                className="w-4 h-4 rounded cursor-pointer"
+                                disabled={isRowLocked}
+                                onChange={() => { if (!isRowLocked) toggleSelect(key, idx, { shiftKey: false, ctrlKey: false, metaKey: false }); }}
+                                className={`w-4 h-4 rounded ${isRowLocked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+                                title={isRowLocked ? 'ไม่สามารถเลือก — กำลัง Running/Pending' : undefined}
                               />
                             </td>
                             <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-500">
@@ -4103,12 +4262,16 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
         /* File in Library — filter, multi-select (shift/ctrl/drag), delete icon */
         (() => {
           const selectedFileSet = new Set(selectedLibraryFileIds);
+          const selectableFileIds = filteredFiles.filter((f) => !fileNamesInUseByBatch.has(f.name)).map((f) => f.id).filter(Boolean);
+          const allFilesInUse = (uploadedFiles || []).length > 0 && (uploadedFiles || []).every((f) => fileNamesInUseByBatch.has(f.name));
           const toggleFileSelect = (fileId, index, e) => {
+            const file = filteredFiles[index];
+            if (file && fileNamesInUseByBatch.has(file.name)) return;
             if (e.shiftKey) {
               const last = lastClickedFileIndexRef.current;
               const from = last != null ? Math.min(last, index) : index;
               const to = last != null ? Math.max(last, index) : index;
-              const idsToAdd = filteredFiles.slice(from, to + 1).map((f) => f.id).filter(Boolean);
+              const idsToAdd = filteredFiles.slice(from, to + 1).filter((f) => !fileNamesInUseByBatch.has(f.name)).map((f) => f.id).filter(Boolean);
               setSelectedLibraryFileIds((prev) => [...new Set([...prev, ...idsToAdd])]);
               lastClickedFileIndexRef.current = index;
               return;
@@ -4130,21 +4293,22 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
               addToast({ type: 'info', message: 'Select file(s) first' });
               return;
             }
-            if (selectedInUse === selectedFileSet.size) {
-              addToast({ type: 'warning', message: 'All selected files are in use by a running or pending set. Wait for the set to finish first.' });
+            if (selectedInUse > 0) {
+              addToast({ type: 'warning', message: 'ไฟล์ที่กำลังถูกใช้โดย set (running/pending) ไม่สามารถลบได้ — รอให้ process จบก่อน' });
               return;
             }
-            if (!window.confirm(`Delete ${selectedFileSet.size} selected file(s) from Library?${selectedInUse > 0 ? `\n\n${selectedInUse} file(s) are in use by a set and will be skipped.` : ''}`)) return;
+            if (!window.confirm(`Delete ${selectedFileSet.size} selected file(s) from Library?`)) return;
             setIsDeleting(true);
             let deleted = 0;
             for (const id of selectedLibraryFileIds) {
+              const f = filteredFiles.find((x) => x.id === id);
+              if (f && fileNamesInUseByBatch.has(f.name)) continue;
               const ok = await removeUploadedFile(id);
               if (ok) deleted++;
             }
             setIsDeleting(false);
             setSelectedLibraryFileIds([]);
             if (deleted > 0) addToast({ type: 'success', message: `Deleted ${deleted} file(s)` });
-            if (deleted < selectedFileSet.size && selectedInUse > 0) addToast({ type: 'info', message: `${selectedFileSet.size - deleted} file(s) skipped (in use by set)` });
           };
           return (
             <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
@@ -4163,8 +4327,18 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                   <button type="button" onClick={() => setFileViewMode('all')} className={`px-3 py-1.5 text-xs font-semibold ${fileViewMode === 'all' ? 'bg-slate-200 dark:bg-slate-600 text-slate-800 dark:text-slate-100' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}>All</button>
                   <button type="button" onClick={() => setFileViewMode('bySet')} className={`px-3 py-1.5 text-xs font-semibold ${fileViewMode === 'bySet' ? 'bg-slate-200 dark:bg-slate-600 text-slate-800 dark:text-slate-100' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'}`}>Separate by Set</button>
                 </div>
-                {['all', 'vcd', 'bin', 'lin'].map((k) => (
-                  <button key={k} onClick={() => setFileFilter(k)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${fileFilter === k ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700' : 'border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-400'}`}>{k === 'all' ? 'All' : k.toUpperCase()}</button>
+                {['all', 'vcd', 'bin', 'lin', 'mdi'].map((k) => (
+                  <button
+                    key={k}
+                    onClick={() => setFileFilter(k)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${
+                      fileFilter === k
+                        ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700'
+                        : 'border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-400'
+                    }`}
+                  >
+                    {k === 'all' ? 'All' : k === 'mdi' ? 'MDI' : k.toUpperCase()}
+                  </button>
                 ))}
                 <select
                   value={fileStatusFilter}
@@ -4178,13 +4352,13 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                 </select>
                 <input type="text" value={fileSearch} onChange={(e) => setFileSearch(e.target.value)} placeholder="Filter by name" className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 w-40" />
                 <select value={fileSort} onChange={(e) => setFileSort(e.target.value)} className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800"><option value="time">Time</option><option value="name">Name</option></select>
-                <button type="button" onClick={handleDeleteSelectedFiles} disabled={selectedFileSet.size === 0 || isDeleting} className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:pointer-events-none transition-colors" title={selectedFileSet.size > 0 ? (selectedInUse > 0 ? `${selectedInUse} of ${selectedFileSet.size} selected are in use by a set (will be skipped)` : `Delete ${selectedFileSet.size} selected`) : 'Select files to delete'}>
+                <button type="button" onClick={handleDeleteSelectedFiles} disabled={selectedFileSet.size === 0 || selectedInUse > 0 || isDeleting} className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:pointer-events-none transition-colors" title={selectedInUse > 0 ? 'มีไฟล์ที่กำลังถูกใช้ (running/pending) — ไม่สามารถลบได้' : selectedFileSet.size > 0 ? `Delete ${selectedFileSet.size} selected` : 'Select files to delete'}>
                   <Trash2 size={18} strokeWidth={2} />
                 </button>
-                {selectedFileSet.size > 0 && <span className="text-xs text-slate-500">{selectedFileSet.size} selected</span>}
+                {selectedFileSet.size > 0 && <span className="text-xs text-slate-500">{selectedFileSet.size} selected{selectedInUse > 0 ? ' (มีรายการที่ล็อก)' : ''}</span>}
                 <span className="text-xs text-slate-400">Click, Shift+click range, Ctrl/Cmd+click toggle, or drag to select</span>
                 {uploadedFiles?.length > 0 && (
-                  <button type="button" onClick={handleDeleteAll} disabled={isDeleting} className="ml-auto px-2 py-1 rounded text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60" title="Delete all files in Library">Delete All</button>
+                  <button type="button" onClick={handleDeleteAll} disabled={isDeleting || allFilesInUse} className="ml-auto px-2 py-1 rounded text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60" title={allFilesInUse ? 'ไฟล์ทั้งหมดกำลังถูกใช้ (running/pending) — ไม่สามารถลบได้' : 'Delete all files in Library'}>Delete All</button>
                 )}
               </div>
               <div className="max-h-[500px] overflow-y-auto">
@@ -4192,8 +4366,8 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                   <div className="divide-y divide-slate-100 dark:divide-slate-700">
                     {filteredFiles.length > 0 && (
                       <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-700">
-                        <input type="checkbox" checked={filteredFiles.every((f) => selectedFileSet.has(f.id))} onChange={(e) => { if (e.target.checked) setSelectedLibraryFileIds(filteredFiles.map((f) => f.id)); else setSelectedLibraryFileIds([]); }} className="w-4 h-4 rounded cursor-pointer" title="Select all" />
-                        <span className="text-xs text-slate-500">Select all ({filteredFiles.length})</span>
+                        <input type="checkbox" checked={selectableFileIds.length > 0 && selectableFileIds.every((id) => selectedFileSet.has(id))} onChange={(e) => { if (e.target.checked) setSelectedLibraryFileIds([...selectableFileIds]); else setSelectedLibraryFileIds([]); }} className="w-4 h-4 rounded cursor-pointer" title="Select all (excluding files in use by running/pending set)" />
+                        <span className="text-xs text-slate-500">Select all ({filteredFiles.length}){selectableFileIds.length < filteredFiles.length ? ` — ${filteredFiles.length - selectableFileIds.length} ล็อก (in use)` : ''}</span>
                       </div>
                     )}
                     {filteredFiles.length === 0 ? (
@@ -4214,12 +4388,12 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                         <div
                           key={f.id}
                           ref={isFocused ? focusedLibraryFileRef : null}
-                          className={`flex items-center gap-2 px-4 py-2 flex-wrap cursor-pointer select-none ${isHighlighted ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}
-                          onClick={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return; toggleFileSelect(f.id, index, e); }}
-                          onMouseDown={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return; if (e.button === 0) { isDragSelectingFileRef.current = true; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); } }}
-                          onMouseEnter={() => { if (!isDragSelectingFileRef.current) return; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); }}
+                          className={`flex items-center gap-2 px-4 py-2 flex-wrap select-none ${inUseByBatch ? 'opacity-75 cursor-not-allowed bg-slate-50/50 dark:bg-slate-800/30' : 'cursor-pointer'} ${isHighlighted ? 'bg-blue-50 dark:bg-blue-900/20' : !inUseByBatch ? 'hover:bg-slate-50 dark:hover:bg-slate-800/50' : ''}`}
+                          onClick={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return; if (inUseByBatch) return; toggleFileSelect(f.id, index, e); }}
+                          onMouseDown={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return; if (inUseByBatch) return; if (e.button === 0) { isDragSelectingFileRef.current = true; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); } }}
+                          onMouseEnter={() => { if (inUseByBatch) return; if (!isDragSelectingFileRef.current) return; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); }}
                         >
-                          <input type="checkbox" checked={isSelected} onChange={() => toggleFileSelect(f.id, index, { shiftKey: false, ctrlKey: false, metaKey: false })} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded cursor-pointer shrink-0" />
+                          <input type="checkbox" checked={isSelected} disabled={inUseByBatch} onChange={() => { if (!inUseByBatch) toggleFileSelect(f.id, index, { shiftKey: false, ctrlKey: false, metaKey: false }); }} onClick={(e) => e.stopPropagation()} className={`w-4 h-4 rounded shrink-0 ${inUseByBatch ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`} title={inUseByBatch ? 'ไม่สามารถลบได้ — กำลังถูกใช้โดย set (running/pending)' : undefined} />
                           <span className="flex-1 min-w-0 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
                           <span className="text-[11px] text-slate-500 dark:text-slate-400 shrink-0 max-w-[70px] truncate" title={f.ownerId ? `Owner: ${f.ownerId}` : '—'}>
                             {f.ownerId === currentClientId ? 'Me' : (f.ownerId ? 'Other' : '—')}
@@ -4264,7 +4438,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                       <>
                         {filteredFiles.length > 0 && (
                           <div className="flex items-center gap-2 pb-2">
-                            <input type="checkbox" checked={filteredFiles.length > 0 && filteredFiles.every((f) => selectedFileSet.has(f.id))} onChange={(e) => { if (e.target.checked) setSelectedLibraryFileIds(filteredFiles.map((f) => f.id)); else setSelectedLibraryFileIds([]); }} className="w-4 h-4 rounded cursor-pointer" title="Select all" />
+                            <input type="checkbox" checked={selectableFileIds.length > 0 && selectableFileIds.every((id) => selectedFileSet.has(id))} onChange={(e) => { if (e.target.checked) setSelectedLibraryFileIds([...selectableFileIds]); else setSelectedLibraryFileIds([]); }} className="w-4 h-4 rounded cursor-pointer" title="Select all (excluding in use)" />
                             <span className="text-xs text-slate-500">Select all ({filteredFiles.length})</span>
                           </div>
                         )}
@@ -4273,11 +4447,13 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                           const title = setInfo.name || `Set ${idx + 1}`;
                           const boxId = setInfo.id;
                           const isDeletingBox = deletingBoxId === boxId;
+                          const boxDeletableFiles = files.filter((f) => !fileNamesInUseByBatch.has(f.name));
+                          const boxAllInUse = boxDeletableFiles.length === 0;
                           return (
                             <div key={boxId} className="rounded-lg border border-slate-200 dark:border-slate-600 overflow-hidden bg-slate-50/50 dark:bg-slate-800/30">
                               <div className="px-3 py-2 border-b border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800/50 flex items-center justify-between gap-2">
                                 <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">{title} <span className="text-xs font-normal text-slate-500">({files.length})</span></span>
-                                <button type="button" onClick={() => handleDeleteBox(boxId, files)} disabled={isDeletingBox} className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-60" title="Delete all files in this box"><Trash2 size={16} strokeWidth={2} /></button>
+                                <button type="button" onClick={() => handleDeleteBox(boxId, files)} disabled={isDeletingBox || boxAllInUse} className={`p-1.5 rounded ${boxAllInUse ? 'opacity-50 cursor-not-allowed text-slate-400' : 'text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20'} disabled:opacity-60`} title={boxAllInUse ? 'ไฟล์ในกล่องนี้กำลังถูกใช้ (running/pending) — ไม่สามารถลบได้' : 'Delete all files in this box'}><Trash2 size={16} strokeWidth={2} /></button>
                               </div>
                               <div className="divide-y divide-slate-100 dark:divide-slate-700">
                                 {files.map((f, fileIdx) => {
@@ -4289,12 +4465,12 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                   return (
                                     <div
                                       key={f.id}
-                                      className={`flex items-center gap-2 px-4 py-2 flex-wrap cursor-pointer select-none bg-white/50 dark:bg-transparent ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-white dark:hover:bg-slate-800/50'}`}
-                                      onClick={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return; toggleFileSelect(f.id, globalIndex >= 0 ? globalIndex : fileIdx, e); }}
-                                      onMouseDown={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return; if (e.button === 0) { isDragSelectingFileRef.current = true; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); } }}
-                                      onMouseEnter={() => { if (!isDragSelectingFileRef.current) return; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); }}
+                                      className={`flex items-center gap-2 px-4 py-2 flex-wrap select-none bg-white/50 dark:bg-transparent ${inUseByBatch ? 'opacity-75 cursor-not-allowed' : 'cursor-pointer'} ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : !inUseByBatch ? 'hover:bg-white dark:hover:bg-slate-800/50' : ''}`}
+                                      onClick={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return; if (inUseByBatch) return; toggleFileSelect(f.id, globalIndex >= 0 ? globalIndex : fileIdx, e); }}
+                                      onMouseDown={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return; if (inUseByBatch) return; if (e.button === 0) { isDragSelectingFileRef.current = true; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); } }}
+                                      onMouseEnter={() => { if (inUseByBatch) return; if (!isDragSelectingFileRef.current) return; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); }}
                                     >
-                                      <input type="checkbox" checked={isSelected} onChange={() => toggleFileSelect(f.id, globalIndex >= 0 ? globalIndex : fileIdx, { shiftKey: false, ctrlKey: false, metaKey: false })} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded cursor-pointer shrink-0" />
+                                      <input type="checkbox" checked={isSelected} disabled={inUseByBatch} onChange={() => { if (!inUseByBatch) toggleFileSelect(f.id, globalIndex >= 0 ? globalIndex : fileIdx, { shiftKey: false, ctrlKey: false, metaKey: false }); }} onClick={(e) => e.stopPropagation()} className={`w-4 h-4 rounded shrink-0 ${inUseByBatch ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`} title={inUseByBatch ? 'ไม่สามารถลบได้ — กำลังถูกใช้โดย set' : undefined} />
                                       <span className="flex-1 min-w-0 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
                                       <span className="text-[11px] text-slate-500 dark:text-slate-400 shrink-0 max-w-[70px] truncate" title={f.ownerId ? `Owner: ${f.ownerId}` : '—'}>
                                         {f.ownerId === currentClientId ? 'Me' : (f.ownerId ? 'Other' : '—')}
@@ -4455,6 +4631,8 @@ const TestCasesPage = () => {
   const activeProfileId = useTestStore((s) => s.activeProfileId);
   const libraryEditContext = useTestStore((s) => s.libraryEditContext);
   const clearLibraryEditContext = useTestStore((s) => s.clearLibraryEditContext);
+  const testCaseLibraryFocusOnNavigate = useTestStore((s) => s.testCaseLibraryFocusOnNavigate);
+  const clearTestCaseLibraryFocusOnNavigate = useTestStore((s) => s.clearTestCaseLibraryFocusOnNavigate);
   const jobs = useTestStore((s) => s.jobs);
   const fileNamesInUseByBatch = useMemo(() => {
     const names = new Set();
@@ -4468,19 +4646,45 @@ const TestCasesPage = () => {
     return names;
   }, [jobs]);
 
-  const isSetInUseByJobs = useCallback(
+  /** เฉพาะ test case ที่ชุดไฟล์ครบและตรงกับ job ที่กำลัง running/pending ถึงจะถือว่า "in use" (ล็อกได้) */
+  const testCaseFileKeysInUseByBatch = useMemo(() => {
+    const keys = new Set();
+    (jobs || []).filter((j) => j.status === 'pending' || j.status === 'running').forEach((job) => {
+      (job.files || []).forEach((f) => {
+        const v = (f.vcd || f.vcdName || '').trim();
+        const b = (f.erom || f.binName || '').trim();
+        const l = (f.ulp || f.linName || '').trim();
+        keys.add(`${v}||${b}||${l}`);
+      });
+    });
+    return keys;
+  }, [jobs]);
+
+  // Helper: get job status for a set name in Jobs (used only on Run Set page)
+  const getSetJobStatusForRunSet = useCallback(
     (set) => {
-      const activeStates = new Set(['pending', 'running']);
-      return (jobs || []).some((job) => {
+      const setName = (set?.name || '').trim();
+      if (!setName) return null;
+      let status = null;
+      (jobs || []).forEach((job) => {
         const state = (job.status || '').toLowerCase();
-        if (!activeStates.has(state)) return false;
+        if (state !== 'pending' && state !== 'running') return;
         const configName = (job.configName || '').trim();
         const jobName = (job.name || '').trim();
-        const setName = (set.name || '').trim();
-        return setName && (configName === setName || jobName === setName);
+        if (setName && (configName === setName || jobName === setName)) {
+          // running > pending
+          if (state === 'running') status = 'running';
+          else if (!status) status = 'pending';
+        }
       });
+      return status;
     },
     [jobs]
+  );
+
+  const isSetInUseByJobs = useCallback(
+    (set) => !!getSetJobStatusForRunSet(set),
+    [getSetJobStatusForRunSet]
   );
   const fileInputRef = useRef(null);
   const csvInputRef = useRef(null);
@@ -4561,11 +4765,29 @@ const TestCasesPage = () => {
   const [fileSearch, setFileSearch] = useState('');
   const [fileSort, setFileSort] = useState('time');
   const [fileListExpanded, setFileListExpanded] = useState(false);
+  const [selectedFileIdsForDelete, setSelectedFileIdsForDelete] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isDeletingFiles, setIsDeletingFiles] = useState(false);
   const [draggingRowIndex, setDraggingRowIndex] = useState(null);
   const [dropTargetRowIndex, setDropTargetRowIndex] = useState(null);
   const draggingRowIndexRef = useRef(null);
+
+  // When navigating from Jobs (click test case name): auto-select the matching row so user sees which one was pointed to
+  useEffect(() => {
+    if (!testCaseLibraryFocusOnNavigate) return;
+    const focus = testCaseLibraryFocusOnNavigate;
+    const list = displayedSavedTestCases;
+    const match = list.find((tc) => {
+      const nameMatch = focus.name && (tc.name || '').trim() === (focus.name || '').trim();
+      const vcdMatch = (focus.vcdName || '').trim() && (tc.vcdName || '').trim() === (focus.vcdName || '').trim();
+      const binMatch = focus.binName == null || (tc.binName || '').trim() === (focus.binName || '').trim();
+      const linMatch = focus.linName == null || (tc.linName || '').trim() === (focus.linName || '').trim();
+      return nameMatch || (vcdMatch && binMatch && linMatch);
+    });
+    if (match) setSelectedTestCaseIds([match.id]);
+    clearTestCaseLibraryFocusOnNavigate();
+  }, [testCaseLibraryFocusOnNavigate, displayedSavedTestCases, clearTestCaseLibraryFocusOnNavigate]);
+
   // All test case names in Library: current list + every set's items (avoid duplicates when creating names)
   const getAllLibraryNames = () => {
     const state = useTestStore.getState();
@@ -4611,17 +4833,42 @@ const TestCasesPage = () => {
     }
   };
   const addDisplayedTestCaseCommand = (tcId, cmd) => {
+    const type = cmd?.type;
+    const file = cmd?.file ?? '';
+    const tc = displayedSavedTestCases.find((t) => t.id === tcId);
+    const existingCommands = Array.isArray(tc?.commands) ? tc.commands : [];
+    const existingOfType = existingCommands.filter((c) => c.type === type);
+    const colIndex = existingOfType.length + 2; // VCD2, VCD3, ...
+    const colPrefix = type === 'vcd' ? 'VCD' : type === 'erom' ? 'ERoM' : type === 'ulp' ? 'ULP' : null;
+    const colKey = colPrefix ? `${colPrefix}${colIndex}` : null;
+
     if (isDraftId(tcId)) {
       setPendingDraftTestCases((prev) =>
         prev.map((t) => {
           if (t.id !== tcId) return t;
           const commands = Array.isArray(t.commands) ? t.commands : [];
           const id = `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-          return { ...t, commands: [...commands, { id, ...cmd }] };
+          const next = { ...t, commands: [...commands, { id, ...cmd }] };
+          if (colKey) {
+            next.extraColumns = {
+              ...(next.extraColumns || {}),
+              [colKey]: file,
+            };
+          }
+          return next;
         })
       );
     } else {
       addTestCaseCommand(tcId, cmd);
+      if (colKey) {
+        const prevExtra = (tc && tc.extraColumns) || {};
+        updateDisplayedTestCase(tcId, {
+          extraColumns: {
+            ...prevExtra,
+            [colKey]: file,
+          },
+        });
+      }
     }
   };
   const updateDisplayedTestCaseCommand = (tcId, cmdId, updates) => {
@@ -4736,15 +4983,52 @@ const TestCasesPage = () => {
     if (uploaded > 0) addToast({ type: 'success', message: `${uploaded} file(s) uploaded to library` });
     if (reused > 0) addToast({ type: 'info', message: `${reused} file(s) reused from library` });
     if (toSave?.length > 0) {
+      const existingSaved = useTestStore.getState().savedTestCases || [];
+      const existingByKey = new Map(
+        existingSaved.map((t) => [getFullTestCaseFileKeyFromMerged(t, mergeCommandsIntoExtraForSave(t)), t])
+      );
+      const skipped = [];
+      const created = [];
       toSave.forEach((tc) => {
         const { id, commands, ...rest } = tc;
         const extraColumns = mergeCommandsIntoExtraForSave(tc);
-        addSavedTestCase({ ...rest, extraColumns: Object.keys(extraColumns).length ? extraColumns : undefined });
+        const key = getFullTestCaseFileKeyFromMerged(rest, extraColumns);
+        const existing = existingByKey.get(key);
+        if (existing) {
+          skipped.push(existing);
+          return;
+        }
+        const newId = addSavedTestCase({
+          ...rest,
+          extraColumns: Object.keys(extraColumns).length ? extraColumns : undefined,
+        });
+        created.push(newId);
       });
       setPendingDraftTestCases([]);
+      if (refreshFiles) await refreshFiles();
+      const total = useTestStore.getState().savedTestCases?.length || 0;
+      if (created.length > 0) {
+        addToast({
+          type: 'success',
+          message: `Test cases saved to library (${total} case(s))`,
+        });
+        if (skipped.length > 0) {
+          addToast({
+            type: 'info',
+            message: `${skipped.length} test case(s) already existed (same VCD/ERoM/ULP) and were reused`,
+          });
+        }
+      } else if (skipped.length > 0) {
+        addToast({
+          type: 'info',
+          message: `All ${skipped.length} test case(s) already exist in library — no new entries created`,
+        });
+      }
+    } else {
+      if (refreshFiles) await refreshFiles();
+      const total = useTestStore.getState().savedTestCases?.length || 0;
+      addToast({ type: 'success', message: `Test cases saved to library (${total} case(s))` });
     }
-    const total = useTestStore.getState().savedTestCases?.length || 0;
-    addToast({ type: 'success', message: `Test cases saved to library (${total} case(s))` });
     setSaveLibraryUploadModal(null);
   }, [saveLibraryUploadModal, addUploadedFile, refreshFiles, addToast, addSavedTestCase, setPendingDraftTestCases, mergeCommandsIntoExtraForSave]);
 
@@ -4760,7 +5044,8 @@ const TestCasesPage = () => {
     const ext = String(file?.name || '').split('.').pop()?.toLowerCase();
     if (ext === 'vcd') return 'vcd';
     if (['bin', 'hex', 'elf', 'erom'].includes(ext)) return 'bin';
-    if (['lin', 'txt', 'ulp'].includes(ext)) return 'lin';
+    if (ext === 'txt') return 'mdi';
+    if (['lin', 'ulp'].includes(ext)) return 'lin';
     return 'other';
   };
   const workingFilesList = (() => {
@@ -4782,6 +5067,29 @@ const TestCasesPage = () => {
   const vcdSelected = selectedFiles.filter((f) => getFileKind(f) === 'vcd');
   const binSelected = selectedFiles.filter((f) => getFileKind(f) === 'bin');
   const workingCount = selectedIds.length + localDroppedFiles.length;
+
+  const normalizeTCTestCaseKey = (tc) => {
+    const v = (tc.vcdName || '').trim();
+    const b = (tc.binName || '').trim();
+    const l = (tc.linName || '').trim();
+    return `${v}||${b}||${l}`;
+  };
+
+  /** Key สำหรับเช็คซ้ำ: ต้องตรงทุกไฟล์ใน test case (3, 4, 5 ไฟล์ ตามที่ user สร้าง) ไม่ใช่แค่ VCD+ERoM+ULP หลัก */
+  const normalizeTCTestCaseKeyFull = (tc) => {
+    const base = [(tc.vcdName || '').trim(), (tc.binName || '').trim(), (tc.linName || '').trim()].join('||');
+    const extra = tc.extraColumns && typeof tc.extraColumns === 'object' ? tc.extraColumns : {};
+    const fileCols = Object.keys(extra).filter((k) => /^(VCD|ERoM|ULP)\d+$/i.test(k)).sort();
+    const extraPart = fileCols.map((k) => (extra[k] || '').toString().trim()).join('||');
+    return extraPart ? `${base}||${extraPart}` : base;
+  };
+
+  const getFullTestCaseFileKeyFromMerged = (tc, mergedExtra) => {
+    const base = [(tc.vcdName || '').trim(), (tc.binName || '').trim(), (tc.linName || '').trim()].join('||');
+    const fileCols = Object.keys(mergedExtra || {}).filter((k) => /^(VCD|ERoM|ULP)\d+$/i.test(k)).sort();
+    const extraPart = fileCols.map((k) => (mergedExtra[k] || '').toString().trim()).join('||');
+    return extraPart ? `${base}||${extraPart}` : base;
+  };
 
   // ชื่อไม่ซ้ำ: สร้างชื่อที่ยังไม่มีในคลัง (ดึงจาก Library ทั้ง savedTestCases + ทุก set items), excludeId = id ของแถวที่กำลังแก้
   const getUniqueName = (baseName, excludeId = null) => {
@@ -4808,7 +5116,10 @@ const TestCasesPage = () => {
     const v = (tc.vcdName || '').trim();
     const b = (tc.binName || '').trim();
     const l = (tc.linName || '').trim();
-    return (v && fileNamesInUseByBatch.has(v)) || (b && fileNamesInUseByBatch.has(b)) || (l && fileNamesInUseByBatch.has(l));
+    // ถ้ายังเลือกไฟล์ไม่ครบ 3 ตัว (VCD/ERoM/ULP) ให้ถือว่ายังไม่ถูกใช้งาน ปล่อยให้แก้ไข/เลือกไฟล์ต่อได้
+    if (!v || !b || !l) return false;
+    const baseKey = `${v}||${b}||${l}`;
+    return testCaseFileKeysInUseByBatch.has(baseKey);
   };
 
   const handleNameChange = (tcId, newName, prevName = '') => {
@@ -4933,20 +5244,28 @@ const TestCasesPage = () => {
   const handleClearAll = () => {
     setSelectedIds([]);
     setLocalDroppedFiles([]);
+    setSelectedFileIdsForDelete([]);
     addToast({ type: 'info', message: 'Cleared file selection (files remain in library until Save Set)' });
   };
   const handleDeleteSelected = async () => {
-    if (selectedIds.length === 0 && localDroppedFiles.length === 0) return;
-    if (!window.confirm(`Remove selected files from Library (${selectedIds.length} file(s)) and clear unsaved files? Clear test cases table?`)) return;
+    if (selectedFileIdsForDelete.length === 0) {
+      addToast({ type: 'info', message: 'เลือกไฟล์ที่ต้องการลบ (ติ๊ก checkbox ข้างชื่อไฟล์)' });
+      return;
+    }
+    const toDelete = [...selectedFileIdsForDelete];
+    if (!window.confirm(`ลบ ${toDelete.length} ไฟล์จาก Library และนำออกจากรายการ?`)) return;
     setIsDeletingFiles(true);
-    for (const id of selectedIds) await removeUploadedFile(id);
-    setSelectedIds([]);
-    setLocalDroppedFiles([]);
+    for (const id of toDelete) {
+      if (selectedIds.includes(id)) await removeUploadedFile(id);
+    }
+    setSelectedIds((prev) => prev.filter((id) => !toDelete.includes(id)));
+    setLocalDroppedFiles((prev) => prev.filter((f) => !toDelete.includes(f.id)));
+    setSelectedFileIdsForDelete([]);
     setSavedTestCases([]);
     setSelectedTestCaseIds([]);
     setLoadedSetId(null);
     setIsDeletingFiles(false);
-    addToast({ type: 'success', message: 'Selected files removed and test cases table cleared' });
+    addToast({ type: 'success', message: `ลบ ${toDelete.length} ไฟล์จาก Library แล้ว` });
   };
   // Start fresh: ล้างเฉพาะ UI/ตาราง ไม่ลบข้อมูลจาก Library (server). Persist so refresh/return keeps empty.
   const handleStartFresh = () => {
@@ -4959,6 +5278,7 @@ const TestCasesPage = () => {
     setTableClearedMode(true);
     setSelectedIds([]);
     setLocalDroppedFiles([]);
+    setSelectedFileIdsForDelete([]);
     setPendingDraftTestCases([]);
     setSelectedTestCaseIds([]);
     setLoadedSetId(null);
@@ -5079,6 +5399,9 @@ const TestCasesPage = () => {
     const orderedLins = orderedFiles.filter((f) => getFileKind(f) === 'lin');
     let added = 0;
     const duplicateIds = new Set();
+    const existingByKey = new Map(
+      (savedTestCases || []).map((t) => [normalizeTCTestCaseKeyFull(t), t])
+    );
     orderedVcds.forEach((vcdFile, vcdIdx) => {
       const vcdIndexInOrdered = orderedFiles.findIndex((f) => f.id === vcdFile.id);
       let nearestBin = null, minDistance = Infinity;
@@ -5092,9 +5415,11 @@ const TestCasesPage = () => {
         const d = Math.abs(orderedFiles.findIndex((f) => f.id === linFile.id) - vcdIndexInOrdered);
         if (d < minLin) { minLin = d; nearestLin = linFile; }
       });
-      const existing = (displayedSavedTestCases || []).find(
-        (t) => t.vcdName === vcdFile.name && t.binName === binFile.name && t.linName === (nearestLin?.name || '')
-      );
+      const pairEntry = { vcdName: vcdFile.name, binName: binFile.name, linName: nearestLin?.name || '' };
+      const key = normalizeTCTestCaseKeyFull(pairEntry);
+      const existing = existingByKey.get(key) ||
+        (pendingDraftTestCases || []).find((t) => normalizeTCTestCaseKeyFull(t) === key) ||
+        (displayedSavedTestCases || []).find((t) => normalizeTCTestCaseKeyFull(t) === key);
       if (!existing) {
         const name = getNextTestCaseName();
         const entry = { name, vcdName: vcdFile.name, binName: binFile.name, linName: nearestLin?.name || '', tryCount: 1, createdAt: new Date().toISOString() };
@@ -5408,7 +5733,17 @@ const TestCasesPage = () => {
 
   const selectedFilesList = workingFilesList;
   const filteredFiles = [...selectedFilesList]
-    .filter((f) => { const k = getFileKind(f); if (fileFilter !== 'all' && (fileFilter === 'vcd' ? k !== 'vcd' : fileFilter === 'bin' ? k !== 'bin' : k !== 'lin')) return false; if (fileSearch.trim()) return f.name.toLowerCase().includes(fileSearch.trim().toLowerCase()); return true; })
+    .filter((f) => {
+      const k = getFileKind(f);
+      if (fileFilter !== 'all') {
+        if (fileFilter === 'vcd' && k !== 'vcd') return false;
+        if (fileFilter === 'bin' && k !== 'bin') return false;
+        if (fileFilter === 'lin' && k !== 'lin') return false;
+        if (fileFilter === 'mdi' && k !== 'mdi') return false;
+      }
+      if (fileSearch.trim()) return f.name.toLowerCase().includes(fileSearch.trim().toLowerCase());
+      return true;
+    })
     .sort((a, b) => (fileSort === 'time' ? (b.uploadedAt || 0) - (a.uploadedAt || 0) : (a.name || '').localeCompare(b.name || '')));
   return (
     <div className="w-full max-w-6xl mx-auto space-y-6">
@@ -5474,11 +5809,16 @@ const TestCasesPage = () => {
             {(displayedSavedTestCases.length > 0 || workingCount > 0) && !isViewingShared && <button onClick={handleStartFresh} className="px-3 py-2 bg-amber-50 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-100">Start fresh</button>}
           </div>
         </div>
-        <input ref={fileInputRef} type="file" multiple accept=".vcd,.bin,.hex,.elf,.erom,.ulp" onChange={handleFileInputChange} className="hidden" />
+        <input ref={fileInputRef} type="file" multiple accept=".vcd,.bin,.hex,.elf,.erom,.ulp,.txt" onChange={handleFileInputChange} className="hidden" />
         <div className="px-4 py-3 flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900">
-          {['all', 'vcd', 'bin', 'lin'].map((k) => (
-            <button key={k} onClick={() => setFileFilter(k)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${fileFilter === k ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700' : 'border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:border-blue-200'}`}>{k === 'all' ? 'All' : k.toUpperCase()}</button>
+          {['all', 'vcd', 'bin', 'lin', 'mdi'].map((k) => (
+            <button key={k} onClick={() => setFileFilter(k)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${fileFilter === k ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700' : 'border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:border-blue-200'}`}>{k === 'all' ? 'All' : k === 'mdi' ? 'MDI' : k.toUpperCase()}</button>
           ))}
+          {workingCount > 0 && !isViewingShared && (
+            <button onClick={handleDeleteSelected} disabled={isDeletingFiles || selectedFileIdsForDelete.length === 0} className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:cursor-not-allowed shrink-0" title={selectedFileIdsForDelete.length > 0 ? `ลบ ${selectedFileIdsForDelete.length} ไฟล์ที่เลือกจาก Library` : 'เลือกไฟล์ที่ต้องการลบ (ติ๊ก checkbox)'}>
+              <Trash2 size={18} strokeWidth={2} />
+            </button>
+          )}
           <button onClick={handleBrowseClick} className="ml-auto h-8 w-8 inline-flex items-center justify-center rounded-lg bg-blue-600 text-white hover:bg-blue-700" title="Upload files or drop folder / Ctrl+V to paste"><Plus size={16} /></button>
           <input type="text" value={fileSearch} onChange={(e) => setFileSearch(e.target.value)} placeholder="Search..." className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800" />
           <select value={fileSort} onChange={(e) => setFileSort(e.target.value)} className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200"><option value="time">Time</option><option value="name">Name</option></select>
@@ -5518,22 +5858,34 @@ const TestCasesPage = () => {
               <p className="text-slate-400 mt-2">No files</p>
             </div>
           ) : (
-            filteredFiles.map((f) => (
-              <div key={f.id} className="flex items-center gap-2 px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                <span className="flex-1 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (String(f.id).startsWith('local-')) setLocalDroppedFiles((prev) => prev.filter((x) => x.id !== f.id));
-                    else setSelectedIds((prev) => prev.filter((id) => id !== f.id));
-                  }}
-                  className="text-slate-500 hover:text-slate-700 text-xs"
-                  title={String(f.id).startsWith('local-') ? 'Remove from this area (not saved to Library yet)' : 'Remove from this area'}
-                >
-                  Remove
-                </button>
-              </div>
-            ))
+            filteredFiles.map((f) => {
+              const isCheckedForDelete = selectedFileIdsForDelete.includes(f.id);
+              return (
+                <div key={f.id} className="flex items-center gap-2 px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                  <span className="flex-1 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
+                  <label className="flex items-center gap-1.5 shrink-0 cursor-pointer" title="เลือกเพื่อลบจาก Library">
+                    <input
+                      type="checkbox"
+                      checked={isCheckedForDelete}
+                      onChange={() => setSelectedFileIdsForDelete((prev) => (prev.includes(f.id) ? prev.filter((id) => id !== f.id) : [...prev, f.id]))}
+                      className="w-4 h-4 rounded cursor-pointer"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedFileIdsForDelete((prev) => prev.filter((id) => id !== f.id));
+                      if (String(f.id).startsWith('local-')) setLocalDroppedFiles((prev) => prev.filter((x) => x.id !== f.id));
+                      else setSelectedIds((prev) => prev.filter((id) => id !== f.id));
+                    }}
+                    className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 shrink-0"
+                    title={String(f.id).startsWith('local-') ? 'นำออกจากรายการ (ยังไม่ได้บันทึกลง Library)' : 'นำออกจากรายการ'}
+                  >
+                    <Trash2 size={16} strokeWidth={2} />
+                  </button>
+                </div>
+              );
+            })
           )}
         </div>
         <button onClick={() => setFileListExpanded((b) => !b)} className="w-full py-1 text-xs text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800">{fileListExpanded ? 'Collapse' : 'Expand'} file list</button>
@@ -5594,7 +5946,7 @@ const TestCasesPage = () => {
                   addToast({ type: 'warning', message: 'No test cases to save' });
                   return;
                 }
-                // Upload any dropped-but-not-yet-uploaded files first so they appear in File in Library
+                // Upload any dropped-but-not-yet-uploaded files first; compare by checksum so duplicates are not re-uploaded
                 const toUpload = (localDroppedFiles || []).filter((f) => f && f.file instanceof File);
                 if (toUpload.length > 0) {
                   await refreshFiles?.();
@@ -5604,11 +5956,13 @@ const TestCasesPage = () => {
                       .filter((f) => f.checksum)
                       .map((f) => [f.checksum, f])
                   );
+                  const byName = new Map(currentFiles.map((f) => [f.name.toLowerCase(), f]));
                   const prepared = [];
                   for (const f of toUpload) {
                     const sig = await computeFileSignature(f.file);
-                    const existing = sig.checksum ? byChecksum.get(sig.checksum) : null;
-                    prepared.push({ file: f.file, sig, existing });
+                    const existingByChecksum = sig.checksum ? byChecksum.get(sig.checksum) : null;
+                    const existingByName = byName.get((f.file.name || '').toLowerCase());
+                    prepared.push({ file: f.file, sig, existing: existingByChecksum || existingByName });
                   }
                   const duplicates = prepared.filter((p) => p.existing);
                   if (duplicates.length > 0) {
@@ -5625,15 +5979,42 @@ const TestCasesPage = () => {
                   if (uploaded > 0) addToast({ type: 'success', message: `${uploaded} file(s) uploaded to library` });
                 }
                 if (toSave.length > 0) {
+                  const existingSaved = useTestStore.getState().savedTestCases || [];
+                  const existingByKey = new Map(
+                    existingSaved.map((t) => [getFullTestCaseFileKeyFromMerged(t, mergeCommandsIntoExtraForSave(t)), t])
+                  );
+                  const skipped = [];
+                  const created = [];
                   toSave.forEach((tc) => {
                     const { id, commands, ...rest } = tc;
                     const extraColumns = mergeCommandsIntoExtraForSave(tc);
-                    addSavedTestCase({ ...rest, extraColumns: Object.keys(extraColumns).length ? extraColumns : undefined });
+                    const key = getFullTestCaseFileKeyFromMerged(rest, extraColumns);
+                    if (existingByKey.get(key)) {
+                      skipped.push(key);
+                      return;
+                    }
+                    const newId = addSavedTestCase({
+                      ...rest,
+                      extraColumns: Object.keys(extraColumns).length ? extraColumns : undefined,
+                    });
+                    created.push(newId);
                   });
                   setPendingDraftTestCases([]);
+                  if (refreshFiles) await refreshFiles();
+                  const total = useTestStore.getState().savedTestCases?.length || 0;
+                  if (created.length > 0) {
+                    addToast({ type: 'success', message: `Test cases saved to library (${total} case(s))` });
+                    if (skipped.length > 0) {
+                      addToast({ type: 'info', message: `${skipped.length} test case(s) already existed (same VCD/ERoM/ULP) — not duplicated` });
+                    }
+                  } else if (skipped.length > 0) {
+                    addToast({ type: 'info', message: `All ${skipped.length} test case(s) already in library — no new entries` });
+                  }
+                } else {
+                  if (refreshFiles) await refreshFiles();
+                  const total = useTestStore.getState().savedTestCases?.length || 0;
+                  addToast({ type: 'success', message: `Library updated (${total} test case(s))` });
                 }
-                const total = useTestStore.getState().savedTestCases?.length || 0;
-                addToast({ type: 'success', message: `Test cases saved to library (${total} case(s))` });
               }}
               className="px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5"
               title="Save test cases. Dropped files will be uploaded to File in Library first."
@@ -5717,28 +6098,6 @@ const TestCasesPage = () => {
                 <input type="number" min={1} value={bulkTryCount} onChange={(e) => setBulkTryCount(e.target.value)} placeholder="Try" className="w-16 px-2 py-1 text-xs border border-slate-300 dark:border-slate-500 rounded bg-white dark:bg-slate-800" onKeyDown={(e) => e.key === 'Enter' && handleBulkSetTryCount()} />
                 <button onClick={handleBulkSetTryCount} className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700">Apply</button>
                 <span className="text-slate-300 dark:text-slate-600 mx-0.5">|</span>
-                <span className="text-xs font-bold text-slate-600 dark:text-slate-400">Save:</span>
-                <button
-                  type="button"
-                  onClick={() => addToast({ type: 'info', message: 'Edits are applied automatically (replace in place). Use "Save as new" to keep the original.' })}
-                  className="px-3 py-1 bg-slate-500 text-white rounded text-xs font-semibold hover:bg-slate-600"
-                  title="Changes to name/files are already saved. This confirms replace behavior."
-                >
-                  Update existing (replace)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    selectedTestCaseIds.forEach((id) => {
-                      if (displayedSavedTestCases.some((t) => t.id === id)) duplicateDisplayedTestCase(id, { name: getNextTestCaseName() });
-                    });
-                    addToast({ type: 'success', message: `Saved as new test case(s) (${selectedTestCaseIds.length})` });
-                  }}
-                  className="px-3 py-1 bg-emerald-600 text-white rounded text-xs font-semibold hover:bg-emerald-700"
-                  title="Duplicate selected with new names (TC00001, TC00002, …)"
-                >
-                  Save as new test case(s)
-                </button>
                 <button onClick={handleDeleteSelectedTestCases} className="px-3 py-1 bg-red-600 text-white rounded text-xs font-semibold hover:bg-red-700 flex items-center gap-1" title="Delete selected test cases">
                   <Trash2 size={12} />
                   Delete
@@ -5911,6 +6270,8 @@ const TestCasesPage = () => {
                       selectedTestCaseIds.includes(tc.id) ? 'bg-blue-50 dark:bg-blue-900/20' : ''
                     } ${
                       duplicateHighlightIds.includes(tc.id) ? 'animate-pulse ring-1 ring-emerald-400' : ''
+                    } ${
+                      isTestCaseInUseByBatch(tc) ? 'opacity-75 bg-slate-50 dark:bg-slate-800/50' : ''
                     }`}
                   >
                     <td
@@ -5935,9 +6296,10 @@ const TestCasesPage = () => {
                         onChange={(e) =>
                           handleNameChange(tc.id, e.target.value, tc.name || '')
                         }
-                        className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                        disabled={isTestCaseInUseByBatch(tc) || isViewingShared}
+                        className={`w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800 ${isTestCaseInUseByBatch(tc) ? 'opacity-70 cursor-not-allowed' : ''}`}
                         placeholder="set name"
-                        title="Use a unique name for this test case"
+                        title={isTestCaseInUseByBatch(tc) ? 'ล็อก — test case อยู่ใน process (running/pending)' : 'Use a unique name for this test case'}
                       />
                     </td>
                     <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700">
@@ -5945,9 +6307,10 @@ const TestCasesPage = () => {
                         type="text"
                         value={(tc.extraColumns && (tc.extraColumns.tag || tc.extraColumns.Tag)) || ''}
                         onChange={(e) => handleExtraColumnChange(tc.id, 'tag', e.target.value)}
-                        className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                        disabled={isTestCaseInUseByBatch(tc) || isViewingShared}
+                        className={`w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800 ${isTestCaseInUseByBatch(tc) ? 'opacity-70 cursor-not-allowed' : ''}`}
                         placeholder="tag"
-                        title="Tag for grouping or filtering"
+                        title={isTestCaseInUseByBatch(tc) ? 'ล็อก — test case อยู่ใน process' : 'Tag for grouping or filtering'}
                       />
                     </td>
                     <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs text-center whitespace-nowrap">
@@ -5963,9 +6326,9 @@ const TestCasesPage = () => {
                         className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
                         title={
                           isTestCaseLocked(tc.id)
-                            ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
+                            ? 'Files are locked because this test case is used in a set. Duplicate this test case to change files.'
                             : isTestCaseInUseByBatch(tc)
-                              ? 'Files are locked because this test case is in a running or pending set. Use “Save as new test case” to change files.'
+                              ? 'Files are locked because this test case is in a running or pending set. Duplicate this test case to change files.'
                             : 'Select ERoM file'
                         }
                       >
@@ -5993,9 +6356,9 @@ const TestCasesPage = () => {
                         className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
                         title={
                           isTestCaseLocked(tc.id)
-                            ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
+                            ? 'Files are locked because this test case is used in a set. Duplicate this test case to change files.'
                             : isTestCaseInUseByBatch(tc)
-                            ? 'Files are locked because this test case is in a running or pending set. Use “Save as new test case” to change files.'
+                            ? 'Files are locked because this test case is in a running or pending set. Duplicate this test case to change files.'
                             : 'Select ULP file'
                         }
                       >
@@ -6021,9 +6384,9 @@ const TestCasesPage = () => {
                         className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
                         title={
                           isTestCaseLocked(tc.id)
-                            ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
+                            ? 'Files are locked because this test case is used in a set. Duplicate this test case to change files.'
                             : isTestCaseInUseByBatch(tc)
-                            ? 'Files are locked because this test case is in a running or pending set. Use “Save as new test case” to change files.'
+                            ? 'Files are locked because this test case is in a running or pending set. Duplicate this test case to change files.'
                             : 'Select VCD file'
                         }
                       >
@@ -6084,9 +6447,9 @@ const TestCasesPage = () => {
                               className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
                               title={
                                 isTestCaseLocked(tc.id)
-                                  ? 'Files are locked because this test case is used in a set. Use “Save as new test case” to change files.'
-                                  : isTestCaseInUseByBatch(tc)
-                                  ? 'Files are locked because this test case is in a running or pending set. Use “Save as new test case” to change files.'
+                                ? 'Files are locked because this test case is used in a set. Duplicate this test case to change files.'
+                                : isTestCaseInUseByBatch(tc)
+                                  ? 'Files are locked because this test case is in a running or pending set. Duplicate this test case to change files.'
                                   : `Select file for ${col}`
                               }
                             >
@@ -6103,7 +6466,8 @@ const TestCasesPage = () => {
                               type="text"
                               value={getExtraVal(tc, col)}
                               onChange={(e) => handleExtraColumnChange(tc.id, col, e.target.value)}
-                              className="w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800"
+                              disabled={isTestCaseInUseByBatch(tc) || isViewingShared}
+                              className={`w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800 ${isTestCaseInUseByBatch(tc) ? 'opacity-70 cursor-not-allowed' : ''}`}
                               placeholder="—"
                             />
                           )}
@@ -6124,7 +6488,9 @@ const TestCasesPage = () => {
                             ),
                           })
                         }
-                        className="w-full px-1 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-center"
+                        disabled={isTestCaseInUseByBatch(tc) || isViewingShared}
+                        className={`w-full px-1 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-center ${isTestCaseInUseByBatch(tc) ? 'opacity-70 cursor-not-allowed' : ''}`}
+                        title={isTestCaseInUseByBatch(tc) ? 'ล็อก — อยู่ใน process' : undefined}
                       />
                     </td>
                     <td className="px-2 py-1.5 flex items-center justify-center gap-0.5 relative">
@@ -6146,7 +6512,7 @@ const TestCasesPage = () => {
                           addToast({ type: 'success', message: 'Saved as new test case' });
                         }}
                         className="p-1 text-slate-500 hover:text-blue-600 rounded"
-                        title="Save as new test case"
+                        title="Duplicate this test case"
                       >
                         <Copy size={14} />
                       </button>
@@ -6325,7 +6691,7 @@ const TestCasesPage = () => {
                           addToast({ type: 'success', message: 'Saved as new test case' });
                         }}
                         className="p-1 text-slate-500 hover:text-blue-600 rounded"
-                        title="Save as new test case"
+                        title="Duplicate this test case"
                       >
                         <Copy size={14} />
                       </button>
@@ -6736,7 +7102,7 @@ const TestCasesPage = () => {
                     <button
                       type="button"
                       onClick={async () => {
-                        if (!window.confirm(`Delete set "${set.name}"? This will remove it from the library and from the database.`)) return;
+                        if (!window.confirm(`Delete set "${set.name}"? This will remove it from Saved sets only (test cases and files in Library will stay).`)) return;
                         try {
                           await api.deleteSet(set.id);
                         } catch (e) {
@@ -6751,7 +7117,7 @@ const TestCasesPage = () => {
                       className={`p-1 rounded ${
                         isViewingShared ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-600/10 text-red-600'
                       }`}
-                      title="Delete set (from library and database)"
+                      title="Delete set from Saved (ไม่ลบ test cases หรือไฟล์ใน Library)"
                     >
                       <Trash2 size={14} />
                     </button>
@@ -6816,6 +7182,27 @@ const RunSetPage = ({ onNavigateJobs }) => {
   const [editingSetId, setEditingSetId] = useState(null);
   const [editingSetName, setEditingSetName] = useState('');
   const runSetRightRef = useRef(null);
+
+  // Helper: job status for a Saved set on Run Set page ('pending' | 'running' | null)
+  const getRunSetStatusForSet = useCallback(
+    (set) => {
+      const setName = (set?.name || '').trim();
+      if (!setName) return null;
+      let status = null;
+      (jobs || []).forEach((job) => {
+        const state = (job.status || '').toLowerCase();
+        if (state !== 'pending' && state !== 'running') return;
+        const configName = (job.configName || '').trim();
+        const jobName = (job.name || '').trim();
+        if (setName && (configName === setName || jobName === setName)) {
+          if (state === 'running') status = 'running';
+          else if (!status) status = 'pending';
+        }
+      });
+      return status;
+    },
+    [jobs]
+  );
 
   const isSetInUseByJobs = useCallback(
     (set) => {
@@ -7412,8 +7799,9 @@ const RunSetPage = ({ onNavigateJobs }) => {
               </p>
             ) : (
             <div className="space-y-1 min-h-[120px] max-h-56 overflow-y-auto overflow-x-hidden pr-2">
-              {safeSets.map((set, index) => {
-                const inUse = isSetInUseByJobs(set);
+                {safeSets.map((set, index) => {
+                const status = getRunSetStatusForSet(set); // 'pending' | 'running' | null
+                const inUse = !!status;
                 return (
                   <div
                     key={set.id}
@@ -7491,9 +7879,14 @@ const RunSetPage = ({ onNavigateJobs }) => {
                             <span className="font-semibold text-slate-700 dark:text-slate-200 truncate">
                               {set.name}
                             </span>
-                            {inUse && (
+                            {status === 'running' && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700 text-[9px] font-semibold">
+                                Running
+                              </span>
+                            )}
+                            {status === 'pending' && (
                               <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[9px] font-semibold">
-                                In run
+                                Pending
                               </span>
                             )}
                             <span className="text-[10px] text-slate-400 dark:text-slate-500">
@@ -7586,7 +7979,7 @@ const RunSetPage = ({ onNavigateJobs }) => {
                       <button
                         type="button"
                         onClick={async () => {
-                          if (!window.confirm(`Delete set "${set.name}"? This will remove it from the library and from the database.`)) return;
+                          if (!window.confirm(`Delete set "${set.name}"? This will remove it from Saved sets only (test cases and files in Library will stay).`)) return;
                           try {
                             await api.deleteSet(set.id);
                           } catch (e) {
@@ -7596,7 +7989,7 @@ const RunSetPage = ({ onNavigateJobs }) => {
                           addToast({ type: 'success', message: `Deleted set "${set.name}"` });
                         }}
                         className="p-1 rounded hover:bg-red-600/10 text-red-600 dark:text-red-400"
-                        title="Delete set (from library and database)"
+                        title="Delete set from Saved (ไม่ลบ test cases หรือไฟล์ใน Library)"
                       >
                         <Trash2 size={14} />
                       </button>
@@ -7623,8 +8016,8 @@ const RunSetPage = ({ onNavigateJobs }) => {
             ) : (
               <ul className="divide-y divide-slate-100 dark:divide-slate-700">
                 {safeSets.map((set) => {
-                  const inUse = isSetInUseByJobs(set);
-                  const disabled = inUse;
+                  const status = getRunSetStatusForSet(set); // 'pending' | 'running' | null
+                  const disabled = status === 'running'; // Running only; Pending can still be selected
                   return (
                     <li
                       key={set.id}
@@ -7644,9 +8037,14 @@ const RunSetPage = ({ onNavigateJobs }) => {
                       <span className="flex-1 text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
                         {set.name}
                       </span>
-                      {inUse && (
+                      {status === 'running' && (
+                        <span className="px-1.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-[10px] font-semibold border border-blue-200 dark:border-blue-700 shrink-0">
+                          Running
+                        </span>
+                      )}
+                      {status === 'pending' && (
                         <span className="px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px] font-semibold border border-amber-200 dark:border-amber-700 shrink-0">
-                          In run
+                          Pending
                         </span>
                       )}
                       <span className="text-xs text-slate-500 shrink-0">
@@ -10143,7 +10541,7 @@ const SetupPage = ({ editJobId, onEditComplete }) => {
   };
 
 // 3. JOBS PAGE (Enhanced)
-const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLibrary }) => {
+const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLibrary, onNavigateToTestCases }) => {
   const { 
     jobs, 
     startPendingJobs,
@@ -10157,6 +10555,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
     rerunFailedFiles,
     moveFileUp, 
     moveFileDown, 
+    deleteJobFile,
     updateJobTag, 
     exportJobToJSON,
     deleteJob,
@@ -10590,10 +10989,10 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
   const allCompletedJobs = sortedAllJobs.filter(j => j.status === 'completed' || j.status === 'stopped');
   const completedJobsFiltered = sortByDate(applyJobsFilters(allCompletedJobs));
 
-  // Simulated completed batch for demo when there are no real completed jobs
+  // Simulated completed batches for demo when there are no real completed jobs
   const DEMO_COMPLETED_JOB = {
     id: 'demo-completed',
-    name: 'Demo completed batch',
+    name: 'Completed set',
     status: 'completed',
     progress: 100,
     tag: 'Demo',
@@ -10605,15 +11004,34 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
     startedAt: new Date(Date.now() - 3600000).toISOString(),
     completedAt: new Date().toISOString(),
     files: [
-      { id: 1, name: 'test_case_1.vcd', status: 'completed', result: 'pass', order: 1 },
-      { id: 2, name: 'test_case_2.vcd', status: 'completed', result: 'pass', order: 2 },
-      { id: 3, name: 'test_case_3.vcd', status: 'completed', result: 'pass', order: 3 },
+      { id: 'demo-c-1', name: 'test_case_1.vcd', status: 'completed', result: 'pass', order: 1 },
+      { id: 'demo-c-2', name: 'test_case_2.vcd', status: 'completed', result: 'pass', order: 2 },
+      { id: 'demo-c-3', name: 'test_case_3.vcd', status: 'completed', result: 'pass', order: 3 },
+    ],
+  };
+  // อีกชุด demo completed สำหรับใช้พรีเซนต์เพิ่มเติม
+  const DEMO_COMPLETED_JOB_2 = {
+    id: 'demo-completed-2',
+    name: 'Completed set (ALT)',
+    status: 'completed',
+    progress: 100,
+    tag: 'Demo',
+    configName: 'Alt_Setup',
+    totalFiles: 2,
+    completedFiles: 2,
+    firmware: 'demo_erom_2.erom',
+    boards: ['Demo Board 2'],
+    startedAt: new Date(Date.now() - 5400000).toISOString(),
+    completedAt: new Date(Date.now() - 1800000).toISOString(),
+    files: [
+      { id: 'demo-c2-1', name: 'alt_case_1.vcd', status: 'completed', result: 'pass', order: 1 },
+      { id: 'demo-c2-2', name: 'alt_case_2.vcd', status: 'completed', result: 'pass', order: 2 },
     ],
   };
   // Demo batch ที่มีบาง test case fail (สำหรับพรีเซนต์ - แสดงการ์ดสีแดง)
   const DEMO_FAILED_JOB = {
     id: 'demo-failed',
-    name: 'Demo failed batch (some tests failed)',
+    name: 'Demo failed set',
     status: 'completed',
     progress: 100,
     tag: 'Demo',
@@ -10625,15 +11043,37 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
     startedAt: new Date(Date.now() - 7200000).toISOString(),
     completedAt: new Date(Date.now() - 3600000).toISOString(),
     files: [
-      { id: 1, name: 'test_case_1.vcd', status: 'completed', result: 'pass', order: 1 },
-      { id: 2, name: 'test_case_2.vcd', status: 'completed', result: 'fail', order: 2 },
-      { id: 3, name: 'test_case_3.vcd', status: 'completed', result: 'pass', order: 3 },
+      { id: 'demo-f-1', name: 'test_case_1.vcd', status: 'completed', result: 'pass', order: 1 },
+      { id: 'demo-f-2', name: 'test_case_2.vcd', status: 'completed', result: 'fail', order: 2 },
+      { id: 'demo-f-3', name: 'test_case_3.vcd', status: 'completed', result: 'pass', order: 3 },
+    ],
+  };
+  // ชุด demo failed เพิ่มอีกอันสำหรับพรีเซนต์ flow re-run failed
+  const DEMO_FAILED_JOB_2 = {
+    id: 'demo-failed-2',
+    name: 'Demo failed set (ALT)',
+    status: 'completed',
+    progress: 100,
+    tag: 'Demo',
+    configName: 'Alt_Setup',
+    totalFiles: 3,
+    completedFiles: 3,
+    firmware: 'demo_erom_3.erom',
+    boards: ['Demo Board 3'],
+    startedAt: new Date(Date.now() - 10800000).toISOString(),
+    completedAt: new Date(Date.now() - 5400000).toISOString(),
+    files: [
+      { id: 'demo-f2-1', name: 'alt_case_1.vcd', status: 'completed', result: 'pass', order: 1 },
+      { id: 'demo-f2-2', name: 'alt_case_2.vcd', status: 'completed', result: 'fail', order: 2 },
+      { id: 'demo-f2-3', name: 'alt_case_3.vcd', status: 'completed', result: 'fail', order: 3 },
     ],
   };
   // แสดง demo completed/error เสมอด้านบนของ completed column เพื่อใช้พรีเซนต์
   const displayCompletedJobs = [
     DEMO_COMPLETED_JOB,
     DEMO_FAILED_JOB,
+    DEMO_COMPLETED_JOB_2,
+    DEMO_FAILED_JOB_2,
     ...completedJobsFiltered,
   ];
 
@@ -10654,6 +11094,8 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
     const showDetails = expandedDetailsJobs.includes(job.id);
     const runningFiles = sortedFiles.filter(f => f.status === 'running');
     
+    const isDraggable = !isDemoJob && job.status !== 'running';
+
     return (
       <div 
       key={job.id} 
@@ -10661,6 +11103,15 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
       className={`bg-white text-slate-900 rounded-xl border shadow-sm overflow-hidden transition-all ${getCardStatusStyle(job)} ${
           selectedJobIds.includes(job.id) ? 'border-blue-500 ring-2 ring-blue-200' : 'border-slate-200 dark:border-slate-700'
         } ${draggingJobId === job.id ? 'opacity-50' : ''} dark:bg-slate-900 dark:text-slate-100`}
+        draggable={isDraggable}
+        onDragStart={isDraggable ? (e) => {
+          e.stopPropagation();
+          setDraggingJobId(job.id);
+          e.dataTransfer.setData('application/x-job-id', job.id);
+          e.dataTransfer.setData('text/plain', job.id);
+          e.dataTransfer.setData('application/x-job-from-index', String(jobIndex));
+          e.dataTransfer.effectAllowed = 'move';
+        } : undefined}
         onClick={(e) => {
           if (e.target.closest('button') || e.target.closest('input') || e.target.closest('select') || e.target.closest('[data-no-select]')) {
             return;
@@ -10668,11 +11119,11 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
           // คลิกที่การ์ด = เปิด/ปิด Details (สรุป + progress + ทุก test case)
           toggleDetails(job.id);
         }}
-        onDragOver={isDemoJob || job.status === 'running' ? undefined : (e) => {
+        onDragOver={!isDraggable ? undefined : (e) => {
           e.preventDefault();
           e.dataTransfer.dropEffect = 'move';
         }}
-        onDrop={isDemoJob || job.status === 'running' ? undefined : (e) => {
+        onDrop={!isDraggable ? undefined : (e) => {
           e.preventDefault();
           const jobId = e.dataTransfer.getData('application/x-job-id') || e.dataTransfer.getData('text/plain');
           const fromIndex = parseInt(e.dataTransfer.getData('application/x-job-from-index'), 10);
@@ -10734,7 +11185,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
                         value={tagInput}
                         onChange={(e) => setTagInput(e.target.value)}
                         placeholder="Tag name"
-                        className="px-2 py-0.5 rounded text-xs border border-slate-300 w-24 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="px-2 py-0.5 rounded text-xs border border-slate-300 w-28 bg-white text-slate-900 placeholder-slate-400 dark:bg-slate-900 dark:text-slate-50 dark:placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') handleSaveTag(job.id);
                           if (e.key === 'Escape') handleCancelTag();
@@ -10759,55 +11210,9 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
                 </div>
               </div>
               
-              {/* Reorder: Drag handle + Up/Down (hidden for demo job และ Running column) */}
-              {!isDemoJob && job.status !== 'running' && (
-              <div className="flex flex-col gap-1 shrink-0 items-center" data-no-select>
-                <div
-                  className="flex items-center justify-center p-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-500 dark:border-slate-700 dark:hover:bg-slate-800 dark:text-slate-300 cursor-grab active:cursor-grabbing"
-                  draggable
-                  onDragStart={(e) => {
-                    e.stopPropagation();
-                    setDraggingJobId(job.id);
-                    e.dataTransfer.setData('application/x-job-id', job.id);
-                    e.dataTransfer.setData('text/plain', job.id);
-                    e.dataTransfer.setData('application/x-job-from-index', String(jobIndex));
-                    e.dataTransfer.effectAllowed = 'move';
-                  }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  title="Drag to reorder"
-                >
-                  <GripVertical size={16} />
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    moveJobUp(job.id);
-                  }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  disabled={jobIndex === 0}
-                  className={`p-1.5 rounded-lg border text-slate-600 dark:text-slate-300 ${jobIndex === 0 ? 'opacity-30 cursor-not-allowed border-slate-200 dark:border-slate-700' : 'hover:bg-slate-50 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-700'}`}
-                  title="Move batch up"
-                >
-                  <ArrowUp size={14} />
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    moveJobDown(job.id);
-                  }}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  disabled={jobIndex === allJobs.length - 1}
-                  className={`p-1.5 rounded-lg border text-slate-600 dark:text-slate-300 ${jobIndex === allJobs.length - 1 ? 'opacity-30 cursor-not-allowed border-slate-200 dark:border-slate-700' : 'hover:bg-slate-50 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-700'}`}
-                  title="Move batch down"
-                >
-                  <ArrowDown size={14} />
-                </button>
-              </div>
-              )}
+              {/* Drag & drop reordering: ไม่มีปุ่ม/ไอคอน แต่อีกการ์ดยังรับ drag จากส่วนหัวการ์ดหลัก */}
             </div>
-            {/* Action Row: Details (includes all test cases + progress), Edit, Delete */}
+            {/* Action Row: Details, Delete */}
             <div className="flex items-center gap-1.5 flex-wrap pt-1" data-no-select>
               <button
                 type="button"
@@ -10819,21 +11224,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
                 {showDetails ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                 Details
               </button>
-              {onEditJob && (job.status || '').toLowerCase() !== 'running' && !isDemoJob && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        onEditJob(job.id);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      className="px-2 py-1 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-all flex items-center gap-1 shrink-0"
-                      title="Edit this batch - Load pairs table for editing"
-                    >
-                      <Pencil size={12} />
-                      Edit Batch
-                    </button>
-                  )}
+              {/* Edit Batch button removed per UX request */}
                   {!isDemoJob && (
                     <button
                       onClick={(e) => {
@@ -10851,13 +11242,11 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
                   )}
             </div>
             {showDetails && (
-              <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2 text-xs text-slate-600 dark:text-slate-300">
+              <div className="mt-1 pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2 text-xs text-slate-600 dark:text-slate-300">
                 {/* Summary line */}
-                <div className="flex items-center gap-3 flex-wrap">
-                  <span>Firmware: <strong className="text-slate-700 dark:text-slate-200">{job.firmware}</strong></span>
+              <div className="flex items-center gap-3 flex-wrap">
                   <span>Boards: <strong className="text-slate-700 dark:text-slate-200">{job.boards?.join(', ')}</strong></span>
-                  <span>Progress: <strong className="text-slate-700 dark:text-slate-200">{job.progress}%</strong></span>
-                  <span>Files: <strong className="text-slate-700 dark:text-slate-200">{job.completedFiles}/{job.totalFiles}</strong></span>
+                <span>Test cases: <strong className="text-slate-700 dark:text-slate-200">{job.completedFiles}/{job.totalFiles}</strong></span>
                   {(job.completedAt || job.startedAt) && (
                     <span className="px-2 py-0.5 bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 rounded text-xs font-semibold">
                       {(() => {
@@ -10904,135 +11293,32 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
                     const failed = sortedFiles.filter((f) => fileIds.includes(f.id) && (f.result === 'fail' || f.status === 'error'));
                     if (failed.length) setRerunFailedModal({ job, failedFiles: failed });
                   }}
+                  onReorderFile={(fromIndex, toIndex) => {
+                    if (fromIndex === toIndex) return;
+                    const filesForJob = getSortedFiles(job);
+                    const fromFile = filesForJob[fromIndex];
+                    if (!fromFile) return;
+                    const steps = Math.abs(toIndex - fromIndex);
+                    const direction = toIndex < fromIndex ? 'up' : 'down';
+                    for (let i = 0; i < steps; i += 1) {
+                      if (direction === 'up') {
+                        moveFileUp(job.id, fromFile.id);
+                      } else {
+                        moveFileDown(job.id, fromFile.id);
+                      }
+                    }
+                  }}
+                  onOpenInLibrary={onNavigateToFileLibrary}
+                  onOpenInTestCasesLibrary={onNavigateToTestCases}
+                  onDeleteFile={(fileId) => deleteJobFile(job.id, fileId)}
+                  onReportSelectAll={() => { selectAllReportFiles(job.id, sortedFiles.map((f) => f.id)); }}
+                  onReportClear={() => clearReportFiles(job.id)}
+                  onReportDownload={() => {
+                    const sel = getReportSelectedForJob(job.id);
+                    downloadReportForJob(job.id, sel.size > 0 ? [...sel] : null);
+                  }}
+                  reportSelectedCount={getReportSelectedForJob(job.id).size}
                 />
-
-                <div className="mt-3 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-700">
-                  <h4 className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase mb-2">Test Cases in Batch (Sorted by Order)</h4>
-                  <div className="flex flex-wrap items-center gap-2 mb-2">
-                    <p className="text-xs text-slate-500 dark:text-slate-400">Each file = 1 test case</p>
-                    <button type="button" onClick={(e) => { e.stopPropagation(); selectAllReportFiles(job.id, sortedFiles.map((f) => f.id)); }} className="text-xs font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400">Select all</button>
-                    <button type="button" onClick={(e) => { e.stopPropagation(); clearReportFiles(job.id); }} className="text-xs font-bold text-slate-600 hover:text-slate-800 dark:text-slate-400">Clear</button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const sel = getReportSelectedForJob(job.id);
-                        const ids = sel.size > 0 ? [...sel] : null;
-                        downloadReportForJob(job.id, ids);
-                      }}
-                      className="text-xs font-bold text-emerald-600 hover:text-emerald-800 dark:text-emerald-400 flex items-center gap-1"
-                    >
-                      <Download size={12} />
-                      Download report {getReportSelectedForJob(job.id).size > 0 ? `(${getReportSelectedForJob(job.id).size} selected)` : '(all)'}
-                    </button>
-                  </div>
-                  {sortedFiles.length > 0 ? (
-                    <>
-                      {sortedFiles.filter(f => f.result === 'fail' || f.status === 'error').length > 0 && (
-                        <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border-2 border-red-200 dark:border-red-800 rounded-xl">
-                          <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-                            <div className="flex items-center gap-2">
-                              <AlertCircle size={20} className="text-red-600" />
-                              <h5 className="font-bold text-red-800 dark:text-red-200">
-                                Failed Test Cases ({sortedFiles.filter(f => f.result === 'fail' || f.status === 'error').length})
-                              </h5>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  e.preventDefault();
-                                  const failed = sortedFiles.filter(f => f.result === 'fail' || f.status === 'error');
-                                  if (failed.length) setRerunFailedModal({ job, failedFiles: failed });
-                                }}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-all flex items-center gap-1"
-                                title="Select VCD/ERoM/ULP per test case then create re-run batch"
-                              >
-                                <Play size={14} />
-                                Re-run all failed
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  e.preventDefault();
-                                  const failedFiles = sortedFiles.filter(f => f.result === 'fail' || f.status === 'error');
-                                  const lines = failedFiles.map((file, idx) =>
-                                    `[${idx + 1}] ${file.name || 'N/A'}\n    Order: ${file.order || 0}\n    Status: ${file.status || 'unknown'}\n    Result: ${file.result || 'N/A'}\n    Error: ${file.errorMessage || file.error || 'No error message available'}\n    Started: ${file.startedAt || 'N/A'}\n    Completed: ${file.completedAt || 'N/A'}`
-                                  );
-                                  const errorReport = [
-                                    `Failed Test Cases Report - Set #${job.id}`,
-                                    `Generated: ${new Date().toISOString()}`,
-                                    '========================================',
-                                    '',
-                                    'Job Information:',
-                                    `- Job ID: ${job.id}`,
-                                    `- Job Name: ${job.name || 'N/A'}`,
-                                    `- Tag: ${job.tag || 'Untagged'}`,
-                                    `- Firmware: ${job.firmware || 'N/A'}`,
-                                    `- Boards: ${job.boards?.join(', ') || 'N/A'}`,
-                                    '',
-                                    'Failed Test Cases Summary:',
-                                    `Total Failed: ${failedFiles.length} out of ${sortedFiles.length} test cases`,
-                                    '',
-                                    'Failed Test Cases Details:',
-                                    ...lines,
-                                    '',
-                                    'Recommendations:',
-                                    '1. Review error messages for each failed test case',
-                                    '2. Check hardware connections and firmware compatibility',
-                                    '3. Verify test case configurations',
-                                    '4. Download individual error logs for detailed analysis',
-                                  ].join('\n');
-                                  const blob = new Blob([errorReport], { type: 'text/plain;charset=utf-8;' });
-                                  const url = URL.createObjectURL(blob);
-                                  const link = document.createElement('a');
-                                  link.href = url;
-                                  link.download = `failed_tests_report_batch_${job.id}_${new Date().toISOString().split('T')[0]}.txt`;
-                                  link.click();
-                                  URL.revokeObjectURL(url);
-                                }}
-                                onMouseDown={(e) => e.stopPropagation()}
-                                className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 transition-all flex items-center gap-1"
-                              >
-                                <Download size={14} />
-                                Download All Error Logs
-                              </button>
-                            </div>
-                          </div>
-                          <p className="text-sm text-red-700 dark:text-red-300">
-                            The following test cases failed or encountered errors. Click "Error Log" on each failed test case to download detailed error information.
-                          </p>
-                        </div>
-                      )}
-                      <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
-                        {sortedFiles.map((file, index) => (
-                          <FileRow
-                            key={file.id}
-                            file={file}
-                            jobId={job.id}
-                            job={job}
-                            index={index}
-                            totalFiles={sortedFiles.length}
-                            onStop={() => stopFile(job.id, file.id)}
-                            onRerun={() => rerunFile(job.id, file.id)}
-                            onRerunFailed={() => setRerunFailedModal({ job, failedFiles: [file] })}
-                            onMoveUp={() => moveFileUp(job.id, file.id)}
-                            onMoveDown={() => moveFileDown(job.id, file.id)}
-                            onShowError={() => setTestCaseErrorModal({ file, job, index })}
-                            reportChecked={getReportSelectedForJob(job.id).has(file.id)}
-                            onToggleReport={() => toggleReportFile(job.id, file.id)}
-                            onDownloadReport={() => downloadSingleFileReport(job, file)}
-                            fileLibraryInfo={getFileLibraryInfoForJobFile(file)}
-                            onOpenInLibrary={onNavigateToFileLibrary}
-                          />
-                        ))}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-center py-6 text-slate-400">No files in this batch</div>
-                  )}
-                </div>
               </div>
             )}
           </div>
@@ -12961,10 +13247,28 @@ const formatTestCaseDisplayNameRaw = (raw) => {
   return raw;
 };
 
-const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onSearchChange, onStopFile, onRerunFile, onRerunFailedFile }) => {
+const TestCasesProgressView = ({
+  job,
+  files,
+  filter,
+  search,
+  onFilterChange,
+  onSearchChange,
+  onStopFile,
+  onRerunFile,
+  onRerunFailedFile,
+  onReorderFile, // optional: drag & drop reorder handler
+  onOpenInLibrary, // open in File Library (legacy)
+  onOpenInTestCasesLibrary, // navigate to Test Cases tab and auto-select this test case row
+  onDeleteFile, // remove a pending test case from this batch only
+  // Report batch actions (show at top only; when provided, show Select all / Clear / Download report)
+  onReportSelectAll,
+  onReportClear,
+  onReportDownload,
+  reportSelectedCount = 0,
+}) => {
   const runningFileRef = useRef(null);
   const [selectedFileIds, setSelectedFileIds] = useState([]);
-  const [showDetails, setShowDetails] = useState(false); // collapse details to get more space for file list / drop
 
   const getTestCaseDisplayName = (file) => formatTestCaseDisplayNameRaw(file?.testCaseName || (file?.order != null ? `Test case ${file.order}` : '—'));
   
@@ -13010,26 +13314,16 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
   return (
     <div className="border-t border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50/30">
       <div className="p-6">
-        {/* Header: title + Details toggle (collapsed by default for more drop space) */}
+        {/* Header: title (details are controlled by outer job card) */}
         <div className="mb-4">
           <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
             <h4 className="text-base font-bold text-slate-800 flex items-center gap-2 min-w-0">
               <Activity size={18} className="text-blue-600 shrink-0" />
               <span className="truncate">Test Cases Progress - {job.name}</span>
             </h4>
-            <button
-              type="button"
-              onClick={() => setShowDetails(prev => !prev)}
-              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors shrink-0"
-              title={showDetails ? 'Hide details' : 'Show details'}
-            >
-              {showDetails ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              Details
-            </button>
           </div>
-          
-          {showDetails && (
-            <>
+
+          <>
               {/* Batch summary (Firmware, Boards, Progress, Files, date) */}
               <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap mb-3">
                 <span>Firmware: <strong className="text-slate-700">{job.firmware}</strong></span>
@@ -13051,8 +13345,9 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                   </span>
                 )}
               </div>
-              {/* Statistics Cards */}
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-3">
+            </>
+          {/* Statistics Cards */}
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-3">
                 <div className="bg-white p-2 rounded-lg border border-slate-200 min-w-0">
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-tight truncate">Total</div>
                   <div className="text-lg font-bold text-slate-800">{files.length}</div>
@@ -13078,22 +13373,8 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                   <div className="text-lg font-bold text-slate-700">{files.filter(f => f.status === 'stopped').length}</div>
                 </div>
               </div>
-              {/* Progress Bar */}
-              <div className="mb-3">
-                <div className="flex justify-between text-xs text-slate-600 mb-1">
-                  <span>Overall Progress</span>
-                  <span className="font-bold">{files.length > 0 ? Math.round((files.filter(f => f.status === 'completed').length / files.length) * 100) : 0}%</span>
-                </div>
-                <div className="h-3 w-full bg-slate-200 rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-500" 
-                    style={{ width: `${files.length > 0 ? (files.filter(f => f.status === 'completed').length / files.length) * 100 : 0}%` }}
-                  ></div>
-                </div>
-              </div>
-            </>
-          )}
-          
+          {/* Overall progress bar removed per UX request */}
+
           {/* Search and Filter */}
           <div className="flex gap-3 items-center">
             <div className="flex-1 relative">
@@ -13120,9 +13401,10 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
               <option value="stopped">Stopped</option>
             </select>
             )}
-            {/* Stop Selected Button */}
+            {/* Actions for selected test cases */}
             {selectedFileIds.length > 0 && (
-              <>
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Stop Selected (running or pending) */}
                 <button
                   onClick={async () => {
                     const runningSelected = filteredFiles.filter(f => 
@@ -13140,6 +13422,26 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                   <StopCircle size={16} />
                   Stop Selected ({selectedFileIds.length})
                 </button>
+
+                {/* Delete from batch (pending only) */}
+                <button
+                  onClick={async () => {
+                    const pendingSelected = filteredFiles.filter(f =>
+                      selectedFileIds.includes(f.id) && f.status === 'pending'
+                    );
+                    if (pendingSelected.length === 0) return;
+                    if (!window.confirm(`Remove ${pendingSelected.length} pending test case(s) from this batch? (Will not delete files or library data)`)) {
+                      return;
+                    }
+                    await Promise.all(pendingSelected.map(file => onDeleteFile?.(file.id)));
+                    setSelectedFileIds([]);
+                  }}
+                  className="px-4 py-2 bg-slate-200 text-slate-800 rounded-lg text-sm font-bold hover:bg-slate-300 transition-all flex items-center gap-2"
+                  title="Remove selected pending test cases from this batch (does not delete from Library)"
+                >
+                  Remove from set
+                </button>
+
                 {/* Re-run Selected (stopped only) */}
                 {onRerunFile && filteredFiles.some(f => selectedFileIds.includes(f.id) && f.status === 'stopped') && (
                   <button
@@ -13158,7 +13460,7 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                     Re-run Selected ({filteredFiles.filter(f => selectedFileIds.includes(f.id) && f.status === 'stopped').length})
                   </button>
                 )}
-              </>
+              </div>
             )}
           </div>
         </div>
@@ -13167,7 +13469,7 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
           {/* Select All Header (if there are files) */}
           {filteredFiles.length > 0 && (
-            <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -13188,6 +13490,20 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                     : `Select All (${filteredFiles.length} test cases)`}
                 </span>
               </div>
+              {typeof onReportDownload === 'function' && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button type="button" onClick={() => onReportSelectAll?.()} className="text-xs font-bold text-blue-600 hover:text-blue-800 dark:text-blue-400">Select all</button>
+                  <button type="button" onClick={() => onReportClear?.()} className="text-xs font-bold text-slate-600 hover:text-slate-800 dark:text-slate-400">Clear</button>
+                  <button
+                    type="button"
+                    onClick={() => onReportDownload?.()}
+                    className="text-xs font-bold text-emerald-600 hover:text-emerald-800 dark:text-emerald-400 flex items-center gap-1"
+                  >
+                    <Download size={12} />
+                    Download report {reportSelectedCount > 0 ? `(${reportSelectedCount} selected)` : '(all)'}
+                  </button>
+                </div>
+              )}
             </div>
           )}
           <div className="max-h-[600px] overflow-y-auto">
@@ -13206,6 +13522,39 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                   return (
                     <div
                       key={file.id}
+                      draggable={!!onReorderFile}
+                      data-drop-index={index}
+                      onDragStart={(e) => {
+                        if (!onReorderFile) return;
+                        e.dataTransfer.setData(
+                          'application/json',
+                          JSON.stringify({ type: 'jobFile', fromIndex: index })
+                        );
+                        e.dataTransfer.effectAllowed = 'move';
+                      }}
+                      onDragOver={(e) => {
+                        if (!onReorderFile) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        e.dataTransfer.dropEffect = 'move';
+                      }}
+                      onDrop={(e) => {
+                        if (!onReorderFile) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        try {
+                          const raw = e.dataTransfer.getData('application/json');
+                          if (!raw) return;
+                          const data = JSON.parse(raw);
+                          if (
+                            data.type === 'jobFile' &&
+                            typeof data.fromIndex === 'number' &&
+                            data.fromIndex !== index
+                          ) {
+                            onReorderFile(data.fromIndex, index);
+                          }
+                        } catch (_) {}
+                      }}
                       ref={isRunning ? runningFileRef : null}
                       className={`p-4 transition-all ${
                         isRunning 
@@ -13249,12 +13598,28 @@ const TestCasesProgressView = ({ job, files, filter, search, onFilterChange, onS
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1 flex-wrap min-w-0">
                             {/* Test case display name (from set) or file name */}
-                            <div className="flex items-center gap-1 min-w-0 max-w-full">
+                            <button
+                              type="button"
+                              className="flex items-center gap-1 min-w-0 max-w-full group"
+                              onClick={() => {
+                                if (onOpenInTestCasesLibrary) {
+                                  onOpenInTestCasesLibrary({
+                                    name: file.testCaseName || getTestCaseDisplayName(file),
+                                    vcdName: file.vcd || file.vcdName,
+                                    binName: file.erom || file.binName,
+                                    linName: file.ulp || file.linName,
+                                  });
+                                } else if (onOpenInLibrary) {
+                                  onOpenInLibrary(file.vcd || file.erom || file.ulp || file.name);
+                                }
+                              }}
+                              title={getTestCaseDisplayName(file)}
+                            >
                               <FileCode size={18} className="text-blue-500 shrink-0" />
-                              <span className="font-bold text-slate-800 text-sm truncate" title={getTestCaseDisplayName(file)}>
+                              <span className="font-bold text-slate-800 text-sm truncate group-hover:underline">
                                 {getTestCaseDisplayName(file)}
                               </span>
-                            </div>
+                            </button>
                             {/* VCD/ERoM/ULP as secondary when different from display name */}
                             {file.vcd && (file.testCaseName !== file.vcd) && (
                               <div className="flex items-center gap-1 min-w-0 max-w-full text-xs text-slate-500">

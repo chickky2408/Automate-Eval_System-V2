@@ -60,6 +60,7 @@ export const API_ENDPOINTS = {
   JOB_FILE_STOP: (jobId, fileId) => `${API_BASE_URL}/jobs/${jobId}/files/${fileId}/stop`,
   JOB_FILE_RERUN: (jobId, fileId) => `${API_BASE_URL}/jobs/${jobId}/files/${fileId}/rerun`,
   JOB_FILE_MOVE: (jobId, fileId) => `${API_BASE_URL}/jobs/${jobId}/files/${fileId}/move`,
+  JOB_FILE_DELETE: (jobId, fileId) => `${API_BASE_URL}/jobs/${jobId}/files/${fileId}`,
   JOB_PAIRS: (jobId) => `${API_BASE_URL}/jobs/${jobId}/pairs`, // Get pairs data for editing
   JOB_FILES_SYNC: (jobId, status) => `${API_BASE_URL}/jobs/${jobId}/files/sync`,
   

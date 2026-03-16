@@ -386,6 +386,11 @@ export const useTestStore = create((set, get) => ({
   setLibraryFocusFileNameOnNavigate: (name) => set({ libraryFocusFileNameOnNavigate: name }),
   clearLibraryFocusFileNameOnNavigate: () => set({ libraryFocusFileNameOnNavigate: null }),
 
+  // When JobsPage wants to navigate to Test Cases tab and auto-select a test case row (by name/vcd/bin/lin)
+  testCaseLibraryFocusOnNavigate: null,
+  setTestCaseLibraryFocusOnNavigate: (payload) => set({ testCaseLibraryFocusOnNavigate: payload }),
+  clearTestCaseLibraryFocusOnNavigate: () => set({ testCaseLibraryFocusOnNavigate: null }),
+
   // UI State
   theme: (() => {
     if (typeof window === 'undefined') return 'dark';
@@ -1929,17 +1934,110 @@ export const useTestStore = create((set, get) => ({
    */
   rerunFailedFiles: async (jobId, fileIds = null, fileSelections = null) => {
     try {
-      const job = get().jobs.find(j => j.id === jobId);
-      if (!job || !job.files?.length) {
-        get().addToast({ type: 'warning', message: 'Job or files not found.' });
-        return null;
+      const state = get();
+      const job = state.jobs.find(j => j.id === jobId);
+
+      // Frontend-only demo path: when job not found in store (e.g. mock Completed/Failed demo sets)
+      if (!job) {
+        if (!Array.isArray(fileIds) || fileIds.length === 0) {
+          state.addToast({ type: 'warning', message: 'No failed test cases to re-run.' });
+          return null;
+        }
+        const now = new Date().toISOString();
+        const files = fileIds.map((id, i) => {
+          const sel = Array.isArray(fileSelections) && fileSelections[i] ? fileSelections[i] : {};
+          const name = (sel.vcd || `demo_case_${i + 1}`).toString().trim();
+          return {
+            id: `demo-rerun-file-${Date.now()}-${i}`,
+            name,
+            order: i + 1,
+            status: 'running',
+            result: null,
+            vcd: sel.vcd || name,
+            erom: sel.erom || undefined,
+            ulp: sel.ulp || undefined,
+          };
+        });
+        const demoJob = {
+          id: `demo-rerun-${Date.now()}`,
+          name: 'Demo re-run failed (frontend)',
+          status: 'running',
+          progress: 0,
+          tag: 'Demo',
+          configName: 'Demo_re_run',
+          totalFiles: files.length,
+          completedFiles: 0,
+          firmware: files[0]?.erom || 'demo_erom_1.erom',
+          boards: ['Demo Board 1'],
+          createdAt: now,
+          startedAt: now,
+          completedAt: null,
+          files,
+        };
+
+        set({
+          jobs: [demoJob, ...state.jobs],
+        });
+        state.addToast({
+          type: 'success',
+          message: `Demo re-run started (${files.length} failed test case${files.length > 1 ? 's' : ''}).`,
+        });
+        return demoJob;
       }
+
+      // Frontend-only demo path: when job is a demo set that already lives in store (id/tag indicates demo)
+      if (job && (String(job.id || '').startsWith('demo-') || (job.tag || '').toLowerCase() === 'demo')) {
+        const isFailed = (f) => f.result === 'fail' || f.status === 'error';
+        const failedFiles = fileIds
+          ? job.files.filter(f => fileIds.includes(f.id) && isFailed(f))
+          : job.files.filter(isFailed);
+        if (failedFiles.length === 0) {
+          state.addToast({ type: 'warning', message: 'No failed test cases to re-run.' });
+          return null;
+        }
+
+        // Update only failed test cases to running, keep others as completed
+        const updatedFiles = (job.files || []).map((f) => {
+          if (!isFailed(f)) return f;
+          if (fileIds && !fileIds.includes(f.id)) return f;
+          const idx = failedFiles.findIndex((x) => x.id === f.id);
+          const sel = Array.isArray(fileSelections) && fileSelections[idx] ? fileSelections[idx] : {};
+          return {
+            ...f,
+            status: 'running',
+            result: null,
+            vcd: sel.vcd || f.vcd || f.name,
+            erom: sel.erom || f.erom,
+            ulp: sel.ulp || f.ulp,
+          };
+        });
+
+        const updatedJob = {
+          ...job,
+          status: 'running',
+          // keep completed count based on files, progress is visual only
+          completedFiles: updatedFiles.filter((f) => f.status === 'completed').length,
+          progress: 0,
+          files: updatedFiles,
+        };
+
+        set({
+          jobs: state.jobs.map((j) => (j.id === job.id ? updatedJob : j)),
+        });
+
+        state.addToast({
+          type: 'success',
+          message: `Demo re-run started (${failedFiles.length} failed test case${failedFiles.length > 1 ? 's' : ''}) in this set.`,
+        });
+        return updatedJob;
+      }
+
       const isFailed = (f) => f.result === 'fail' || f.status === 'error';
       const failedFiles = fileIds
         ? job.files.filter(f => fileIds.includes(f.id) && isFailed(f))
         : job.files.filter(isFailed);
       if (failedFiles.length === 0) {
-        get().addToast({ type: 'warning', message: 'No failed test cases to re-run.' });
+        state.addToast({ type: 'warning', message: 'No failed test cases to re-run.' });
         return null;
       }
       const filesPayload = failedFiles.map((f, i) => {
@@ -1966,12 +2064,12 @@ export const useTestStore = create((set, get) => ({
       };
       const created = await api.createJob(payload);
       if (!created || !created.id) {
-        get().addToast({ type: 'error', message: 'Failed to create re-run batch.' });
+        state.addToast({ type: 'error', message: 'Failed to create re-run batch.' });
         return null;
       }
       await api.startJob(created.id);
       await get().refreshJobs();
-      get().addToast({
+      state.addToast({
         type: 'success',
         message: `Re-run batch created and started (${failedFiles.length} test case${failedFiles.length > 1 ? 's' : ''}).`,
       });
@@ -2086,6 +2184,30 @@ export const useTestStore = create((set, get) => ({
     void api.moveJobFile(jobId, fileId, 'down')
       .then(() => get().refreshJobs())
       .catch((error) => console.error('Failed to move job file', error));
+  },
+
+  // Remove a file from a job (used in Jobs Pending column & Test Cases Progress). Frontend-only for now; does not touch Library or Saved sets.
+  deleteJobFile: (jobId, fileId) => {
+    set((state) => {
+      const job = state.jobs.find((j) => j.id === jobId);
+      if (!job) return state;
+
+      const remaining = (job.files || []).filter((f) => f.id !== fileId);
+      // Re-number order to be 1..N to keep UI tidy
+      const reordered = remaining.map((f, idx) => ({ ...f, order: idx + 1 }));
+
+      return {
+        jobs: state.jobs.map((j) =>
+          j.id === jobId
+            ? {
+                ...j,
+                files: reordered,
+                totalFiles: reordered.length,
+              }
+            : j
+        ),
+      };
+    });
   },
   
   updateJobTag: (jobId, tag) => {

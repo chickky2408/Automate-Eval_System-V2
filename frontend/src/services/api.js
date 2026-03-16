@@ -400,6 +400,14 @@ export const moveJobFile = (jobId, fileId, direction) => {
   });
 };
 
+/**
+ * Delete a file from a job (remove test case from batch).
+ * Expected Response: { success: true }
+ */
+export const deleteJobFile = (jobId, fileId) => {
+  return apiRequest(API_ENDPOINTS.JOB_FILE_DELETE(jobId, fileId), { method: 'DELETE' });
+};
+
 // ============================================
 // FILE UPLOAD APIs
 // ============================================
