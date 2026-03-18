@@ -642,12 +642,65 @@ export const useTestStore = create((set, get) => ({
   },
   removeUploadedFile: async (id) => {
     try {
+      const stateBefore = get();
+      const target = (stateBefore.uploadedFiles || []).find((f) => f.id === id);
+      const targetName = target?.name || null;
+
       await api.deleteFile(id);
-      set((state) => ({
-        uploadedFiles: state.uploadedFiles.filter(f => f.id !== id),
-        vcdFiles: state.vcdFiles.filter(f => f.id !== id),
-        firmwareFiles: state.firmwareFiles.filter(f => f.id !== id),
-      }));
+
+      set((state) => {
+        const next = {
+          uploadedFiles: state.uploadedFiles.filter(f => f.id !== id),
+          vcdFiles: state.vcdFiles.filter(f => f.id !== id),
+          firmwareFiles: state.firmwareFiles.filter(f => f.id !== id),
+        };
+
+        if (targetName) {
+          const clearTcFileRefs = (tc) => {
+            let changed = false;
+            const updated = { ...tc };
+            if (updated.vcdName === targetName) { updated.vcdName = ''; changed = true; }
+            if (updated.binName === targetName) { updated.binName = ''; changed = true; }
+            if (updated.linName === targetName) { updated.linName = ''; changed = true; }
+            if (Array.isArray(updated.commands) && updated.commands.length > 0) {
+              const nextCmds = updated.commands.filter((c) => c && c.file !== targetName);
+              if (nextCmds.length !== updated.commands.length) {
+                updated.commands = nextCmds;
+                changed = true;
+              }
+            }
+            if (updated.extraColumns && typeof updated.extraColumns === 'object') {
+              const extra = { ...updated.extraColumns };
+              let extraChanged = false;
+              Object.keys(extra).forEach((k) => {
+                if (extra[k] === targetName) {
+                  extra[k] = '';
+                  extraChanged = true;
+                }
+              });
+              if (extraChanged) {
+                updated.extraColumns = extra;
+                changed = true;
+              }
+            }
+            return changed ? updated : tc;
+          };
+
+          const cleanedSaved = (state.savedTestCases || []).map(clearTcFileRefs);
+          const cleanedSets = (state.savedTestCaseSets || []).map((set) => ({
+            ...set,
+            items: Array.isArray(set.items) ? set.items.map(clearTcFileRefs) : set.items,
+          }));
+
+          saveSavedTestCases(cleanedSaved);
+          saveSavedTestCaseSets(cleanedSets);
+
+          next.savedTestCases = cleanedSaved;
+          next.savedTestCaseSets = cleanedSets;
+        }
+
+        return next;
+      });
       return true;
     } catch (error) {
       if (error?.status === 409) {
@@ -687,13 +740,33 @@ export const useTestStore = create((set, get) => ({
     return { savedTestCases: next };
   }),
   removeSavedTestCase: (id) => set((state) => {
+    // ถ้ากำลังแก้ไข Set อยู่ ให้ลบเฉพาะจาก table ชั่วคราวของ Set นั้น
     if (state.loadedSetId) {
       const next = (state.loadedSetTable || []).filter((t) => t.id !== id);
       return { loadedSetTable: next };
     }
-    const next = state.savedTestCases.filter((t) => t.id !== id);
-    saveSavedTestCases(next);
-    return { savedTestCases: next };
+
+    const target = (state.savedTestCases || []).find((t) => t.id === id);
+    const nextCases = (state.savedTestCases || []).filter((t) => t.id !== id);
+
+    // ลบ test case ที่มี content ตรงกันออกจากทุก Saved Set ด้วย
+    let nextSets = state.savedTestCaseSets || [];
+    if (target) {
+      const sameContent = (item) =>
+        (item.name || '').trim() === (target.name || '').trim() &&
+        (item.vcdName || '').trim() === (target.vcdName || '').trim() &&
+        (item.binName || '').trim() === (target.binName || '').trim() &&
+        (item.linName || '').trim() === (target.linName || '').trim();
+
+      nextSets = (state.savedTestCaseSets || []).map((set) => ({
+        ...set,
+        items: Array.isArray(set.items) ? set.items.filter((item) => !sameContent(item)) : set.items,
+      }));
+      saveSavedTestCaseSets(nextSets);
+    }
+
+    saveSavedTestCases(nextCases);
+    return { savedTestCases: nextCases, savedTestCaseSets: nextSets };
   }),
   moveSavedTestCaseUp: (id) => set((state) => {
     const list = state.loadedSetId ? (state.loadedSetTable || []) : state.savedTestCases;
@@ -1085,14 +1158,19 @@ export const useTestStore = create((set, get) => ({
     // ถ้ากำลังแก้ไข Set ใดอยู่ → append เข้า table ของ Set นั้น (loadedSetTable)
     if (state.loadedSetId) {
       const baseList = Array.isArray(state.loadedSetTable) ? state.loadedSetTable : [];
-      const existingNames = new Set(baseList.map((t) => (t.name || '').trim()).filter(Boolean));
+      const contentKey = (t) => [
+        (t.name || '').trim(),
+        (t.vcdName || '').trim(),
+        (t.binName || '').trim(),
+        (t.linName || '').trim(),
+      ].join('\0');
+      const seen = new Set(baseList.map(contentKey));
       const appended = (setEntry.items || [])
-        // ถ้าใน 2 set มี test case ชื่อซ้ำ ให้ใช้แค่ตัวที่มีอยู่แล้ว (ไม่สร้างซ้ำ)
+        // ถ้าใน 2 set มี test case content ซ้ำกัน ให้ใช้แค่ตัวที่มีอยู่แล้ว (ไม่สร้างซ้ำ)
         .filter((t) => {
-          const name = (t.name || '').trim();
-          if (!name) return true;
-          if (existingNames.has(name)) return false;
-          existingNames.add(name);
+          const key = contentKey(t);
+          if (seen.has(key)) return false;
+          seen.add(key);
           return true;
         })
         .map((t) => {
@@ -1838,6 +1916,30 @@ export const useTestStore = create((set, get) => ({
       return true;
     } catch (error) {
       console.error('Failed to start pending jobs', error);
+      const d = error?.detail;
+      if (error?.status === 409 && d?.code === 'FILE_MODIFIED') {
+        const msg = d.message || 'One or more files were modified after upload.';
+        const files = Array.isArray(d.files) && d.files.length ? ` (${d.files.join(', ')})` : '';
+        get().addToast({ type: 'error', message: msg + files, duration: 8000 });
+      }
+      return false;
+    }
+  },
+  // Start a single pending job by id (used by drag & drop from Pending → Running)
+  startJobById: async (jobId) => {
+    try {
+      const results = await Promise.allSettled([api.startJob(jobId)]);
+      const rejected = results.find((r) => r.status === 'rejected');
+      if (rejected && rejected.reason?.status === 409 && rejected.reason?.detail?.code === 'FILE_MODIFIED') {
+        const d = rejected.reason.detail;
+        const msg = d?.message || 'One or more files were modified after upload.';
+        const files = Array.isArray(d?.files) && d.files.length ? ` (${d.files.join(', ')})` : '';
+        get().addToast({ type: 'error', message: msg + files, duration: 8000 });
+      }
+      await get().refreshJobs();
+      return true;
+    } catch (error) {
+      console.error('Failed to start job by id', error);
       const d = error?.detail;
       if (error?.status === 409 && d?.code === 'FILE_MODIFIED') {
         const msg = d.message || 'One or more files were modified after upload.';

@@ -909,7 +909,7 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
         tag: 'burn-in',
         fpgaStatus: 'active',
         armStatus: 'busy',
-        currentJob: 'hihi ',
+        currentJob: '10Mar ',
         voltage: '3.3',
         queuePaused: false,
         isDemo: true,
@@ -925,7 +925,7 @@ const DashboardPage = ({ onNavigateBoards, onNavigateJobs }) => {
         tag: 'running',
         fpgaStatus: 'active',
         armStatus: 'busy',
-        currentJob: '9Mar',
+        currentJob: 'test-1',
         voltage: '3.3',
         queuePaused: false,
         isDemo: true,
@@ -2335,15 +2335,15 @@ const WaveformPage = () => {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <div className="flex items-center gap-2">
-                <div className="p-1.5 sm:p-2 rounded-xl bg-sky-100 text-sky-600">
+                <div className="p-1.5 sm:p-2 rounded-xl bg-sky-100 text-sky-600 dark:bg-sky-900/40 dark:text-sky-300">
                   <Activity size={20} className="sm:hidden" strokeWidth={2} />
                   <Activity size={22} className="hidden sm:block" strokeWidth={2} />
                 </div>
                 <div className="min-w-0">
-                  <div className="text-sm sm:text-base font-bold text-slate-900 truncate">
+                  <div className="text-sm sm:text-base font-bold text-slate-900 dark:text-slate-100 truncate">
                     Realtime Waveform
                   </div>
-                  <div className="text-xs text-slate-500 truncate">
+                  <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
                     {selectedBoardId
                       ? `Streaming from ${onlineBoards.find(b => b.id === selectedBoardId)?.name || selectedBoardId}`
                       : 'Streaming from simulated node'}
@@ -2372,11 +2372,11 @@ const WaveformPage = () => {
 
             {/* Streaming source: board selector */}
             <div className="shrink-0 flex items-center gap-2">
-              <span className="text-xs font-medium text-slate-500">Streaming from</span>
+              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Streaming from</span>
               <select
                 value={selectedBoardId || ''}
                 onChange={(e) => setSelectedBoardId(e.target.value)}
-                className="px-2.5 py-1 rounded-lg border border-slate-300 bg-white text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-xs font-medium text-slate-700 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">Simulated Node</option>
                 {onlineBoards.map((b) => (
@@ -2399,7 +2399,7 @@ const WaveformPage = () => {
                   const next = !viewPanelOpen;
                   setViewPanelOpen(next);
                 }}
-                className="flex items-center gap-2 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-cyan-50 border border-cyan-200/60 text-cyan-900 text-sm font-semibold hover:bg-cyan-100 transition-colors"
+                className="flex items-center gap-2 px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl bg-cyan-50 dark:bg-cyan-900/30 border border-cyan-200/60 dark:border-cyan-700 text-cyan-900 dark:text-cyan-100 text-sm font-semibold hover:bg-cyan-100 dark:hover:bg-cyan-800 transition-colors"
                 title="View & overlay options"
               >
                 <Eye size={16} />
@@ -2408,7 +2408,7 @@ const WaveformPage = () => {
               {viewPanelOpen && (
                 <div
                   ref={viewPopoverRef}
-                  className="fixed w-56 bg-white border border-slate-200 rounded-xl shadow-xl p-3 z-[999]"
+                  className="fixed w-56 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl p-3 z-[999]"
                   style={{ top: viewPopoverPos.top, left: viewPopoverPos.left }}
                 >
                   <div className="text-xs font-bold text-slate-500 mb-2">Show on chart</div>
@@ -2960,18 +2960,25 @@ const getSetNamesUsingFile = (fileName, savedTestCaseSets) => {
   return names;
 };
 
-/** Returns list of { name, set } for each test case that uses this file (vcdName, binName, or linName). */
+/** Returns list of { name, set } for each test case that uses this file (VCD / ERoM / ULP / MDI). */
 const getTestCasesUsingFile = (fileName, savedTestCases, savedTestCaseSets) => {
   if (!fileName) return [];
   const out = [];
+  const isUsedInTc = (tc) => {
+    if (tc.vcdName === fileName || tc.binName === fileName || tc.linName === fileName) return true;
+    const cmds = Array.isArray(tc.commands) ? tc.commands : [];
+    if (cmds.some((c) => c && c.file === fileName)) return true;
+    const extra = tc.extraColumns && typeof tc.extraColumns === 'object' ? tc.extraColumns : {};
+    return Object.values(extra).some((v) => v === fileName);
+  };
   (savedTestCases || []).forEach((tc) => {
-    if (tc.vcdName === fileName || tc.binName === fileName || tc.linName === fileName) {
+    if (isUsedInTc(tc)) {
       out.push({ name: (tc.name || tc.vcdName || '').trim() || '—', set: 'Current (from table)' });
     }
   });
   (savedTestCaseSets || []).forEach((set) => {
     (set.items || []).forEach((tc) => {
-      if (tc.vcdName === fileName || tc.binName === fileName || tc.linName === fileName) {
+      if (isUsedInTc(tc)) {
         out.push({ name: (tc.name || tc.vcdName || '').trim() || '—', set: set.name || set.id });
       }
     });
@@ -3095,7 +3102,16 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const isDragSelectingFileRef = useRef(false);
   const [libraryFocusFileName, setLibraryFocusFileName] = useState(null);
   const focusedLibraryFileRef = useRef(null);
-  const [libraryCreatedByFilter, setLibraryCreatedByFilter] = useState('mine'); // 'all' | 'mine' | 'shared' — default = Mine
+  // Separate filter per Library tab: Set=Mine, Test Cases=Mine, File=All
+  const [librarySetFilter, setLibrarySetFilter] = useState('mine'); // Set Library
+  const [libraryTestCasesFilter, setLibraryTestCasesFilter] = useState('mine'); // Test Cases Library
+  const [libraryFileFilter, setLibraryFileFilter] = useState('all'); // File in Library
+  const libraryCreatedByFilter = libraryView === 'testCases' ? librarySetFilter : libraryView === 'rawTestCases' ? libraryTestCasesFilter : libraryFileFilter;
+  const setLibraryCreatedByFilter = (value) => {
+    if (libraryView === 'testCases') setLibrarySetFilter(value);
+    else if (libraryView === 'rawTestCases') setLibraryTestCasesFilter(value);
+    else setLibraryFileFilter(value);
+  };
   const [allProfilesTestData, setAllProfilesTestData] = useState({ savedTestCases: [], savedTestCaseSets: [] });
   const [allProfilesTestDataLoading, setAllProfilesTestDataLoading] = useState(false);
 
@@ -3287,9 +3303,22 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
 
   const libraryRawRows = useMemo(() => {
     if (libraryView !== 'rawTestCases') return [];
-    const contentKey = (tc) => [tc.name ?? '', tc.vcdName ?? '', tc.binName ?? '', tc.linName ?? ''].join('\0');
+    const withMdi = (tc) => {
+      const cmds = Array.isArray(tc.commands) ? tc.commands : [];
+      const mdiNames = cmds
+        .filter((c) => c && c.type === 'mdi' && c.file)
+        .map((c) => c.file);
+      if (!mdiNames.length) return tc;
+      return { ...tc, mdiNames };
+    };
+    const contentKey = (tc) => [
+      tc.name ?? '',
+      tc.vcdName ?? '',
+      tc.binName ?? '',
+      tc.linName ?? '',
+    ].join('\0');
     const withStatus = (tc) => ({
-      ...tc,
+      ...withMdi(tc),
       _status: getTestCaseStatusFromJobs(tc),
     });
 
@@ -3961,6 +3990,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                       <th className="min-w-[100px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">ERoM</th>
                       <th className="min-w-[100px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">ULP</th>
                       <th className="min-w-[100px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">VCD</th>
+                      <th className="min-w-[140px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">MDI (text)</th>
                       {extraCols.map((col) => (
                         <th key={col} className="px-2 py-2 border-r border-slate-200 dark:border-slate-600 min-w-[90px] whitespace-nowrap">{col}</th>
                       ))}
@@ -3972,7 +4002,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                   <tbody>
                     {libraryFilteredRows.length === 0 ? (
                       <tr>
-                        <td colSpan={13 + extraCols.length} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400 text-sm">
+                        <td colSpan={14 + extraCols.length} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400 text-sm">
                           No test cases yet — or no match for filter. Create on Test Cases page or clear filters.
                         </td>
                       </tr>
@@ -4156,6 +4186,31 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                 '—'
                               )}
                             </td>
+                            <td
+                              className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300 truncate max-w-[180px]"
+                              title={Array.isArray(tc.mdiNames) && tc.mdiNames.length > 0 ? tc.mdiNames.join(', ') : undefined}
+                            >
+                              {Array.isArray(tc.mdiNames) && tc.mdiNames.length > 0 ? (
+                                tc.mdiNames.map((name, idx) => (
+                                  <span key={name}>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        focusFileInLibrary(String(name));
+                                      }}
+                                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline hover:text-blue-700 dark:hover:text-blue-300"
+                                      title="View this file in File in Library"
+                                    >
+                                      {name}
+                                    </button>
+                                    {idx < tc.mdiNames.length - 1 ? ', ' : ''}
+                                  </span>
+                                ))
+                              ) : (
+                                '—'
+                              )}
+                            </td>
                             {extraCols.map((col) => (
                               <td
                                 key={col}
@@ -4277,11 +4332,16 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
               return;
             }
             if (e.ctrlKey || e.metaKey) {
-              setSelectedLibraryFileIds((prev) => (selectedFileSet.has(fileId) ? prev.filter((id) => id !== fileId) : [...prev, fileId]));
+              setSelectedLibraryFileIds((prev) =>
+                prev.includes(fileId) ? prev.filter((id) => id !== fileId) : [...prev, fileId],
+              );
               lastClickedFileIndexRef.current = index;
               return;
             }
-            setSelectedLibraryFileIds(selectedFileSet.has(fileId) ? [] : [fileId]);
+            // Click ปกติ: toggle ได้หลายไฟล์ (ไม่บังคับ single select)
+            setSelectedLibraryFileIds((prev) =>
+              prev.includes(fileId) ? prev.filter((id) => id !== fileId) : [...prev, fileId],
+            );
             lastClickedFileIndexRef.current = index;
           };
           const selectedInUse = selectedLibraryFileIds.filter((id) => {
@@ -5064,6 +5124,7 @@ const TestCasesPage = () => {
   const vcdFilesList = uploadedFiles.filter((f) => getFileKind(f) === 'vcd');
   const binFilesList = uploadedFiles.filter((f) => getFileKind(f) === 'bin');
   const linFilesList = uploadedFiles.filter((f) => getFileKind(f) === 'lin');
+  const mdiFilesList = uploadedFiles.filter((f) => getFileKind(f) === 'mdi');
   const vcdSelected = selectedFiles.filter((f) => getFileKind(f) === 'vcd');
   const binSelected = selectedFiles.filter((f) => getFileKind(f) === 'bin');
   const workingCount = selectedIds.length + localDroppedFiles.length;
@@ -5242,10 +5303,11 @@ const TestCasesPage = () => {
     });
   };
   const handleClearAll = () => {
+    // ใช้สำหรับปุ่ม "Un Select All" — ให้แค่เอา checkbox ออกจากไฟล์ที่ถูกเลือก
+    // ไม่ลบ local dropped files หรือกระทบตาราง Saved Test Cases
     setSelectedIds([]);
-    setLocalDroppedFiles([]);
     setSelectedFileIdsForDelete([]);
-    addToast({ type: 'info', message: 'Cleared file selection (files remain in library until Save Set)' });
+    addToast({ type: 'info', message: 'Unselected all files (files remain in Library)' });
   };
   const handleDeleteSelected = async () => {
     if (selectedFileIdsForDelete.length === 0) {
@@ -6925,7 +6987,7 @@ const TestCasesPage = () => {
                       <div className="space-y-1 mt-1">
                         {(tc.commands || []).map((cmd) => {
                           const label = cmd.type === 'mdi' ? 'MDI:' : cmd.type === 'vcd' ? 'VCD:' : cmd.type === 'erom' ? 'EROM:' : 'ULP:';
-                          const fileList = cmd.type === 'mdi' ? linFilesList : cmd.type === 'vcd' ? vcdFilesList : cmd.type === 'erom' ? binFilesList : linFilesList;
+                          const fileList = cmd.type === 'mdi' ? mdiFilesList : cmd.type === 'vcd' ? vcdFilesList : cmd.type === 'erom' ? binFilesList : linFilesList;
                           const placeholder = cmd.type === 'mdi' ? '— Text file —' : cmd.type === 'vcd' ? '— VCD —' : cmd.type === 'erom' ? '— EROM —' : '— ULP —';
                           return (
                             <div key={cmd.id} className="flex items-center gap-2 min-h-[28px]">
@@ -7253,7 +7315,12 @@ const RunSetPage = ({ onNavigateJobs }) => {
     setRunBoardSelection({ mode: 'manual', boardIds: ids });
   };
   const selectAllOnlineBoards = () => {
-    const ids = safeBoards.filter((b) => b.status === 'online').map((b) => b.id);
+    const ids = safeBoards
+      .filter((b) => {
+        const s = (b.status || '').toLowerCase();
+        return s === 'online' || s === 'busy';
+      })
+      .map((b) => b.id);
     setSelectedBoardIds(ids);
     setRunBoardSelection({ mode: 'manual', boardIds: ids });
   };
@@ -8164,13 +8231,15 @@ const RunSetPage = ({ onNavigateJobs }) => {
                   {safeBoards.length === 0 ? (
                     <span className="text-xs text-slate-500">No boards loaded</span>
                   ) : (
-                    safeBoards.map((b) => {
-                      const isBusy = b.status === 'online' && !!b.currentJob;
+                  safeBoards.map((b) => {
+                      const status = (b.status || '').toLowerCase();
+                      const isOnline = status === 'online';
+                      const isBusy = status === 'busy' || (isOnline && !!b.currentJob);
                       return (
                         <label key={b.id} className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium cursor-pointer transition-colors ${selectedBoardIds.includes(b.id) ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-300 dark:border-blue-700 text-blue-800 dark:text-blue-200' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:border-slate-300'}`}>
                           <input type="checkbox" checked={selectedBoardIds.includes(b.id)} onChange={() => toggleBoard(b.id)} className="w-3.5 h-3.5 rounded border-slate-400 text-blue-600" />
                           <span>{b.name || b.id}</span>
-                          {b.status === 'online' && !isBusy && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="Online" />}
+                          {isOnline && !isBusy && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="Online" />}
                           {isBusy && <span className="w-1.5 h-1.5 rounded-full bg-amber-500" title="Busy" />}
                         </label>
                       );
@@ -10545,6 +10614,7 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
   const { 
     jobs, 
     startPendingJobs,
+    startJobById,
     stopAllJobs,
     stopJob,
     moveJobUp,
@@ -10748,8 +10818,11 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
 
   // Functions สำหรับเลือก batch
   const toggleJobSelection = (jobId) => {
-    setSelectedJobIds(prev => 
-      prev.includes(jobId) 
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job) return;
+    if (job.status === 'running') return; // ห้ามเลือก job ที่กำลังรันอยู่
+    setSelectedJobIds(prev =>
+      prev.includes(jobId)
         ? prev.filter(id => id !== jobId)
         : [...prev, jobId]
     );
@@ -10757,11 +10830,17 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
 
   const toggleSelectAllJobs = (columnIds) => {
     if (!columnIds || columnIds.length === 0) return;
-    const allInColumnSelected = columnIds.every(id => selectedJobIds.includes(id));
+    // ไม่ให้เลือก job ที่กำลังรันอยู่ในชุด Select All
+    const selectableIds = columnIds.filter((id) => {
+      const job = jobs.find((j) => j.id === id);
+      return job && job.status !== 'running';
+    });
+    if (selectableIds.length === 0) return;
+    const allInColumnSelected = selectableIds.every(id => selectedJobIds.includes(id));
     if (allInColumnSelected) {
-      setSelectedJobIds(prev => prev.filter(id => !columnIds.includes(id)));
+      setSelectedJobIds(prev => prev.filter(id => !selectableIds.includes(id)));
     } else {
-      setSelectedJobIds(prev => [...new Set([...prev.filter(id => !columnIds.includes(id)), ...columnIds])]);
+      setSelectedJobIds(prev => [...new Set([...prev.filter(id => !selectableIds.includes(id)), ...selectableIds])]);
     }
   };
 
@@ -11087,14 +11166,14 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
     setExpandedDetailsJobs(prev => prev.includes(jobId) ? prev.filter(id => id !== jobId) : [...prev, jobId]);
   };
 
-  const renderJobCard = (job, jobIndex, allJobs) => {
+  const renderJobCard = (job, jobIndex, allJobs, column) => {
     const isDemoJob = job.id === 'demo-completed' || job.id === 'demo-failed';
     const sortedFiles = getSortedFiles(job);
     const isExpanded = expandedJobs.includes(job.id);
     const showDetails = expandedDetailsJobs.includes(job.id);
     const runningFiles = sortedFiles.filter(f => f.status === 'running');
     
-    const isDraggable = !isDemoJob && job.status !== 'running';
+    const isDraggable = !isDemoJob; // อนุญาต drag ทุกสถานะ แล้วไปเปลี่ยน column ตาม drop target
 
     return (
       <div 
@@ -11119,20 +11198,39 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
           // คลิกที่การ์ด = เปิด/ปิด Details (สรุป + progress + ทุก test case)
           toggleDetails(job.id);
         }}
-        onDragOver={!isDraggable ? undefined : (e) => {
+        onDragOver={isDraggable ? (e) => {
           e.preventDefault();
           e.dataTransfer.dropEffect = 'move';
-        }}
-        onDrop={!isDraggable ? undefined : (e) => {
+        } : undefined}
+        onDrop={isDraggable ? (e) => {
           e.preventDefault();
-          const jobId = e.dataTransfer.getData('application/x-job-id') || e.dataTransfer.getData('text/plain');
-          const fromIndex = parseInt(e.dataTransfer.getData('application/x-job-from-index'), 10);
-          const toIndex = allJobs.findIndex(j => j.id === job.id);
-          if (jobId && !Number.isNaN(fromIndex) && toIndex >= 0 && fromIndex !== toIndex) {
-            moveJobToIndex(jobId, toIndex, allJobs);
+          const draggedJobId = e.dataTransfer.getData('application/x-job-id') || e.dataTransfer.getData('text/plain');
+          if (!draggedJobId) return;
+
+          const targetStatus = column === 'pending' ? 'pending' : column === 'running' ? 'running' : 'completed';
+          const draggedJob = jobs.find((j) => j.id === draggedJobId);
+          if (!draggedJob) {
+            setDraggingJobId(null);
+            return;
+          }
+
+          // ถ้าลากจาก Pending → Running ให้สั่ง start job จริงผ่าน API
+          if (draggedJob.status === 'pending' && targetStatus === 'running') {
+            void startJobById(draggedJobId);
+            setDraggingJobId(null);
+            return;
+          }
+
+          // อนุญาต reorder เฉพาะภายในคอลัมน์เดียวกันเท่านั้น
+          if (draggedJob.status === targetStatus) {
+            const fromIndex = parseInt(e.dataTransfer.getData('application/x-job-from-index'), 10);
+            const toIndex = allJobs.findIndex(j => j.id === job.id);
+            if (!Number.isNaN(fromIndex) && toIndex >= 0 && fromIndex !== toIndex) {
+              moveJobToIndex(draggedJobId, toIndex, allJobs);
+            }
           }
           setDraggingJobId(null);
-        }}
+        } : undefined}
         onDragEnd={() => setDraggingJobId(null)}
       >
         {/* Job Header */}
@@ -11142,19 +11240,22 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
             <div className="flex justify-between items-center gap-2.5">
               <div className="flex-1 min-w-0 overflow-hidden" data-no-select>
                 <div className="flex items-center gap-2 mb-0.5 flex-wrap" data-no-select>
-                  {/* Checkbox for selection (hidden for demo job) */}
+                  {/* Checkbox for selection (hidden for demo job, disabled for running) */}
                   {!isDemoJob && (
                   <input
                     type="checkbox"
                     checked={selectedJobIds.includes(job.id)}
+                    disabled={job.status === 'running'}
                     onChange={(e) => {
                       e.stopPropagation();
                       toggleJobSelection(job.id);
                     }}
                     onClick={(e) => e.stopPropagation()}
                     onMouseDown={(e) => e.stopPropagation()}
-                    className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer shrink-0"
-                    title="Select this batch"
+                    className={`w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500 shrink-0 ${
+                      job.status === 'running' ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                    }`}
+                    title={job.status === 'running' ? 'Cannot select a running batch' : 'Select this batch'}
                   />
                   )}
                   {isDemoJob && (
@@ -11227,17 +11328,17 @@ const JobsPage = ({ expandJobId, onExpandComplete, onEditJob, onNavigateToFileLi
               {/* Edit Batch button removed per UX request */}
                   {!isDemoJob && (
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         e.preventDefault();
                         handleDeleteJob(job.id, job.name);
                       }}
                       onMouseDown={(e) => e.stopPropagation()}
-                      className="px-2 py-1 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700 transition-all flex items-center gap-1 shrink-0"
+                      className="inline-flex items-center justify-center h-7 w-7 rounded-full bg-red-600 text-white hover:bg-red-700 transition-all shadow-sm shrink-0"
                       title="Delete this batch"
                     >
-                      <XCircle size={12} />
-                      Delete
+                      <Trash2 size={14} />
                     </button>
                   )}
             </div>
@@ -11618,16 +11719,6 @@ Duration: ${file.duration || 'N/A'}
             {isStoppingSelected ? 'Stopping...' : `Stop Selected (${selectedJobIds.filter((id) => jobs.find((j) => j.id === id)?.status === 'running').length})`}
           </button>
         )}
-        {/* Stop All Button */}
-        <button 
-          onClick={handleStopAll}
-          disabled={isStoppingAll}
-          className={`bg-red-500 text-white px-6 py-2 rounded-xl font-bold shadow-lg transition-all flex items-center gap-2 ${isStoppingAll ? 'opacity-60 cursor-not-allowed' : 'hover:bg-red-600'}`}
-        >
-          <Square size={18} />
-          {isStoppingAll ? 'Stopping...' : 'Stop All'}
-        </button>
-
         {/* Delete Selected Button */}
         {selectedJobIds.length > 0 && (
           <button
@@ -11753,7 +11844,7 @@ Duration: ${file.duration || 'N/A'}
             ) : (
               filteredPendingJobs.map((job) => {
                 const originalIndex = jobs.findIndex(j => j.id === job.id);
-                return renderJobCard(job, originalIndex, filteredPendingJobs);
+                return renderJobCard(job, originalIndex, filteredPendingJobs, 'pending');
               })
             )}
           </div>
@@ -11780,7 +11871,7 @@ Duration: ${file.duration || 'N/A'}
             ) : (
               filteredRunningJobs.map((job) => {
                 const originalIndex = jobs.findIndex(j => j.id === job.id);
-                return renderJobCard(job, originalIndex, filteredRunningJobs);
+                return renderJobCard(job, originalIndex, filteredRunningJobs, 'running');
               })
             )}
           </div>
@@ -11807,7 +11898,7 @@ Duration: ${file.duration || 'N/A'}
             ) : (
               displayCompletedJobs.map((job, index) => {
                 const originalIndex = jobs.findIndex(j => j.id === job.id);
-                return renderJobCard(job, originalIndex, displayCompletedJobs);
+                return renderJobCard(job, originalIndex, displayCompletedJobs, 'completed');
               })
             )}
           </div>
@@ -12451,6 +12542,8 @@ const BoardsPage = () => {
 const HistoryPage = ({ onViewJob }) => {
   const { jobs, exportJobToJSON, exportAllFailedLogs, loading, errors } = useTestStore();
   const [downloadMenuOpen, setDownloadMenuOpen] = useState({});
+  const [statusFilter, setStatusFilter] = useState('all'); // all | passed | failed
+  const [searchTerm, setSearchTerm] = useState('');
   
   // Filter completed jobs (รวมทั้ง completed และ stopped เพื่อเก็บประวัติ demo run)
   const completedJobs = jobs.filter(
@@ -12553,6 +12646,30 @@ const HistoryPage = ({ onViewJob }) => {
 
   const displayCompletedJobs =
     completedJobs.length === 0 ? [DEMO_COMPLETED_HISTORY, DEMO_FAILED_HISTORY] : completedJobs;
+
+  // Apply status filter + search by name/tag
+  const filteredJobs = displayCompletedJobs.filter((job) => {
+    if (statusFilter === 'passed' && hasFailedFiles(job)) return false;
+    if (statusFilter === 'failed' && !hasFailedFiles(job)) return false;
+
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return true;
+
+    const name = ((job.name || job.configName || '')).toLowerCase();
+    const tag = (job.tag || '').toLowerCase();
+    return name.includes(q) || tag.includes(q);
+  });
+
+  const passedJobs = filteredJobs.filter((job) => !hasFailedFiles(job));
+  const failedJobs = filteredJobs.filter((job) => hasFailedFiles(job));
+
+  const getJobProgress = (job) => {
+    if (typeof job.progress === 'number') return job.progress;
+    if (job.completedFiles != null && job.totalFiles) {
+      return Math.round((job.completedFiles / job.totalFiles) * 100);
+    }
+    return 100;
+  };
 
   // ชื่อแสดงของ test case: ใช้ชื่อจาก set (testCaseName) เท่านั้น
   const getTestCaseDisplayName = (file) => (file?.testCaseName || (file?.order != null ? `Test case ${file.order}` : '—'));
@@ -12882,15 +12999,69 @@ Summary:
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-2">
         <div className="min-w-0">
     <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-slate-100">Test History</h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1 text-sm sm:text-base">View completed test batches and their results</p>
+          <p className="text-slate-500 dark:text-slate-400 mt-1 text-sm sm:text-base">View completed test sets and their results</p>
         </div>
         <div className="text-sm text-slate-500 dark:text-slate-400 flex-shrink-0">
-          {completedJobs.length} completed batch{completedJobs.length !== 1 ? 'es' : ''}
+          {completedJobs.length} completed set{completedJobs.length !== 1 ? 'es' : ''}
         </div>
       </div>
-      
-      <div className="space-y-4">
-          {displayCompletedJobs.map(job => (
+
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="inline-flex rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-900/40 p-1">
+          {[
+            { key: 'all', label: 'All' },
+            { key: 'passed', label: 'Passed' },
+            { key: 'failed', label: 'Failed' },
+          ].map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => setStatusFilter(opt.key)}
+              className={`px-3 py-1.5 text-xs sm:text-sm font-semibold rounded-full transition-colors ${
+                statusFilter === opt.key
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex-1 min-w-[200px]">
+          <div className="relative">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search by set name or tag"
+              className="w-full pl-9 pr-3 py-1.5 text-sm rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/60"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-6">
+        {filteredJobs.length === 0 && (
+          <div className="border border-dashed border-slate-300 dark:border-slate-700 rounded-2xl py-10 px-4 text-center text-slate-500 dark:text-slate-400 text-sm">
+            No history matches the current filters.
+          </div>
+        )}
+
+        {(statusFilter === 'all' || statusFilter === 'passed') && passedJobs.length > 0 && (
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-sm font-bold text-emerald-600 dark:text-emerald-300 uppercase tracking-wide flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                Passed
+                <span className="ml-1 inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-900/40 text-[10px] font-semibold text-emerald-700 dark:text-emerald-200">
+                  {passedJobs.length}
+                </span>
+              </h2>
+            </div>
+            <div className="space-y-4">
+              {passedJobs.map((job) => (
             <div 
               key={job.id} 
               onClick={() => onViewJob(job.id)}
@@ -12936,7 +13107,7 @@ Summary:
               </div>
               <div className="flex flex-wrap items-center gap-2 sm:gap-3 flex-shrink-0">
                 <div className="text-right">
-                  <div className="text-sm font-bold text-emerald-600 dark:text-emerald-300">{job.progress}%</div>
+                  <div className="text-sm font-bold text-emerald-600 dark:text-emerald-300">{getJobProgress(job)}%</div>
                   <div className="text-xs text-slate-400 dark:text-slate-400">Completed</div>
                 </div>
                 {hasFailedFiles(job) && (
@@ -13021,8 +13192,159 @@ Summary:
                 <ChevronRight className="text-slate-300 dark:text-slate-600 group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors" size={20} />
               </div>
             </div>
-          ))}
-        </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {(statusFilter === 'all' || statusFilter === 'failed') && failedJobs.length > 0 && (
+          <section>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-sm font-bold text-red-600 dark:text-red-300 uppercase tracking-wide flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-red-500" />
+                Failed
+                <span className="ml-1 inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-red-50 dark:bg-red-900/40 text-[10px] font-semibold text-red-700 dark:text-red-200">
+                  {failedJobs.length}
+                </span>
+              </h2>
+            </div>
+            <div className="space-y-4">
+              {failedJobs.map((job) => (
+            <div 
+              key={job.id} 
+              onClick={() => onViewJob(job.id)}
+              className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 hover:bg-slate-50 dark:hover:bg-slate-800 hover:border-blue-300 dark:hover:border-slate-600 transition-all group cursor-pointer min-w-0"
+            >
+            <div className="flex items-center gap-4 sm:gap-6 min-w-0">
+            <div className={`h-14 w-14 rounded-2xl flex items-center justify-center ${
+              hasFailedFiles(job) 
+                ? 'bg-red-50 text-red-600 dark:bg-red-900/40 dark:text-red-300' 
+                : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-300'
+            }`}>
+              {hasFailedFiles(job) ? (
+                <AlertCircle size={28} />
+              ) : (
+                <CheckCircle2 size={28} />
+              )}
+            </div>
+            <div className="min-w-0">
+                  <h4 className="font-bold text-slate-800 dark:text-slate-100 text-base sm:text-lg truncate">{(job.name || job.configName || '').trim() || `Set #${job.id}`}</h4>
+                  <p className="text-slate-400 dark:text-slate-400 text-sm flex items-center gap-2">
+                    <Clock size={14}/> {formatDate(job)} • {formatDuration(job)} duration
+                  </p>
+                  <div className="flex items-center gap-3 mt-2">
+                    <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                      {job.completedFiles}/{job.totalFiles} files
+                    </span>
+                    {hasFailedFiles(job) && (
+                      <span className="text-xs font-bold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300 px-2 py-0.5 rounded flex items-center gap-1">
+                        <AlertCircle size={12} />
+                        {getFailedFilesCount(job)} failed
+                      </span>
+                    )}
+                    {job.tag && (
+                      <span className="text-xs font-bold bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 px-2 py-0.5 rounded">
+                        {job.tag}
+                      </span>
+                    )}
+                    <span className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                      {job.firmware}
+                    </span>
+            </div>
+          </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3 flex-shrink-0">
+                <div className="text-right">
+                  <div className="text-sm font-bold text-emerald-600 dark:text-emerald-300">{getJobProgress(job)}%</div>
+                  <div className="text-xs text-slate-400 dark:text-slate-400">Completed</div>
+                </div>
+                {hasFailedFiles(job) && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDownload(e, job.id, 'failed');
+                    }}
+                    className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 transition-all flex items-center gap-2 shadow-sm"
+                    title={`Download failed files report (${getFailedFilesCount(job)} failed)`}
+                  >
+                    <Download size={16} />
+                    <span>Failed Files</span>
+                    <span className="bg-red-700 px-1.5 py-0.5 rounded text-xs font-bold">
+                      {getFailedFilesCount(job)}
+                    </span>
+                  </button>
+                )}
+                <div className="relative download-menu-container">
+                  <button
+                    onClick={(e) => toggleDownloadMenu(e, job.id)}
+                    className="p-2 hover:bg-blue-50 dark:hover:bg-slate-800 rounded-lg transition-all group-hover:bg-blue-50 dark:group-hover:bg-slate-800"
+                    title="Download files"
+                  >
+                    <Download size={20} className="text-slate-400 dark:text-slate-300 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors" />
+                  </button>
+                  
+                  {downloadMenuOpen[job.id] && (
+                    <div className="absolute right-0 top-full mt-1 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-xl z-50 min-w-[200px]">
+                      <div className="py-1">
+                        <button
+                          onClick={(e) => handleDownload(e, job.id, 'json')}
+                          className="w-full text-left px-4 py-2 text-sm text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
+                        >
+                          <FileJson size={16} className="text-blue-600 dark:text-blue-400" />
+                          <span>Download JSON</span>
+                        </button>
+                        <button
+                          onClick={(e) => handleDownload(e, job.id, 'csv')}
+                          className="w-full text-left px-4 py-2 text-sm text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
+                        >
+                          <FileCode size={16} className="text-green-600 dark:text-green-400" />
+                          <span>Download CSV</span>
+                        </button>
+                        <button
+                          onClick={(e) => handleDownload(e, job.id, 'html')}
+                          className="w-full text-left px-4 py-2 text-sm text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
+                        >
+                          <FileCode size={16} className="text-purple-600 dark:text-purple-400" />
+                          <span>Download HTML Report</span>
+                        </button>
+                        <button
+                          onClick={(e) => handleDownload(e, job.id, 'pdf')}
+                          className="w-full text-left px-4 py-2 text-sm text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
+                        >
+                          <FileCode size={16} className="text-red-600 dark:text-red-400" />
+                          <span>Download PDF Report</span>
+                        </button>
+                        <button
+                          onClick={(e) => handleDownload(e, job.id, 'log')}
+                          className="w-full text-left px-4 py-2 text-sm text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-2"
+                        >
+                          <FileCode size={16} className="text-orange-600 dark:text-orange-400" />
+                          <span>Download Logs</span>
+                        </button>
+                        {hasFailedFiles(job) && (
+                          <>
+                            <div className="border-t border-slate-200 dark:border-slate-700 my-1"></div>
+                            <button
+                              onClick={(e) => handleDownload(e, job.id, 'failed')}
+                              className="w-full text-left px-4 py-2 text-sm text-slate-800 dark:text-slate-200 hover:bg-red-50 dark:hover:bg-red-900/40 flex items-center gap-2 text-red-600 dark:text-red-400 font-semibold"
+                            >
+                              <AlertCircle size={16} className="text-red-600" />
+                              <span>Download Failed Files ({getFailedFilesCount(job)})</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <ChevronRight className="text-slate-300 dark:text-slate-600 group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors" size={20} />
+              </div>
+            </div>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
   </div>
 );
 };
@@ -13284,7 +13606,8 @@ const TestCasesProgressView = ({
       const eromMatch = file.erom?.toLowerCase().includes(searchLower);
       const ulpMatch = file.ulp?.toLowerCase().includes(searchLower);
       const nameMatch = file.name?.toLowerCase().includes(searchLower);
-      if (!testCaseNameMatch && !vcdMatch && !eromMatch && !ulpMatch && !nameMatch) return false;
+      const tagMatch = (file.tag || file.testCaseTag || '').toString().toLowerCase().includes(searchLower);
+      if (!testCaseNameMatch && !vcdMatch && !eromMatch && !ulpMatch && !nameMatch && !tagMatch) return false;
     }
     return true;
   });
@@ -13312,26 +13635,26 @@ const TestCasesProgressView = ({
   }, [currentRunningIndex]);
   
   return (
-    <div className="border-t border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50/30">
-      <div className="p-6">
+  <div className="border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
+      <div className="p-4 sm:p-6 max-w-6xl mx-auto">
         {/* Header: title (details are controlled by outer job card) */}
         <div className="mb-4">
           <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-            <h4 className="text-base font-bold text-slate-800 flex items-center gap-2 min-w-0">
-              <Activity size={18} className="text-blue-600 shrink-0" />
+            <h4 className="text-base font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 min-w-0">
+              <Activity size={18} className="text-blue-600 dark:text-blue-400 shrink-0" />
               <span className="truncate">Test Cases Progress - {job.name}</span>
             </h4>
           </div>
 
           <>
               {/* Batch summary (Firmware, Boards, Progress, Files, date) */}
-              <div className="flex items-center gap-3 text-xs text-slate-500 flex-wrap mb-3">
-                <span>Firmware: <strong className="text-slate-700">{job.firmware}</strong></span>
-                <span>Boards: <strong className="text-slate-700">{job.boards?.join(', ')}</strong></span>
-                <span>Progress: <strong className="text-slate-700">{job.progress}%</strong></span>
-                <span>Files: <strong className="text-slate-700">{job.completedFiles}/{job.totalFiles}</strong></span>
+          <div className="flex items-center gap-3 text-xs text-slate-600 dark:text-slate-300 flex-wrap mb-3">
+                <span>Firmware: <strong className="text-slate-800 dark:text-slate-100">{job.firmware}</strong></span>
+                <span>Boards: <strong className="text-slate-800 dark:text-slate-100">{job.boards?.join(', ')}</strong></span>
+                <span>Progress: <strong className="text-slate-800 dark:text-slate-100">{job.progress}%</strong></span>
+                <span>Files: <strong className="text-slate-800 dark:text-slate-100">{job.completedFiles}/{job.totalFiles}</strong></span>
                 {(job.completedAt || job.startedAt) && (
-                  <span className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs font-semibold">
+                  <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded text-xs font-semibold">
                     {(() => {
                       const date = job.completedAt ? new Date(job.completedAt) : new Date(job.startedAt);
                       const now = new Date();
@@ -13348,17 +13671,17 @@ const TestCasesProgressView = ({
             </>
           {/* Statistics Cards */}
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-3">
-                <div className="bg-white p-2 rounded-lg border border-slate-200 min-w-0">
-                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-tight truncate">Total</div>
-                  <div className="text-lg font-bold text-slate-800">{files.length}</div>
+                <div className="bg-white dark:bg-slate-900 p-2 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm shadow-slate-900/40 min-w-0">
+                  <div className="text-[10px] font-bold text-slate-500 dark:text-slate-500 uppercase tracking-tight truncate">Total</div>
+                  <div className="text-lg font-bold text-slate-900 dark:text-slate-100">{files.length}</div>
                 </div>
-                <div className="bg-emerald-50 p-2 rounded-lg border border-emerald-200 min-w-0">
-                  <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-tight truncate">Done</div>
-                  <div className="text-lg font-bold text-emerald-700">{files.filter(f => f.status === 'completed').length}</div>
+                <div className="bg-emerald-50 dark:bg-slate-900 p-2 rounded-lg border border-emerald-200 dark:border-emerald-600 shadow-sm shadow-slate-950/40 min-w-0">
+                  <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-tight truncate">Done</div>
+                  <div className="text-lg font-bold text-emerald-700 dark:text-emerald-300">{files.filter(f => f.status === 'completed').length}</div>
                 </div>
-                <div className="bg-blue-50 p-2 rounded-lg border border-blue-200 min-w-0">
-                  <div className="text-[10px] font-bold text-blue-600 uppercase tracking-tight truncate">Run</div>
-                  <div className="text-lg font-bold text-blue-700">{files.filter(f => f.status === 'running').length}</div>
+                <div className="bg-blue-50 dark:bg-slate-900 p-2 rounded-lg border border-blue-200 dark:border-blue-600 shadow-sm shadow-slate-950/40 min-w-0">
+                  <div className="text-[10px] font-bold text-blue-700 dark:text-sky-400 uppercase tracking-tight truncate">Run</div>
+                  <div className="text-lg font-bold text-blue-700 dark:text-sky-300">{files.filter(f => f.status === 'running').length}</div>
                 </div>
                 <div className="bg-yellow-50 p-2 rounded-lg border border-yellow-200 min-w-0">
                   <div className="text-[10px] font-bold text-yellow-600 uppercase tracking-tight truncate">Pending</div>
@@ -13381,10 +13704,10 @@ const TestCasesProgressView = ({
               <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search test case by name..."
+                placeholder="Search by name or tag..."
                 value={search}
                 onChange={(e) => onSearchChange(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full pl-10 pr-4 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
             {/* Status dropdown: ไม่แสดงเมื่อ batch ยัง Pending เพราะ test cases ทั้งหมดเป็น pending อยู่แล้ว */}
