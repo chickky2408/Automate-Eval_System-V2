@@ -55,6 +55,7 @@ const PROFILES_LIST_KEY = 'app_profiles_list';
 const ACTIVE_PROFILE_ID_KEY = 'app_active_profile_id';
 const PROFILE_DATA_PREFIX = 'app_profile_';
 const FILE_TAGS_KEY = 'app_file_tags';
+const FILE_DISPLAY_NAMES_KEY = 'app_file_display_names';
 const SHARED_PROFILES_KEY = 'app_shared_profiles';
 const RUN_BOARD_SELECTION_KEY = 'app_run_board_selection';
 
@@ -173,6 +174,26 @@ const saveFileTags = (tags) => {
     localStorage.setItem(FILE_TAGS_KEY, JSON.stringify(tags || {}));
   } catch (e) {
     console.error('Failed to save file tags', e);
+  }
+};
+
+const loadFileDisplayNames = () => {
+  try {
+    const raw = localStorage.getItem(FILE_DISPLAY_NAMES_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    console.error('Failed to load file display names', e);
+    return {};
+  }
+};
+
+const saveFileDisplayNames = (names) => {
+  try {
+    localStorage.setItem(FILE_DISPLAY_NAMES_KEY, JSON.stringify(names || {}));
+  } catch (e) {
+    console.error('Failed to save file display names', e);
   }
 };
 
@@ -355,6 +376,7 @@ export const useTestStore = create((set, get) => ({
 
   // File metadata (per device) — tags keyed by file.id
   fileTags: (() => loadFileTags())(),
+  fileDisplayNames: (() => loadFileDisplayNames())(),
 
   // Saved Test Cases (library) — persisted; only shown in Library after "Save to library"
   savedTestCases: (() => loadSavedTestCases())(),
@@ -390,6 +412,20 @@ export const useTestStore = create((set, get) => ({
   testCaseLibraryFocusOnNavigate: null,
   setTestCaseLibraryFocusOnNavigate: (payload) => set({ testCaseLibraryFocusOnNavigate: payload }),
   clearTestCaseLibraryFocusOnNavigate: () => set({ testCaseLibraryFocusOnNavigate: null }),
+
+  // File → Test Case builder draft (selected file ids)
+  fileToTestCaseDraft: null, // { fileIds: string[], createdAt: string } | null
+  setFileToTestCaseDraft: (fileIds) => set({
+    fileToTestCaseDraft: {
+      fileIds: Array.isArray(fileIds) ? fileIds.filter(Boolean) : [],
+      createdAt: new Date().toISOString(),
+    },
+  }),
+  clearFileToTestCaseDraft: () => set({ fileToTestCaseDraft: null }),
+
+  // File Library UI mode
+  fileLibraryMode: 'create', // 'create' | 'edit'
+  setFileLibraryMode: (mode) => set({ fileLibraryMode: mode === 'edit' ? 'edit' : 'create' }),
 
   // UI State
   theme: (() => {
@@ -490,6 +526,17 @@ export const useTestStore = create((set, get) => ({
       else next[fileId] = value;
       saveFileTags(next);
       return { fileTags: next };
+    });
+  },
+  setFileDisplayName: (fileId, name) => {
+    set((state) => {
+      const next = { ...(state.fileDisplayNames || {}) };
+      const value = (name || '').trim();
+      if (!fileId) return {};
+      if (!value) delete next[fileId];
+      else next[fileId] = value;
+      saveFileDisplayNames(next);
+      return { fileDisplayNames: next };
     });
   },
   setBoardQueuePaused: (boardId, queuePaused) => {

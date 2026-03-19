@@ -2,7 +2,7 @@ $date
     Today
 $end
 $version
-    Dummy VCD for TC0010
+    Dummy VCD for TC0008
 $end
 $scope module top $end
 $var wire 1 ! clk $end
