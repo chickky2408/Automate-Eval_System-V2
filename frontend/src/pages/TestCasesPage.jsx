@@ -1,12 +1,74 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
-  ArrowUp, ArrowDown, Copy, FileJson, FileUp, GripVertical, Layers, Plus, Save, Trash2, X
+  ArrowUp, ArrowDown, Copy, FileUp, FolderOpen, Globe, GripVertical, Lock, Plus, Save, Trash2, Users, X
 } from 'lucide-react';
 import { useTestStore } from '../store/useTestStore';
 import api from '../services/api';
 import { computeFileSignature } from '../utils/fileSignature';
 import { getClientId } from '../utils/sessionStorage';
 import UploadChoiceModal from '../components/UploadChoiceModal';
+
+/** จัดกลุ่มไฟล์เช่น TC0008.vcd + TC0008_erom_1.erom → คีย์ TC0008 */
+function extractTcGroupKeyFromFileName(filename) {
+  const base = String(filename || '').replace(/\.[^.]+$/, '');
+  const m = base.match(/(TC\d+)/i);
+  if (m) return m[1].toUpperCase();
+  const parts = base.split('_');
+  if (parts[0] && /^TC\d+/i.test(parts[0])) return parts[0].toUpperCase();
+  return base;
+}
+
+const splitTags = (raw) =>
+  String(raw || '')
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+const normalizeFileSizeBytes = (value) => {
+  if (typeof value === 'number') return value;
+  if (value == null) return 0;
+  const n = Number(String(value).replace(/[^\d.]/g, ''));
+  return Number.isFinite(n) ? n : 0;
+};
+
+const getSetNamesUsingFile = (fileName, savedTestCaseSets) => {
+  if (!fileName || !savedTestCaseSets?.length) return [];
+  const names = [];
+  for (const set of savedTestCaseSets) {
+    const hasInSnapshot = set.fileLibrarySnapshot?.some((s) => s.name === fileName);
+    const hasInItems = (set.items || []).some(
+      (t) => t.vcdName === fileName || t.binName === fileName || t.linName === fileName
+    );
+    if (hasInSnapshot || hasInItems) names.push(set.name || set.id);
+  }
+  return names;
+};
+
+/** Same logic as File Library — TC names that reference this file */
+const getTestCasesUsingFile = (fileName, savedTestCases, savedTestCaseSets) => {
+  if (!fileName) return [];
+  const out = [];
+  const isUsedInTc = (tc) => {
+    if (tc.vcdName === fileName || tc.binName === fileName || tc.linName === fileName) return true;
+    const cmds = Array.isArray(tc.commands) ? tc.commands : [];
+    if (cmds.some((c) => c && c.file === fileName)) return true;
+    const extra = tc.extraColumns && typeof tc.extraColumns === 'object' ? tc.extraColumns : {};
+    return Object.values(extra).some((v) => v === fileName);
+  };
+  (savedTestCases || []).forEach((tc) => {
+    if (isUsedInTc(tc)) {
+      out.push({ name: (tc.name || tc.vcdName || '').trim() || '—', set: 'Current (from table)' });
+    }
+  });
+  (savedTestCaseSets || []).forEach((set) => {
+    (set.items || []).forEach((tc) => {
+      if (isUsedInTc(tc)) {
+        out.push({ name: (tc.name || tc.vcdName || '').trim() || '—', set: set.name || set.id });
+      }
+    });
+  });
+  return out;
+};
 
 const TestCasesPage = () => {
   const viewingSharedProfileId = useTestStore((s) => s.viewingSharedProfileId);
@@ -38,6 +100,8 @@ const TestCasesPage = () => {
     removeSavedTestCase,
     setSavedTestCases,
     reorderSavedTestCases,
+    moveSavedTestCaseUp,
+    moveSavedTestCaseDown,
     duplicateSavedTestCase,
     bulkUpdateTryCount,
     addTestCaseCommand,
@@ -56,8 +120,6 @@ const TestCasesPage = () => {
     moveSavedTestCaseSetDown,
     addUploadedFile,
     removeUploadedFile,
-    loading,
-    errors,
   } = useTestStore();
   const addToast = useTestStore((s) => s.addToast);
   const refreshFiles = useTestStore((s) => s.refreshFiles);
@@ -66,7 +128,12 @@ const TestCasesPage = () => {
   const clearLibraryEditContext = useTestStore((s) => s.clearLibraryEditContext);
   const testCaseLibraryFocusOnNavigate = useTestStore((s) => s.testCaseLibraryFocusOnNavigate);
   const clearTestCaseLibraryFocusOnNavigate = useTestStore((s) => s.clearTestCaseLibraryFocusOnNavigate);
+  const fileToTestCaseDraft = useTestStore((s) => s.fileToTestCaseDraft);
+  const clearFileToTestCaseDraft = useTestStore((s) => s.clearFileToTestCaseDraft);
+  const fileTags = useTestStore((s) => s.fileTags);
+  const fileDisplayNames = useTestStore((s) => s.fileDisplayNames);
   const jobs = useTestStore((s) => s.jobs);
+  const currentClientId = useMemo(() => getClientId(), []);
   const fileNamesInUseByBatch = useMemo(() => {
     const names = new Set();
     (jobs || []).filter((j) => j.status === 'pending' || j.status === 'running').forEach((job) => {
@@ -119,9 +186,43 @@ const TestCasesPage = () => {
     (set) => !!getSetJobStatusForRunSet(set),
     [getSetJobStatusForRunSet]
   );
-  const fileInputRef = useRef(null);
+
+  // For file browse modal: map set name -> job status (running / pending / completed)
+  const STATUS_PRIORITY = { completed: 1, pending: 2, running: 3 };
+  const normalizeJobStatusForLibrary = (status) => {
+    const s = (status || '').toLowerCase();
+    if (s === 'running' || s === 'pending') return s;
+    if (s === 'completed') return 'completed';
+    return null;
+  };
+  const setStatusByName = useMemo(() => {
+    const map = new Map();
+    (jobs || []).forEach((job) => {
+      const status = normalizeJobStatusForLibrary(job.status);
+      if (!status) return;
+      const setName = (job.configName || job.name || '').trim();
+      if (!setName) return;
+      const current = map.get(setName);
+      if (!current || STATUS_PRIORITY[status] > STATUS_PRIORITY[current]) {
+        map.set(setName, status);
+      }
+    });
+    return map;
+  }, [jobs]);
+
+  const getSetJobStatusPillClass = (status) => {
+    if (status === 'running') {
+      return 'bg-blue-50 text-blue-800 border-blue-200 dark:bg-blue-900/35 dark:text-blue-200 dark:border-blue-600';
+    }
+    if (status === 'pending') {
+      return 'bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-700';
+    }
+    if (status === 'completed') {
+      return 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-900/25 dark:text-emerald-300 dark:border-emerald-700';
+    }
+    return 'bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-800/80 dark:text-slate-400 dark:border-slate-600';
+  };
   const csvInputRef = useRef(null);
-  const testCasesJsonInputRef = useRef(null);
   const prevUploadedCountRef = useRef(0);
   const justDidStartFreshRef = useRef(false);
   const loadedSetId = useTestStore((s) => s.loadedSetId);
@@ -140,13 +241,19 @@ const TestCasesPage = () => {
     }
   }, [activeProfileId]);
 
-  const displayedSavedTestCases = tableClearedMode
-    ? []
-    : (viewingSharedProfileId && sharedProfileDataCache[viewingSharedProfileId]
-      ? (sharedProfileDataCache[viewingSharedProfileId].savedTestCases ?? [])
-      : loadedSetId
-        ? (loadedSetTable || [])
-        : [...(savedTestCases || []), ...pendingDraftTestCases]);
+  /** Create mode (no set loaded): table shows only in-session drafts — not the full library list. */
+  const displayedSavedTestCases = (() => {
+    if (viewingSharedProfileId && sharedProfileDataCache[viewingSharedProfileId]) {
+      return sharedProfileDataCache[viewingSharedProfileId].savedTestCases ?? [];
+    }
+    if (loadedSetId) {
+      return loadedSetTable || [];
+    }
+    if (tableClearedMode && (pendingDraftTestCases?.length || 0) === 0) {
+      return [];
+    }
+    return [...(pendingDraftTestCases || [])];
+  })();
   const displayedSavedTestCaseSets = viewingSharedProfileId && sharedProfileDataCache[viewingSharedProfileId]
     ? (sharedProfileDataCache[viewingSharedProfileId].savedTestCaseSets ?? [])
     : savedTestCaseSets;
@@ -194,16 +301,35 @@ const TestCasesPage = () => {
   const [selectedTestCaseIds, setSelectedTestCaseIds] = useState([]);
   const [duplicateHighlightIds, setDuplicateHighlightIds] = useState([]);
   const [bulkTryCount, setBulkTryCount] = useState('');
-  const [fileFilter, setFileFilter] = useState('all');
-  const [fileSearch, setFileSearch] = useState('');
-  const [fileSort, setFileSort] = useState('time');
-  const [fileListExpanded, setFileListExpanded] = useState(false);
-  const [selectedFileIdsForDelete, setSelectedFileIdsForDelete] = useState([]);
-  const [isDragging, setIsDragging] = useState(false);
-  const [isDeletingFiles, setIsDeletingFiles] = useState(false);
+  const [libraryPickerOpen, setLibraryPickerOpen] = useState(false);
+  const [libraryPickerNameQ, setLibraryPickerNameQ] = useState('');
+  const [libraryPickerTagQ, setLibraryPickerTagQ] = useState('');
+  const [libraryPickerSizeQ, setLibraryPickerSizeQ] = useState('');
+  const [libraryPickerOwnerQ, setLibraryPickerOwnerQ] = useState('');
+  const [libraryPickerTimeQ, setLibraryPickerTimeQ] = useState('');
+  const [libraryPickerSelectedIds, setLibraryPickerSelectedIds] = useState([]);
+  /** Browse modal: show all tags for a file (ellipsis) */
+  const [libraryPickerTagOverflowFileId, setLibraryPickerTagOverflowFileId] = useState(null);
+  /** Browse modal: show all TC names that use this file (ellipsis) */
+  const [libraryPickerTcOverflowFileName, setLibraryPickerTcOverflowFileName] = useState(null);
+  /** Browse modal: show all sets that use this file (ellipsis) */
+  const [libraryPickerSetsOverflowFileName, setLibraryPickerSetsOverflowFileName] = useState(null);
+  const libraryPickerDragSelectRef = useRef(false);
   const [draggingRowIndex, setDraggingRowIndex] = useState(null);
   const [dropTargetRowIndex, setDropTargetRowIndex] = useState(null);
   const draggingRowIndexRef = useRef(null);
+
+  useEffect(() => {
+    const onMouseUp = () => {
+      libraryPickerDragSelectRef.current = false;
+    };
+    window.addEventListener('mouseup', onMouseUp);
+    return () => window.removeEventListener('mouseup', onMouseUp);
+  }, []);
+
+  useEffect(() => {
+    if (!libraryPickerOpen) libraryPickerDragSelectRef.current = false;
+  }, [libraryPickerOpen]);
 
   // When navigating from Jobs (click test case name): auto-select the matching row so user sees which one was pointed to
   useEffect(() => {
@@ -258,12 +384,29 @@ const TestCasesPage = () => {
       updateSavedTestCase(id, updates);
     }
   };
-  const removeDisplayedTestCase = (id) => {
-    if (isDraftId(id)) {
-      setPendingDraftTestCases((prev) => prev.filter((t) => t.id !== id));
-    } else {
-      removeSavedTestCase(id);
+  const removeDisplayedTestCase = (id, rowIndex) => {
+    if (isViewingShared) return;
+    // Editing a loaded set: rows come from loadedSetTable (store) or rare pending overlap
+    if (loadedSetId) {
+      if (isDraftId(id)) {
+        setPendingDraftTestCases((prev) => prev.filter((t) => String(t.id) !== String(id)));
+      } else {
+        removeSavedTestCase(id);
+      }
+      return;
     }
+    // Create mode: table lists only pendingDraftTestCases — always drop from pending; fallback by row index if id missing / mismatch
+    setPendingDraftTestCases((prev) => {
+      const hasId = id != null && String(id).trim() !== '';
+      if (hasId) {
+        const next = prev.filter((t) => String(t.id) !== String(id));
+        if (next.length < prev.length) return next;
+      }
+      if (typeof rowIndex === 'number' && rowIndex >= 0 && rowIndex < prev.length) {
+        return prev.filter((_, i) => i !== rowIndex);
+      }
+      return prev;
+    });
   };
   const addDisplayedTestCaseCommand = (tcId, cmd) => {
     const type = cmd?.type;
@@ -438,6 +581,9 @@ const TestCasesPage = () => {
         created.push(newId);
       });
       setPendingDraftTestCases([]);
+      setTableClearedMode(true);
+      setSetupClearedPersisted(activeProfileId, true);
+      setSelectedTestCaseIds([]);
       if (refreshFiles) await refreshFiles();
       const total = useTestStore.getState().savedTestCases?.length || 0;
       if (created.length > 0) {
@@ -463,15 +609,7 @@ const TestCasesPage = () => {
       addToast({ type: 'success', message: `Test cases saved to library (${total} case(s))` });
     }
     setSaveLibraryUploadModal(null);
-  }, [saveLibraryUploadModal, addUploadedFile, refreshFiles, addToast, addSavedTestCase, setPendingDraftTestCases, mergeCommandsIntoExtraForSave]);
-
-  const formatFileSize = (bytes) => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
-    return (bytes / Math.pow(k, i)).toFixed(1) + ' ' + sizes[i];
-  };
+  }, [saveLibraryUploadModal, addUploadedFile, refreshFiles, addToast, addSavedTestCase, setPendingDraftTestCases, mergeCommandsIntoExtraForSave, activeProfileId]);
 
   const getFileKind = (file) => {
     const ext = String(file?.name || '').split('.').pop()?.toLowerCase();
@@ -661,168 +799,6 @@ const TestCasesPage = () => {
     if (matchingIds.length > 0) setSelectedIds((prev) => [...new Set([...prev, ...matchingIds])]);
   }, [loadedSetId, uploadedFiles.length, savedTestCaseSets]);
 
-  const handleSelectAllFiles = () => {
-    if (selectedIds.length === uploadedFiles.length) setSelectedIds([]);
-    else {
-      setSetupClearedPersisted(activeProfileId, false);
-      setSelectedIds(uploadedFiles.map((f) => f.id));
-    }
-  };
-  const toggleFileSelect = (id) => {
-    setSelectedIds((prev) => {
-      if (prev.includes(id)) return prev.filter((x) => x !== id);
-      setSetupClearedPersisted(activeProfileId, false);
-      return [...prev, id];
-    });
-  };
-  const handleClearAll = () => {
-    // ใช้สำหรับปุ่ม "Un Select All" — ให้แค่เอา checkbox ออกจากไฟล์ที่ถูกเลือก
-    // ไม่ลบ local dropped files หรือกระทบตาราง Saved Test Cases
-    setSelectedIds([]);
-    setSelectedFileIdsForDelete([]);
-    addToast({ type: 'info', message: 'Unselected all files (files remain in Library)' });
-  };
-  const handleDeleteSelected = async () => {
-    if (selectedFileIdsForDelete.length === 0) {
-      addToast({ type: 'info', message: 'เลือกไฟล์ที่ต้องการลบ (ติ๊ก checkbox ข้างชื่อไฟล์)' });
-      return;
-    }
-    const toDelete = [...selectedFileIdsForDelete];
-    if (!window.confirm(`ลบ ${toDelete.length} ไฟล์จาก Library และนำออกจากรายการ?`)) return;
-    setIsDeletingFiles(true);
-    for (const id of toDelete) {
-      if (selectedIds.includes(id)) await removeUploadedFile(id);
-    }
-    setSelectedIds((prev) => prev.filter((id) => !toDelete.includes(id)));
-    setLocalDroppedFiles((prev) => prev.filter((f) => !toDelete.includes(f.id)));
-    setSelectedFileIdsForDelete([]);
-    setSavedTestCases([]);
-    setSelectedTestCaseIds([]);
-    setLoadedSetId(null);
-    setIsDeletingFiles(false);
-    addToast({ type: 'success', message: `ลบ ${toDelete.length} ไฟล์จาก Library แล้ว` });
-  };
-  // Start fresh: ล้างเฉพาะ UI/ตาราง ไม่ลบข้อมูลจาก Library (server). Persist so refresh/return keeps empty.
-  const handleStartFresh = () => {
-    if (tableClearedMode && selectedIds.length === 0 && localDroppedFiles.length === 0) {
-      addToast({ type: 'info', message: 'Table and file selection are already empty' });
-      return;
-    }
-    if (!window.confirm('Clear table and file selection? (Saved test cases in Library will remain)')) return;
-    setSetupClearedPersisted(activeProfileId, true);
-    setTableClearedMode(true);
-    setSelectedIds([]);
-    setLocalDroppedFiles([]);
-    setSelectedFileIdsForDelete([]);
-    setPendingDraftTestCases([]);
-    setSelectedTestCaseIds([]);
-    setLoadedSetId(null);
-    justDidStartFreshRef.current = true;
-    addToast({ type: 'success', message: 'Table cleared — Library unchanged' });
-  };
-
-  const addToLocalDropped = (file) => {
-    const id = `local-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    const sizeFormatted = formatFileSize(file.size || 0);
-    setLocalDroppedFiles((prev) => [...prev, { id, name: file.name, file, size: file.size, sizeFormatted }]);
-  };
-  // Names already in working area (selected from Library + local dropped) — used to skip duplicate drops
-  const workingAreaNames = useMemo(
-    () => new Set([
-      ...selectedIds.map((id) => uploadedFiles.find((f) => f.id === id)?.name).filter(Boolean),
-      ...localDroppedFiles.map((f) => f.name),
-    ]),
-    [selectedIds, uploadedFiles, localDroppedFiles]
-  );
-  const addFilesToWorkingArea = (files) => {
-    const accepted = files.filter((f) => FILE_LIBRARY_ACCEPTED_EXT.has((String(f.name || '').split('.').pop() || '').toLowerCase()));
-    const addedInThisBatch = new Set();
-    let added = 0;
-    let skipped = 0;
-    for (const file of accepted) {
-      if (workingAreaNames.has(file.name) || addedInThisBatch.has(file.name)) {
-        skipped++;
-        continue;
-      }
-      addToLocalDropped(file);
-      addedInThisBatch.add(file.name);
-      added++;
-    }
-    if (added > 0) {
-      setSetupClearedPersisted(activeProfileId, false);
-      addToast({ type: 'success', message: added === accepted.length && skipped === 0 ? `Added ${added} file(s)` : `Added ${added} file(s)${skipped > 0 ? `, ${skipped} duplicate(s) skipped` : ''}` });
-    }
-    if (skipped > 0 && added === 0) addToast({ type: 'info', message: `${skipped} file(s) already in list (duplicate name), skipped` });
-  };
-  const handleFileInputChange = (e) => {
-    const files = e.target?.files;
-    if (!files?.length) return;
-    addFilesToWorkingArea([...files]);
-    e.target.value = '';
-  };
-  const handleBrowseClick = () => fileInputRef.current?.click();
-
-  const FILE_LIBRARY_ACCEPTED_EXT = new Set(['vcd', 'bin', 'hex', 'elf', 'erom', 'ulp', 'lin', 'txt']);
-  const isAcceptedFile = (file) => FILE_LIBRARY_ACCEPTED_EXT.has((file.name || '').split('.').pop()?.toLowerCase());
-
-  const readDirectoryRecursive = async (dirEntry) => {
-    const files = [];
-    const reader = dirEntry.createReader?.();
-    if (!reader) return files;
-    let entries;
-    do {
-      entries = await new Promise((resolve) => reader.readEntries(resolve));
-      for (const e of entries) {
-        if (e.isDirectory) files.push(...(await readDirectoryRecursive(e)));
-        else {
-          try {
-            const f = await new Promise((res) => e.file(res));
-            if (f) files.push(f);
-          } catch (_) {}
-        }
-      }
-    } while (entries.length > 0);
-    return files;
-  };
-
-  const getAllFilesFromDataTransfer = async (dataTransfer) => {
-    const out = [];
-    if (dataTransfer.items) {
-      for (const item of dataTransfer.items) {
-        if (item.kind !== 'file') continue;
-        const entry = item.webkitGetAsEntry?.() || item.getAsEntry?.();
-        if (entry?.isDirectory) {
-          const sub = await readDirectoryRecursive(entry);
-          out.push(...sub.filter(isAcceptedFile));
-        } else {
-          const file = item.getAsFile();
-          if (file && isAcceptedFile(file)) out.push(file);
-        }
-      }
-    } else {
-      for (const file of dataTransfer.files || []) {
-        if (isAcceptedFile(file)) out.push(file);
-      }
-    }
-    return out;
-  };
-
-  const handleDragOver = (e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); };
-  const handleDragLeave = (e) => { e.preventDefault(); if (!e.currentTarget.contains(e.relatedTarget)) setIsDragging(false); };
-  const handleDrop = async (e) => {
-    e.preventDefault();
-    setIsDragging(false);
-    const files = await getAllFilesFromDataTransfer(e.dataTransfer);
-    addFilesToWorkingArea(files);
-  };
-
-  const handlePaste = async (e) => {
-    const files = e.clipboardData?.files;
-    if (!files?.length) return;
-    e.preventDefault();
-    addFilesToWorkingArea([...files]);
-  };
-
   const pairAll = () => {
     if (vcdSelected.length === 0 || binSelected.length === 0) {
       addToast({ type: 'warning', message: 'Select at least one VCD and one ERoM file first' });
@@ -884,6 +860,179 @@ const TestCasesPage = () => {
       addToast({ type: 'info', message: 'All possible pairs already in library' });
     }
   };
+
+  /** จากรายการ file id ใน Library: จัดกลุ่มตาม TCxxxx ในชื่อไฟล์ แล้วสร้างแถว test case (VCD+ERoM ขั้นต่ำ, ULP/MDI ถ้ามี) */
+  const runLibraryGroupingFromFileIds = (fileIds) => {
+    const ids = [...new Set((fileIds || []).filter(Boolean))];
+    const files = ids.map((id) => uploadedFiles.find((f) => f.id === id)).filter(Boolean);
+    if (files.length === 0) {
+      addToast({ type: 'warning', message: 'ไม่พบไฟล์ใน Library' });
+      return;
+    }
+    setSelectedIds(ids);
+    setSetupClearedPersisted(activeProfileId, false);
+    setTableClearedMode(false);
+
+    const groups = new Map();
+    for (const f of files) {
+      const key = extractTcGroupKeyFromFileName(f.name);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(f);
+    }
+    const sortPick = (arr) => [...arr].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+    const makeNameForGroup = (gKey, namesUsed) => {
+      if (/^TC\d+$/i.test(gKey)) {
+        const base = gKey.toUpperCase();
+        if (!namesUsed.has(base)) {
+          namesUsed.add(base);
+          return base;
+        }
+        let n = 2;
+        while (namesUsed.has(`${base} (${n})`)) n += 1;
+        const nm = `${base} (${n})`;
+        namesUsed.add(nm);
+        return nm;
+      }
+      const nums = [...namesUsed].map((name) => {
+        const m = (name || '').match(/^TC(\d+)$/i);
+        return m ? parseInt(m[1], 10) : 0;
+      });
+      let nextNum = Math.max(0, ...nums) + 1;
+      let candidate = `TC${String(nextNum).padStart(5, '0')}`;
+      while (namesUsed.has(candidate)) {
+        nextNum += 1;
+        candidate = `TC${String(nextNum).padStart(5, '0')}`;
+      }
+      namesUsed.add(candidate);
+      return candidate;
+    };
+
+    if (loadedSetId) {
+      const state = useTestStore.getState();
+      const existingKeys = new Set();
+      (state.loadedSetTable || []).forEach((t) => existingKeys.add(normalizeTCTestCaseKeyFull(t)));
+      (savedTestCases || []).forEach((t) => existingKeys.add(normalizeTCTestCaseKeyFull(t)));
+      (pendingDraftTestCases || []).forEach((t) => existingKeys.add(normalizeTCTestCaseKeyFull(t)));
+
+      const namesUsed = new Set();
+      (savedTestCases || []).forEach((t) => namesUsed.add((t.name || '').trim()));
+      (state.loadedSetTable || []).forEach((t) => namesUsed.add((t.name || '').trim()));
+      (savedTestCaseSets || []).flatMap((s) => s.items || []).forEach((t) => namesUsed.add((t.name || '').trim()));
+
+      let added = 0;
+      const skipped = [];
+      for (const [gKey, groupFiles] of groups) {
+        const gf = sortPick(groupFiles);
+        const vcd = gf.find((f) => getFileKind(f) === 'vcd');
+        const bin = gf.find((f) => getFileKind(f) === 'bin');
+        const lin = gf.find((f) => getFileKind(f) === 'lin');
+        const mdi = gf.find((f) => getFileKind(f) === 'mdi');
+        if (!vcd || !bin) {
+          skipped.push(gKey);
+          continue;
+        }
+        const pairEntry = { vcdName: vcd.name, binName: bin.name, linName: lin?.name || '' };
+        const key = normalizeTCTestCaseKeyFull(pairEntry);
+        if (existingKeys.has(key)) continue;
+        existingKeys.add(key);
+        const name = makeNameForGroup(gKey, namesUsed);
+        const mdiCmd = mdi
+          ? [{ id: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`, type: 'mdi', file: mdi.name }]
+          : [];
+        addSavedTestCase({
+          name,
+          vcdName: vcd.name,
+          binName: bin.name,
+          linName: lin?.name || '',
+          tryCount: 1,
+          createdAt: new Date().toISOString(),
+          ...(mdiCmd.length ? { commands: mdiCmd } : {}),
+        });
+        added += 1;
+      }
+      if (skipped.length) {
+        addToast({
+          type: 'warning',
+          message: `ข้าม ${skipped.length} กลุ่มที่ต้องมีทั้ง VCD และ ERoM: ${skipped.slice(0, 6).join(', ')}${skipped.length > 6 ? '…' : ''}`,
+        });
+      }
+      if (added > 0) {
+        addToast({ type: 'success', message: `เพิ่ม ${added} test case จาก Library (จัดกลุ่มตาม TCxxxx ในชื่อไฟล์)` });
+      } else if (!skipped.length) {
+        addToast({ type: 'info', message: 'ไม่มีแถวใหม่ — ชุดไฟล์ซ้ำกับในตารางแล้ว' });
+      }
+      return;
+    }
+
+    setPendingDraftTestCases((prev) => {
+      const existingKeys = new Set();
+      (savedTestCases || []).forEach((t) => existingKeys.add(normalizeTCTestCaseKeyFull(t)));
+      prev.forEach((t) => existingKeys.add(normalizeTCTestCaseKeyFull(t)));
+
+      const namesUsed = new Set([
+        ...(savedTestCases || []).map((t) => (t.name || '').trim()),
+        ...prev.map((t) => (t.name || '').trim()),
+        ...(savedTestCaseSets || []).flatMap((set) => (set.items || []).map((t) => (t.name || '').trim())),
+      ]);
+
+      const newRows = [];
+      const skipped = [];
+      for (const [gKey, groupFiles] of groups) {
+        const gf = sortPick(groupFiles);
+        const vcd = gf.find((f) => getFileKind(f) === 'vcd');
+        const bin = gf.find((f) => getFileKind(f) === 'bin');
+        const lin = gf.find((f) => getFileKind(f) === 'lin');
+        const mdi = gf.find((f) => getFileKind(f) === 'mdi');
+        if (!vcd || !bin) {
+          skipped.push(gKey);
+          continue;
+        }
+        const pairEntry = { vcdName: vcd.name, binName: bin.name, linName: lin?.name || '' };
+        const key = normalizeTCTestCaseKeyFull(pairEntry);
+        if (existingKeys.has(key)) continue;
+        existingKeys.add(key);
+        const name = makeNameForGroup(gKey, namesUsed);
+        const mdiCmd = mdi
+          ? [{ id: `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`, type: 'mdi', file: mdi.name }]
+          : [];
+        newRows.push({
+          id: `tc-draft-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          name,
+          vcdName: vcd.name,
+          binName: bin.name,
+          linName: lin?.name || '',
+          tryCount: 1,
+          createdAt: new Date().toISOString(),
+          ...(mdiCmd.length ? { commands: mdiCmd } : {}),
+        });
+      }
+      if (skipped.length) {
+        addToast({
+          type: 'warning',
+          message: `ข้าม ${skipped.length} กลุ่มที่ต้องมีทั้ง VCD และ ERoM: ${skipped.slice(0, 6).join(', ')}${skipped.length > 6 ? '…' : ''}`,
+        });
+      }
+      if (newRows.length) {
+        addToast({ type: 'success', message: `สร้าง ${newRows.length} test case จาก Library (จัดกลุ่มตาม TCxxxx ในชื่อไฟล์)` });
+      } else if (!skipped.length) {
+        addToast({ type: 'info', message: 'ไม่มีแถวใหม่ — ชุดไฟล์ซ้ำกับในรายการแล้ว' });
+      }
+      return [...prev, ...newRows];
+    });
+  };
+
+  useEffect(() => {
+    if (!fileToTestCaseDraft?.fileIds?.length) return;
+    if (isViewingShared) {
+      clearFileToTestCaseDraft();
+      addToast({ type: 'info', message: 'สลับมาโปรไฟล์ของคุณเพื่อสร้าง test case จาก Library' });
+      return;
+    }
+    const ids = [...fileToTestCaseDraft.fileIds];
+    clearFileToTestCaseDraft();
+    runLibraryGroupingFromFileIds(ids);
+  }, [fileToTestCaseDraft, isViewingShared, clearFileToTestCaseDraft]);
 
   const addOneTestCase = () => {
     setSetupClearedPersisted(activeProfileId, false);
@@ -951,9 +1100,10 @@ const TestCasesPage = () => {
       });
       return;
     }
+    const nDel = selectedTestCaseIds.length;
     selectedTestCaseIds.forEach((id) => removeDisplayedTestCase(id));
     setSelectedTestCaseIds([]);
-    addToast({ type: 'success', message: `Deleted ${selectedTestCaseIds.length} test case(s)` });
+    addToast({ type: 'success', message: `Deleted ${nDel} test case(s)` });
   };
 
   const reorderList = (arr, fromIndex, toIndex) => {
@@ -977,17 +1127,40 @@ const TestCasesPage = () => {
     const list = displayedSavedTestCases;
     if (list.length === 0) return;
     const reordered = reorderList([...list], fromIndex, toIndex);
-    if (pendingDraftTestCases.length > 0) {
-      const saved = reordered.filter((t) => !String(t.id || '').startsWith('tc-draft-'));
-      const draft = reordered.filter((t) => String(t.id || '').startsWith('tc-draft-'));
-      setSavedTestCases(saved);
-      setPendingDraftTestCases(draft);
-    } else {
+    if (loadedSetId) {
       reorderSavedTestCases(fromIndex, toIndex);
+    } else {
+      setPendingDraftTestCases(reordered);
     }
     draggingRowIndexRef.current = null;
     setDraggingRowIndex(null);
     setDropTargetRowIndex(null);
+  };
+  const moveDisplayedTestCaseUp = (tcId) => {
+    if (loadedSetId) {
+      moveSavedTestCaseUp(tcId);
+      return;
+    }
+    setPendingDraftTestCases((prev) => {
+      const i = prev.findIndex((t) => t.id === tcId);
+      if (i <= 0) return prev;
+      const next = [...prev];
+      [next[i - 1], next[i]] = [next[i], next[i - 1]];
+      return next;
+    });
+  };
+  const moveDisplayedTestCaseDown = (tcId) => {
+    if (loadedSetId) {
+      moveSavedTestCaseDown(tcId);
+      return;
+    }
+    setPendingDraftTestCases((prev) => {
+      const i = prev.findIndex((t) => t.id === tcId);
+      if (i < 0 || i >= prev.length - 1) return prev;
+      const next = [...prev];
+      [next[i], next[i + 1]] = [next[i + 1], next[i]];
+      return next;
+    });
   };
   const handleRowDragEnd = () => { draggingRowIndexRef.current = null; setDraggingRowIndex(null); setDropTargetRowIndex(null); };
 
@@ -1102,84 +1275,175 @@ const TestCasesPage = () => {
     }
   };
 
-  // Export Saved Test Cases to JSON (ข้อ 4 — Save/Load JSON สำหรับตาราง)
-  const saveTestCasesJson = () => {
-    const list = displayedSavedTestCases.map((tc) => ({
-      name: tc.name || '',
-      vcdName: tc.vcdName || '',
-      binName: tc.binName || '',
-      linName: tc.linName || '',
-      tryCount: typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1,
-      extraColumns: tc.extraColumns && typeof tc.extraColumns === 'object' ? tc.extraColumns : {},
-      createdAt: tc.createdAt || new Date().toISOString(),
-    }));
-    const blob = new Blob([JSON.stringify({ testCases: list, exportedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' });
+  const exportTestCasesCsv = () => {
+    const rows = displayedSavedTestCases || [];
+    if (rows.length === 0) {
+      addToast({ type: 'warning', message: 'No test cases to export' });
+      return;
+    }
+
+    const extraKeys = Array.from(
+      rows.reduce((acc, tc) => {
+        const extra = tc.extraColumns && typeof tc.extraColumns === 'object' ? tc.extraColumns : {};
+        Object.keys(extra).forEach((k) => {
+          const key = (k || '').trim();
+          if (key) acc.add(key);
+        });
+        return acc;
+      }, new Set())
+    );
+
+    const headers = ['Name', 'Tag', 'Date', 'ERoM', 'ULP', 'VCD', 'Try', ...extraKeys];
+    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = [headers.map(esc).join(',')];
+
+    rows.forEach((tc) => {
+      const base = [
+        tc.name || '',
+        tc.tag || '',
+        tc.createdAt ? String(tc.createdAt).slice(0, 10) : '',
+        tc.binName || '',
+        tc.linName || '',
+        tc.vcdName || '',
+        typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1,
+      ];
+      const extra = tc.extraColumns && typeof tc.extraColumns === 'object' ? tc.extraColumns : {};
+      const extraValues = extraKeys.map((k) => extra[k] ?? '');
+      lines.push([...base, ...extraValues].map(esc).join(','));
+    });
+
+    const blob = new Blob([`${lines.join('\n')}\n`], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `test_cases_${new Date().toISOString().split('T')[0]}.json`;
+    link.download = `test_cases_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
     URL.revokeObjectURL(url);
-    addToast({ type: 'success', message: `Exported ${list.length} test case(s) to JSON` });
+    addToast({ type: 'success', message: `Exported ${rows.length} test case(s) to CSV` });
   };
 
-  const loadTestCasesJson = async (file) => {
-    if (!file || !file.name.toLowerCase().endsWith('.json')) {
-      addToast({ type: 'warning', message: 'Please select a JSON file' });
+  const handleSaveToLibrary = async () => {
+    const toSave = pendingDraftTestCases || [];
+    if (toSave.length === 0 && (savedTestCases?.length || 0) === 0) {
+      addToast({ type: 'warning', message: 'No test cases to save' });
       return;
     }
-    try {
-      const text = await file.text();
-      const data = JSON.parse(text);
-      const list = Array.isArray(data.testCases) ? data.testCases : (Array.isArray(data) ? data : []);
-      if (list.length === 0) {
-        addToast({ type: 'info', message: 'No test cases in this JSON file' });
+    // Upload any dropped-but-not-yet-uploaded files first; compare by checksum so duplicates are not re-uploaded
+    const toUpload = (localDroppedFiles || []).filter((f) => f && f.file instanceof File);
+    if (toUpload.length > 0) {
+      await refreshFiles?.();
+      const currentFiles = useTestStore.getState().uploadedFiles || [];
+      const byChecksum = new Map(
+        currentFiles
+          .filter((f) => f.checksum)
+          .map((f) => [f.checksum, f])
+      );
+      const byName = new Map(currentFiles.map((f) => [f.name.toLowerCase(), f]));
+      const prepared = [];
+      for (const f of toUpload) {
+        const sig = await computeFileSignature(f.file);
+        const existingByChecksum = sig.checksum ? byChecksum.get(sig.checksum) : null;
+        const existingByName = byName.get((f.file.name || '').toLowerCase());
+        prepared.push({ file: f.file, sig, existing: existingByChecksum || existingByName });
+      }
+      const duplicates = prepared.filter((p) => p.existing);
+      if (duplicates.length > 0) {
+        setSaveLibraryUploadModal({ prepared, toSave });
         return;
       }
-      const normalized = list.map((tc) => ({
-        name: (tc.name || '').trim() || 'Unnamed',
-        vcdName: tc.vcdName || '',
-        binName: tc.binName || '',
-        linName: tc.linName || '',
-        tryCount: typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1,
-        extraColumns: tc.extraColumns && typeof tc.extraColumns === 'object' ? tc.extraColumns : {},
-        createdAt: tc.createdAt || new Date().toISOString(),
-      }));
-      if (loadedSetId) {
-        const set = (savedTestCaseSets || []).find((s) => s.id === loadedSetId);
-        if (set && isSetInUseByJobs(set)) {
-          addToast({ type: 'warning', message: 'Set นี้กำลังถูกใช้รันอยู่ ไม่สามารถโหลด JSON ทับได้' });
+      let uploaded = 0;
+      for (const p of prepared) {
+        const result = await addUploadedFile(p.file);
+        if (result) uploaded++;
+      }
+      setLocalDroppedFiles([]);
+      if (refreshFiles) await refreshFiles();
+      if (uploaded > 0) addToast({ type: 'success', message: `${uploaded} file(s) uploaded to library` });
+    }
+    if (toSave.length > 0) {
+      const existingSaved = useTestStore.getState().savedTestCases || [];
+      const existingByKey = new Map(
+        existingSaved.map((t) => [getFullTestCaseFileKeyFromMerged(t, mergeCommandsIntoExtraForSave(t)), t])
+      );
+      const skipped = [];
+      const created = [];
+      toSave.forEach((tc) => {
+        const { id, commands, ...rest } = tc;
+        const extraColumns = mergeCommandsIntoExtraForSave(tc);
+        const key = getFullTestCaseFileKeyFromMerged(rest, extraColumns);
+        if (existingByKey.get(key)) {
+          skipped.push(key);
           return;
         }
-        updateSavedTestCaseSet(loadedSetId, { items: normalized });
-        addToast({ type: 'success', message: `Loaded ${normalized.length} test case(s) into set` });
-      } else {
-        setTableClearedMode(false);
-        setSetupClearedPersisted(activeProfileId, false);
-        setPendingDraftTestCases(normalized);
-        addToast({ type: 'success', message: `Loaded ${normalized.length} test case(s) to table` });
+        const newId = addSavedTestCase({
+          ...rest,
+          extraColumns: Object.keys(extraColumns).length ? extraColumns : undefined,
+        });
+        created.push(newId);
+      });
+      setPendingDraftTestCases([]);
+      setTableClearedMode(true);
+      setSetupClearedPersisted(activeProfileId, true);
+      setSelectedTestCaseIds([]);
+      if (refreshFiles) await refreshFiles();
+      const total = useTestStore.getState().savedTestCases?.length || 0;
+      if (created.length > 0) {
+        addToast({ type: 'success', message: `Test cases saved to library (${total} case(s))` });
+        if (skipped.length > 0) {
+          addToast({ type: 'info', message: `${skipped.length} test case(s) already existed (same VCD/ERoM/ULP) — not duplicated` });
+        }
+      } else if (skipped.length > 0) {
+        addToast({ type: 'info', message: `All ${skipped.length} test case(s) already in library — no new entries` });
       }
-    } catch (err) {
-      addToast({ type: 'error', message: `Failed to load JSON: ${err.message}` });
-    } finally {
-      if (testCasesJsonInputRef.current) testCasesJsonInputRef.current.value = '';
+    } else {
+      if (refreshFiles) await refreshFiles();
+      const total = useTestStore.getState().savedTestCases?.length || 0;
+      addToast({ type: 'success', message: `Library updated (${total} test case(s))` });
     }
   };
 
-  const selectedFilesList = workingFilesList;
-  const filteredFiles = [...selectedFilesList]
-    .filter((f) => {
-      const k = getFileKind(f);
-      if (fileFilter !== 'all') {
-        if (fileFilter === 'vcd' && k !== 'vcd') return false;
-        if (fileFilter === 'bin' && k !== 'bin') return false;
-        if (fileFilter === 'lin' && k !== 'lin') return false;
-        if (fileFilter === 'mdi' && k !== 'mdi') return false;
+  const libraryPickerFiles = useMemo(() => {
+    const list = uploadedFiles || [];
+    const nameQ = libraryPickerNameQ.trim().toLowerCase();
+    const tagQ = libraryPickerTagQ.trim().toLowerCase();
+    const sizeQ = libraryPickerSizeQ.trim().toLowerCase();
+    const ownerQ = libraryPickerOwnerQ.trim().toLowerCase();
+    const timeQ = libraryPickerTimeQ.trim().toLowerCase();
+
+    return list.filter((f) => {
+      if (nameQ && !String(f.name || '').toLowerCase().includes(nameQ)) return false;
+      if (tagQ) {
+        const tags = splitTags((fileTags && fileTags[f.id]) || '');
+        if (!tags.some((t) => t.toLowerCase().includes(tagQ))) return false;
       }
-      if (fileSearch.trim()) return f.name.toLowerCase().includes(fileSearch.trim().toLowerCase());
+      if (sizeQ) {
+        const n = normalizeFileSizeBytes(f.size);
+        const sizeTxt = String(f.sizeFormatted || f.size || '').toLowerCase();
+        if (!sizeTxt.includes(sizeQ) && !String(n).includes(sizeQ)) return false;
+      }
+      if (ownerQ) {
+        const ownerLabel = f.ownerId === currentClientId ? 'me' : f.ownerId ? 'other' : '';
+        const ownerId = String(f.ownerId || '').toLowerCase();
+        if (!ownerLabel.includes(ownerQ) && !ownerId.includes(ownerQ)) return false;
+      }
+      if (timeQ) {
+        const lastModified = f.updatedAt || f.uploadDate || f.createdAt || null;
+        const timeStr = lastModified ? String(lastModified).replace('T', ' ').toLowerCase() : '';
+        if (!timeStr.includes(timeQ)) return false;
+      }
       return true;
-    })
-    .sort((a, b) => (fileSort === 'time' ? (b.uploadedAt || 0) - (a.uploadedAt || 0) : (a.name || '').localeCompare(b.name || '')));
+    });
+  }, [
+    uploadedFiles,
+    fileTags,
+    libraryPickerNameQ,
+    libraryPickerTagQ,
+    libraryPickerSizeQ,
+    libraryPickerOwnerQ,
+    libraryPickerTimeQ,
+    currentClientId,
+  ]);
+
   return (
     <div className="w-full max-w-6xl mx-auto space-y-6">
       <UploadChoiceModal
@@ -1188,9 +1452,488 @@ const TestCasesPage = () => {
         onConfirm={handleSaveLibraryUploadChoiceConfirm}
         onCancel={() => setSaveLibraryUploadModal(null)}
       />
+      {libraryPickerOpen && (
+        <>
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-black/50"
+          onClick={() => {
+            setLibraryPickerOpen(false);
+            setLibraryPickerTagOverflowFileId(null);
+            setLibraryPickerTcOverflowFileName(null);
+            setLibraryPickerSetsOverflowFileName(null);
+          }}
+          role="presentation"
+        >
+          <div
+            className="bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-600 w-full max-w-6xl max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="library-picker-title"
+          >
+            <div className="p-4 border-b border-slate-200 dark:border-slate-600 shrink-0">
+              <h3 id="library-picker-title" className="text-lg font-bold text-slate-800 dark:text-slate-100">
+                Select File from Library
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 mt-3">
+                <label className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Name</span>
+                  <input
+                    type="text"
+                    value={libraryPickerNameQ}
+                    onChange={(e) => setLibraryPickerNameQ(e.target.value)}
+                    placeholder="Search name…"
+                    className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100"
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Tag</span>
+                  <input
+                    type="text"
+                    value={libraryPickerTagQ}
+                    onChange={(e) => setLibraryPickerTagQ(e.target.value)}
+                    placeholder="Search tag…"
+                    className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100"
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Size</span>
+                  <input
+                    type="text"
+                    value={libraryPickerSizeQ}
+                    onChange={(e) => setLibraryPickerSizeQ(e.target.value)}
+                    placeholder="e.g. 154, kb…"
+                    className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100"
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Owner</span>
+                  <input
+                    type="text"
+                    value={libraryPickerOwnerQ}
+                    onChange={(e) => setLibraryPickerOwnerQ(e.target.value)}
+                    placeholder="me, other, id…"
+                    className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100"
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Time</span>
+                  <input
+                    type="text"
+                    value={libraryPickerTimeQ}
+                    onChange={(e) => setLibraryPickerTimeQ(e.target.value)}
+                    placeholder="2026-03-19…"
+                    className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100"
+                  />
+                </label>
+              </div>
+              <div className="flex flex-wrap items-center gap-3 mt-3">
+                <button
+                  type="button"
+                  onClick={() => setLibraryPickerSelectedIds(libraryPickerFiles.map((f) => f.id))}
+                  className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  Select all shown
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLibraryPickerSelectedIds([])}
+                  className="text-xs font-semibold text-slate-500 hover:underline"
+                >
+                  Clear selection
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLibraryPickerNameQ('');
+                    setLibraryPickerTagQ('');
+                    setLibraryPickerSizeQ('');
+                    setLibraryPickerOwnerQ('');
+                    setLibraryPickerTimeQ('');
+                  }}
+                  className="text-xs font-semibold text-slate-500 hover:underline"
+                >
+                  Clear filters
+                </button>
+              </div>
+            </div>
+            <div
+              className="overflow-auto flex-1 min-h-[140px] border-t border-slate-100 dark:border-slate-700"
+              title="Click and drag across rows to select multiple files"
+            >
+              {libraryPickerFiles.length === 0 ? (
+                <p className="text-sm text-slate-500 p-6 text-center">No files match the current filters</p>
+              ) : (
+                <table className="w-full text-left text-xs border-collapse select-none">
+                  <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-600">
+                    <tr className="text-slate-600 dark:text-slate-300">
+                      <th className="w-10 px-2 py-2 font-semibold">
+                        <span className="sr-only">Select</span>
+                      </th>
+                      <th className="px-2 py-2 font-semibold min-w-[140px]">Name</th>
+                      <th className="px-2 py-2 font-semibold min-w-[120px]">Tags</th>
+                      <th className="px-2 py-2 font-semibold min-w-[100px]">Used by TC</th>
+                      <th
+                        className="px-2 py-2 font-semibold min-w-[120px]"
+                        title="Saved sets that reference this file (color follows job status when available)"
+                      >
+                        Sets
+                      </th>
+                      <th className="px-2 py-2 font-semibold w-16">Owner</th>
+                      <th className="px-2 py-2 font-semibold w-10 text-center" title="Visibility">
+                        Vis
+                      </th>
+                      <th className="px-2 py-2 font-semibold min-w-[120px]">Modified</th>
+                      <th className="px-2 py-2 font-semibold w-20 text-right">Size</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                    {libraryPickerFiles.map((f) => {
+                      const tagVal = (fileTags && fileTags[f.id]) || '';
+                      const tags = splitTags(tagVal);
+                      const displayName = (fileDisplayNames && fileDisplayNames[f.id]) || (String(f.name || '').split('/').pop() || f.name);
+                      const usedByTcs = getTestCasesUsingFile(f.name, savedTestCases, savedTestCaseSets);
+                      const setNames = getSetNamesUsingFile(f.name, savedTestCaseSets);
+                      const lastModified = f.updatedAt || f.uploadDate || f.createdAt || null;
+                      const ownerShort = f.ownerId === currentClientId ? 'Me' : f.ownerId ? 'Other' : '—';
+                      return (
+                        <tr
+                          key={f.id}
+                          className="hover:bg-slate-50 dark:hover:bg-slate-700/40 text-slate-800 dark:text-slate-100 cursor-default"
+                          onMouseDown={(e) => {
+                            if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return;
+                            if (e.button !== 0) return;
+                            e.preventDefault();
+                            libraryPickerDragSelectRef.current = true;
+                            setLibraryPickerSelectedIds((prev) => (prev.includes(f.id) ? prev : [...prev, f.id]));
+                          }}
+                          onMouseEnter={() => {
+                            if (!libraryPickerDragSelectRef.current) return;
+                            setLibraryPickerSelectedIds((prev) => (prev.includes(f.id) ? prev : [...prev, f.id]));
+                          }}
+                        >
+                          <td className="px-2 py-1.5 align-top">
+                            <input
+                              type="checkbox"
+                              checked={libraryPickerSelectedIds.includes(f.id)}
+                              onChange={() => {
+                                setLibraryPickerSelectedIds((prev) =>
+                                  prev.includes(f.id) ? prev.filter((id) => id !== f.id) : [...prev, f.id]
+                                );
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-4 h-4 rounded border-slate-300 text-blue-600"
+                              aria-label={`Select ${f.name}`}
+                            />
+                          </td>
+                          <td className="px-2 py-1.5 align-top">
+                            <span className="font-medium break-all" title={f.name}>
+                              {displayName}
+                            </span>
+                            {displayName !== f.name && (
+                              <div className="text-[10px] text-slate-400 truncate" title={f.name}>
+                                {String(f.name || '').split('/').pop() || f.name}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 align-top">
+                            <div className="flex flex-wrap items-center gap-0.5">
+                              {tags.length === 0 ? (
+                                <span className="text-slate-400">—</span>
+                              ) : (
+                                <>
+                                  {tags.slice(0, 3).map((t, ti) => (
+                                    <span
+                                      key={`${f.id}-t-${ti}`}
+                                      className="px-1 py-0.5 rounded-full text-[10px] bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700"
+                                      title={t}
+                                    >
+                                      {t}
+                                    </span>
+                                  ))}
+                                  {tags.length > 3 && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setLibraryPickerTcOverflowFileName(null);
+                                        setLibraryPickerTagOverflowFileId(f.id);
+                                        setLibraryPickerSetsOverflowFileName(null);
+                                      }}
+                                      className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
+                                      title="Show all tags"
+                                    >
+                                      …
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-2 py-1.5 align-top">
+                            <div className="flex flex-wrap items-center gap-0.5">
+                              {usedByTcs.length === 0 ? (
+                                <span className="text-slate-400">—</span>
+                              ) : (
+                                <>
+                                  {usedByTcs.slice(0, 3).map((u, idx) => (
+                                    <span
+                                      key={`${f.id}-tc-${idx}-${u.name}-${u.set || ''}`}
+                                      className="px-1 py-0.5 rounded-full text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700"
+                                      title={u.set ? `${u.name} (${u.set})` : u.name}
+                                    >
+                                      {u.name}
+                                    </span>
+                                  ))}
+                                  {usedByTcs.length > 3 && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setLibraryPickerTagOverflowFileId(null);
+                                        setLibraryPickerTcOverflowFileName(f.name);
+                                        setLibraryPickerSetsOverflowFileName(null);
+                                      }}
+                                      className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
+                                      title={usedByTcs.map((u) => (u.set ? `${u.name} (${u.set})` : u.name)).join('\n')}
+                                    >
+                                      …
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-2 py-1.5 align-top">
+                            <div className="flex flex-wrap items-center gap-0.5">
+                              {setNames.length === 0 ? (
+                                <span className="text-slate-400">—</span>
+                              ) : (
+                                <>
+                                  {setNames.slice(0, 3).map((sn) => {
+                                    const st = setStatusByName.get(sn) ?? null;
+                                    return (
+                                      <span
+                                        key={`${f.id}-setchip-${sn}`}
+                                        className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium border max-w-[140px] truncate ${getSetJobStatusPillClass(st)}`}
+                                        title={st ? `${sn} — job: ${st}` : `${sn} — no active job`}
+                                      >
+                                        {sn}
+                                      </span>
+                                    );
+                                  })}
+                                  {setNames.length > 3 && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setLibraryPickerTagOverflowFileId(null);
+                                        setLibraryPickerTcOverflowFileName(null);
+                                        setLibraryPickerSetsOverflowFileName(f.name);
+                                      }}
+                                      className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
+                                      title={`All sets: ${setNames.join(', ')}`}
+                                    >
+                                      …
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-2 py-1.5 align-top text-slate-600 dark:text-slate-300" title={f.ownerId ? String(f.ownerId) : ''}>
+                            {ownerShort}
+                          </td>
+                          <td className="px-2 py-1.5 align-top text-center text-slate-400" title={f.visibility || 'public'}>
+                            {f.visibility === 'private' ? <Lock size={14} className="inline" /> : f.visibility === 'team' ? <Users size={14} className="inline" /> : <Globe size={14} className="inline" />}
+                          </td>
+                          <td className="px-2 py-1.5 align-top whitespace-nowrap text-slate-500 dark:text-slate-400" title={lastModified ? String(lastModified) : ''}>
+                            {lastModified ? String(lastModified).replace('T', ' ').slice(0, 16) : '—'}
+                          </td>
+                          <td className="px-2 py-1.5 align-top text-right text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                            {f.sizeFormatted ?? f.size ?? '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="p-4 border-t border-slate-200 dark:border-slate-600 flex flex-wrap justify-end gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setLibraryPickerOpen(false);
+                  setLibraryPickerTagOverflowFileId(null);
+                  setLibraryPickerTcOverflowFileName(null);
+                }}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (libraryPickerSelectedIds.length === 0) {
+                    addToast({ type: 'info', message: 'Select at least 1 file' });
+                    return;
+                  }
+                  runLibraryGroupingFromFileIds(libraryPickerSelectedIds);
+                  setLibraryPickerOpen(false);
+                  setLibraryPickerTagOverflowFileId(null);
+                  setLibraryPickerTcOverflowFileName(null);
+                  setLibraryPickerNameQ('');
+                  setLibraryPickerTagQ('');
+                  setLibraryPickerSizeQ('');
+                  setLibraryPickerOwnerQ('');
+                  setLibraryPickerTimeQ('');
+                }}
+                className="px-4 py-2 rounded-lg text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700"
+              >
+                Add and pair automatically
+              </button>
+            </div>
+          </div>
+        </div>
+      {libraryPickerTagOverflowFileId && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setLibraryPickerTagOverflowFileId(null)}
+            role="presentation"
+          />
+          <div className="relative w-[min(520px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl">
+            <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+              <div className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">Tags</div>
+              <button
+                type="button"
+                onClick={() => setLibraryPickerTagOverflowFileId(null)}
+                className="ml-auto p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-5 max-h-[min(60vh,320px)] overflow-y-auto">
+              {(() => {
+                const raw = (fileTags && fileTags[libraryPickerTagOverflowFileId]) || '';
+                const allTags = splitTags(raw);
+                return allTags.length === 0 ? (
+                  <div className="text-sm text-slate-500 dark:text-slate-400">No tags</div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {allTags.map((t, i) => (
+                      <span
+                        key={`browse-alltag-${libraryPickerTagOverflowFileId}-${i}-${t}`}
+                        className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700"
+                      >
+                        <span className="max-w-[360px] truncate" title={t}>{t}</span>
+                      </span>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+      {libraryPickerTcOverflowFileName && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setLibraryPickerTcOverflowFileName(null)}
+            role="presentation"
+          />
+          <div className="relative w-[min(520px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl">
+            <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+              <div className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">Used by test cases</div>
+              <button
+                type="button"
+                onClick={() => setLibraryPickerTcOverflowFileName(null)}
+                className="ml-auto p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-5 max-h-[min(60vh,360px)] overflow-y-auto">
+              {(() => {
+                const list = getTestCasesUsingFile(libraryPickerTcOverflowFileName, savedTestCases, savedTestCaseSets);
+                return list.length === 0 ? (
+                  <div className="text-sm text-slate-500 dark:text-slate-400">—</div>
+                ) : (
+                  <ul className="space-y-2 text-sm text-slate-700 dark:text-slate-200">
+                    {list.map((u, idx) => (
+                      <li key={`browse-tc-${idx}-${u.name}-${u.set || ''}`} className="flex flex-col gap-0.5 border-b border-slate-100 dark:border-slate-700 pb-2 last:border-0 last:pb-0">
+                        <span className="font-medium text-emerald-700 dark:text-emerald-300">{u.name}</span>
+                        {u.set && (
+                          <span className="text-xs text-slate-500 dark:text-slate-400">
+                            {String(u.set).startsWith('Current') ? u.set : `Set: ${u.set}`}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+      {libraryPickerSetsOverflowFileName && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setLibraryPickerSetsOverflowFileName(null)}
+            role="presentation"
+          />
+          <div className="relative w-[min(520px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl">
+            <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+              <div className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">Sets using this file</div>
+              <button
+                type="button"
+                onClick={() => setLibraryPickerSetsOverflowFileName(null)}
+                className="ml-auto p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-5 max-h-[min(60vh,360px)] overflow-y-auto">
+              {(() => {
+                const names = getSetNamesUsingFile(libraryPickerSetsOverflowFileName, savedTestCaseSets);
+                return names.length === 0 ? (
+                  <div className="text-sm text-slate-500 dark:text-slate-400">—</div>
+                ) : (
+                  <ul className="flex flex-wrap gap-2">
+                    {names.map((sn) => {
+                      const st = setStatusByName.get(sn) ?? null;
+                      return (
+                        <li
+                          key={`browse-set-all-${libraryPickerSetsOverflowFileName}-${sn}`}
+                          className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${getSetJobStatusPillClass(st)}`}
+                          title={st ? `Job status: ${st}` : 'No active job for this set name'}
+                        >
+                          {sn}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+      </>
+      )}
       <div>
-        <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Test Cases</h1>
-        <p className="text-slate-500 dark:text-slate-400 mt-1 text-sm">Create and Store Test cases </p>
+        <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Create Test Cases</h1>
+        <p className="text-slate-500 dark:text-slate-400 mt-1 text-sm max-w-2xl">
+        </p>
       </div>
 
       {isViewingShared && (
@@ -1218,120 +1961,49 @@ const TestCasesPage = () => {
         </div>
       )}
 
-      {/* File Library (เทียบเท่า Setup) — โหลด Set จะเลือกไฟล์ของ Set ใน Library ด้วย */}
-      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
-        {loadedSetId && (() => {
-          const loadedSet = displayedSavedTestCaseSets?.find((s) => s.id === loadedSetId);
-          const namesArr = loadedSet?.fileLibrarySnapshot?.length
-            ? loadedSet.fileLibrarySnapshot.map((s) => s.name)
-            : [...(loadedSet?.items || []).reduce((acc, t) => { if (t.vcdName) acc.add(t.vcdName); if (t.binName) acc.add(t.binName); if (t.linName) acc.add(t.linName); return acc; }, new Set())];
-          const inLibrary = namesArr.filter((n) => uploadedFiles.some((f) => f.name === n)).length;
-          const total = namesArr.length;
-          return total > 0 ? (
-            <div className="px-3 py-2 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-100 dark:border-blue-800 text-xs text-blue-800 dark:text-blue-200">
-              Set &quot;{loadedSet?.name}&quot;: Files in Library {inLibrary}/{total}
-              {inLibrary < total && <span className="ml-1"> — Upload missing files to run this set</span>}
-            </div>
-          ) : null;
-        })()}
-        <div className="p-3 sm:p-4 bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-600 flex flex-wrap justify-between items-center gap-2">
-          <div className="flex items-center gap-3">
-            <span className="text-sm font-bold text-slate-600 dark:text-slate-400"> ({workingCount}) </span>
+      {loadedSetId && (() => {
+        const loadedSet = displayedSavedTestCaseSets?.find((s) => s.id === loadedSetId);
+        const namesArr = loadedSet?.fileLibrarySnapshot?.length
+          ? loadedSet.fileLibrarySnapshot.map((s) => s.name)
+          : [...(loadedSet?.items || []).reduce((acc, t) => { if (t.vcdName) acc.add(t.vcdName); if (t.binName) acc.add(t.binName); if (t.linName) acc.add(t.linName); return acc; }, new Set())];
+        const inLibrary = namesArr.filter((n) => uploadedFiles.some((f) => f.name === n)).length;
+        const total = namesArr.length;
+        return total > 0 ? (
+          <div className="mb-3 rounded-xl border border-blue-200 dark:border-blue-800 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 text-xs text-blue-800 dark:text-blue-200">
+            Set &quot;{loadedSet?.name}&quot;: Files in Library {inLibrary}/{total}
+            {inLibrary < total && <span className="ml-1"> — Upload missing files in Library to run this set</span>}
           </div>
-          <div className="flex items-center gap-2">
-            {workingCount > 0 && <button onClick={handleClearAll} className="px-3 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-xs font-bold hover:bg-slate-200">Un Select All</button>}
-            {workingCount > 0 && !isViewingShared && <button onClick={handleDeleteSelected} disabled={isDeletingFiles} className="px-3 py-2 bg-red-50 text-red-600 rounded-lg text-xs font-bold hover:bg-red-100 disabled:opacity-60">Delete from Library</button>}
-            {(displayedSavedTestCases.length > 0 || workingCount > 0) && !isViewingShared && <button onClick={handleStartFresh} className="px-3 py-2 bg-amber-50 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-100">Start fresh</button>}
-          </div>
-        </div>
-        <input ref={fileInputRef} type="file" multiple accept=".vcd,.bin,.hex,.elf,.erom,.ulp,.txt" onChange={handleFileInputChange} className="hidden" />
-        <div className="px-4 py-3 flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900">
-          {['all', 'vcd', 'bin', 'lin', 'mdi'].map((k) => (
-            <button key={k} onClick={() => setFileFilter(k)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${fileFilter === k ? 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/30 dark:border-blue-700' : 'border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:border-blue-200'}`}>{k === 'all' ? 'All' : k === 'mdi' ? 'MDI' : k.toUpperCase()}</button>
-          ))}
-          {workingCount > 0 && !isViewingShared && (
-            <button onClick={handleDeleteSelected} disabled={isDeletingFiles || selectedFileIdsForDelete.length === 0} className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:cursor-not-allowed shrink-0" title={selectedFileIdsForDelete.length > 0 ? `ลบ ${selectedFileIdsForDelete.length} ไฟล์ที่เลือกจาก Library` : 'เลือกไฟล์ที่ต้องการลบ (ติ๊ก checkbox)'}>
-              <Trash2 size={18} strokeWidth={2} />
-            </button>
-          )}
-          <button onClick={handleBrowseClick} className="ml-auto h-8 w-8 inline-flex items-center justify-center rounded-lg bg-blue-600 text-white hover:bg-blue-700" title="Upload files or drop folder / Ctrl+V to paste"><Plus size={16} /></button>
-          <input type="text" value={fileSearch} onChange={(e) => setFileSearch(e.target.value)} placeholder="Search..." className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800" />
-          <select value={fileSort} onChange={(e) => setFileSort(e.target.value)} className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200"><option value="time">Time</option><option value="name">Name</option></select>
-        </div>
-        <div
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onPaste={handlePaste}
-          tabIndex={0}
-          className={`divide-y divide-slate-100 dark:divide-slate-700 overflow-y-auto transition-[max-height] ${fileListExpanded ? 'max-h-[500px]' : 'max-h-[220px]'} ${isDragging ? 'ring-2 ring-blue-400 bg-blue-50/50 dark:bg-blue-900/20' : ''}`}
-        >
-          {loading?.files ? (
-            <div className="p-8 text-center text-slate-400">Loading...</div>
-          ) : errors?.files ? (
-            <div className="p-8 text-center text-red-500">{errors.files}</div>
-          ) : filteredFiles.length === 0 ? (
-            <div className="p-6 text-center">
-              {loadedSetId && (() => {
-                const loadedSet = savedTestCaseSets?.find((s) => s.id === loadedSetId);
-                const namesArr = loadedSet?.fileLibrarySnapshot?.length
-                  ? loadedSet.fileLibrarySnapshot.map((s) => s.name)
-                  : [...(loadedSet?.items || []).reduce((acc, t) => { if (t.vcdName) acc.add(t.vcdName); if (t.binName) acc.add(t.binName); if (t.linName) acc.add(t.linName); return acc; }, new Set())];
-                if (namesArr.length === 0) return null;
-                return (
-                  <>
-                    <p className="text-sm font-semibold text-amber-700 dark:text-amber-400 mb-2">Set &quot;{loadedSet?.name}&quot; uses {namesArr.length} file(s) — none in Library</p>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 mb-3"></p>
-                    <ul className="text-xs text-left max-w-md mx-auto space-y-1 text-slate-600 dark:text-slate-300">
-                      {namesArr.map((name) => (
-                        <li key={name} className="truncate">• {name}</li>
-                      ))}
-                    </ul>
-                  </>
-                );
-              })()}
-              <p className="text-slate-400 mt-2">No files</p>
-            </div>
-          ) : (
-            filteredFiles.map((f) => {
-              const isCheckedForDelete = selectedFileIdsForDelete.includes(f.id);
-              return (
-                <div key={f.id} className="flex items-center gap-2 px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                  <span className="flex-1 truncate text-sm text-slate-700 dark:text-slate-200">{f.name}</span>
-                  <label className="flex items-center gap-1.5 shrink-0 cursor-pointer" title="เลือกเพื่อลบจาก Library">
-                    <input
-                      type="checkbox"
-                      checked={isCheckedForDelete}
-                      onChange={() => setSelectedFileIdsForDelete((prev) => (prev.includes(f.id) ? prev.filter((id) => id !== f.id) : [...prev, f.id]))}
-                      className="w-4 h-4 rounded cursor-pointer"
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedFileIdsForDelete((prev) => prev.filter((id) => id !== f.id));
-                      if (String(f.id).startsWith('local-')) setLocalDroppedFiles((prev) => prev.filter((x) => x.id !== f.id));
-                      else setSelectedIds((prev) => prev.filter((id) => id !== f.id));
-                    }}
-                    className="p-1.5 rounded text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 shrink-0"
-                    title={String(f.id).startsWith('local-') ? 'นำออกจากรายการ (ยังไม่ได้บันทึกลง Library)' : 'นำออกจากรายการ'}
-                  >
-                    <Trash2 size={16} strokeWidth={2} />
-                  </button>
-                </div>
-              );
-            })
-          )}
-        </div>
-        <button onClick={() => setFileListExpanded((b) => !b)} className="w-full py-1 text-xs text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800">{fileListExpanded ? 'Collapse' : 'Expand'} file list</button>
-      </div>
+        ) : null;
+      })()}
 
       {/* Saved Test Cases table (Apply try, Duplicate, Move, Auto select, Save as Set) */}
       <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <h2 className="text-sm font-bold text-slate-700 dark:text-slate-300">Create Test Cases</h2>
+          
           <div className="flex flex-wrap items-center gap-2">
-            <button onClick={pairAll} disabled={vcdSelected.length === 0 || binSelected.length === 0} className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 ${vcdSelected.length === 0 || binSelected.length === 0 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`} title="Pair selected files and add to test cases"><Layers size={14} /> Pair All</button>
+            <button
+              type="button"
+              onClick={() => {
+                setLibraryPickerNameQ('');
+                setLibraryPickerTagQ('');
+                setLibraryPickerSizeQ('');
+                setLibraryPickerOwnerQ('');
+                setLibraryPickerTimeQ('');
+                setLibraryPickerSelectedIds([]);
+                setLibraryPickerTagOverflowFileId(null);
+                setLibraryPickerTcOverflowFileName(null);
+                setLibraryPickerOpen(true);
+              }}
+              disabled={isViewingShared || !(uploadedFiles?.length > 0)}
+              className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 ${
+                isViewingShared || !(uploadedFiles?.length > 0)
+                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                  : 'bg-slate-700 text-white hover:bg-slate-800 dark:bg-slate-600 dark:hover:bg-slate-500'
+              }`}
+              title="เลือกไฟล์จาก Library ในหน้านี้ แล้วจัดกลุ่มตาม TCxxxx อัตโนมัติ"
+            >
+              <FolderOpen size={14} /> From Library
+            </button>
             <button onClick={addOneTestCase} className="px-3 py-2 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-2"><Plus size={14} /> Add Test Case</button>
             <button onClick={clearAllTestCases} disabled={(savedTestCases.length === 0 && workingCount === 0) || isViewingShared} className={`px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 ${(savedTestCases.length === 0 && workingCount === 0) || isViewingShared ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-red-600 text-white hover:bg-red-700'}`}><X size={14} /> Clear</button>
             <div className="h-6 w-px bg-slate-300 dark:bg-slate-600 mx-1" />
@@ -1350,114 +2022,14 @@ const TestCasesPage = () => {
               className="hidden"
             />
             <button
-              onClick={saveTestCasesJson}
+              onClick={exportTestCasesCsv}
               disabled={displayedSavedTestCases.length === 0 || isViewingShared}
               className="px-3 py-2 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Export test cases to JSON"
+              title="Export test cases to CSV"
             >
-              <FileJson size={14} />
-              <span>Export JSON</span>
+              <FileUp size={14} />
+              <span>Export CSV</span>
             </button>
-            <button
-              onClick={() => testCasesJsonInputRef.current?.click()}
-              disabled={isViewingShared}
-              className="px-3 py-2 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Load test cases from JSON"
-            >
-              <FileJson size={14} />
-              <span>Load JSON</span>
-            </button>
-            <input
-              ref={testCasesJsonInputRef}
-              type="file"
-              accept=".json"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) loadTestCasesJson(f); }}
-              className="hidden"
-            />
-            <button
-              onClick={async () => {
-                const toSave = pendingDraftTestCases || [];
-                if (toSave.length === 0 && (savedTestCases?.length || 0) === 0) {
-                  addToast({ type: 'warning', message: 'No test cases to save' });
-                  return;
-                }
-                // Upload any dropped-but-not-yet-uploaded files first; compare by checksum so duplicates are not re-uploaded
-                const toUpload = (localDroppedFiles || []).filter((f) => f && f.file instanceof File);
-                if (toUpload.length > 0) {
-                  await refreshFiles?.();
-                  const currentFiles = useTestStore.getState().uploadedFiles || [];
-                  const byChecksum = new Map(
-                    currentFiles
-                      .filter((f) => f.checksum)
-                      .map((f) => [f.checksum, f])
-                  );
-                  const byName = new Map(currentFiles.map((f) => [f.name.toLowerCase(), f]));
-                  const prepared = [];
-                  for (const f of toUpload) {
-                    const sig = await computeFileSignature(f.file);
-                    const existingByChecksum = sig.checksum ? byChecksum.get(sig.checksum) : null;
-                    const existingByName = byName.get((f.file.name || '').toLowerCase());
-                    prepared.push({ file: f.file, sig, existing: existingByChecksum || existingByName });
-                  }
-                  const duplicates = prepared.filter((p) => p.existing);
-                  if (duplicates.length > 0) {
-                    setSaveLibraryUploadModal({ prepared, toSave });
-                    return;
-                  }
-                  let uploaded = 0;
-                  for (const p of prepared) {
-                    const result = await addUploadedFile(p.file);
-                    if (result) uploaded++;
-                  }
-                  setLocalDroppedFiles([]);
-                  if (refreshFiles) await refreshFiles();
-                  if (uploaded > 0) addToast({ type: 'success', message: `${uploaded} file(s) uploaded to library` });
-                }
-                if (toSave.length > 0) {
-                  const existingSaved = useTestStore.getState().savedTestCases || [];
-                  const existingByKey = new Map(
-                    existingSaved.map((t) => [getFullTestCaseFileKeyFromMerged(t, mergeCommandsIntoExtraForSave(t)), t])
-                  );
-                  const skipped = [];
-                  const created = [];
-                  toSave.forEach((tc) => {
-                    const { id, commands, ...rest } = tc;
-                    const extraColumns = mergeCommandsIntoExtraForSave(tc);
-                    const key = getFullTestCaseFileKeyFromMerged(rest, extraColumns);
-                    if (existingByKey.get(key)) {
-                      skipped.push(key);
-                      return;
-                    }
-                    const newId = addSavedTestCase({
-                      ...rest,
-                      extraColumns: Object.keys(extraColumns).length ? extraColumns : undefined,
-                    });
-                    created.push(newId);
-                  });
-                  setPendingDraftTestCases([]);
-                  if (refreshFiles) await refreshFiles();
-                  const total = useTestStore.getState().savedTestCases?.length || 0;
-                  if (created.length > 0) {
-                    addToast({ type: 'success', message: `Test cases saved to library (${total} case(s))` });
-                    if (skipped.length > 0) {
-                      addToast({ type: 'info', message: `${skipped.length} test case(s) already existed (same VCD/ERoM/ULP) — not duplicated` });
-                    }
-                  } else if (skipped.length > 0) {
-                    addToast({ type: 'info', message: `All ${skipped.length} test case(s) already in library — no new entries` });
-                  }
-                } else {
-                  if (refreshFiles) await refreshFiles();
-                  const total = useTestStore.getState().savedTestCases?.length || 0;
-                  addToast({ type: 'success', message: `Library updated (${total} test case(s))` });
-                }
-              }}
-              className="px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5"
-              title="Save test cases. Dropped files will be uploaded to File in Library first."
-            >
-              <Save size={14} />
-              <span>Save to library</span>
-            </button>
-            <span className="text-[11px] text-slate-500 dark:text-slate-400" title="Dropped files are uploaded when you click Save to library. Or upload in the File Library area above first."></span>
           </div>
         </div>
         {loadedSetId && displayedSavedTestCaseSets?.find((s) => s.id === loadedSetId) && !isViewingShared && (
@@ -1685,7 +2257,7 @@ const TestCasesPage = () => {
                       .filter((col) => displayedSavedTestCases.some((t) => (getVal(t, col) ?? '').toString().trim() !== ''));
                     return extraCols.length;
                   })()} className="py-8 text-center text-slate-400">
-                    No test cases — use Pair All or Add Test Case
+                    No test cases — use From Library or Add Test Case
                   </td>
                 </tr>
               ) : (
@@ -2011,7 +2583,7 @@ const TestCasesPage = () => {
                       </div>
                       <button
                         type="button"
-                        onClick={() => moveSavedTestCaseUp(tc.id)}
+                        onClick={() => moveDisplayedTestCaseUp(tc.id)}
                         disabled={idx === 0}
                         className="p-1 text-slate-500 hover:text-slate-700 disabled:opacity-30"
                         title="Move up"
@@ -2020,7 +2592,7 @@ const TestCasesPage = () => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => moveSavedTestCaseDown(tc.id)}
+                        onClick={() => moveDisplayedTestCaseDown(tc.id)}
                         disabled={idx === displayedSavedTestCases.length - 1 || isViewingShared}
                         className="p-1 text-slate-500 hover:text-slate-700 disabled:opacity-30"
                         title="Move down"
@@ -2034,7 +2606,7 @@ const TestCasesPage = () => {
                             addToast({ type: 'warning', message: 'This test case uses files in a running or pending set. Wait for the set to finish.' });
                             return;
                           }
-                          removeDisplayedTestCase(tc.id);
+                          removeDisplayedTestCase(tc.id, idx);
                           addToast({ type: 'success', message: 'Removed' });
                         }}
                         disabled={isTestCaseInUseByBatch(tc)}
@@ -2055,7 +2627,7 @@ const TestCasesPage = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {displayedSavedTestCases.length === 0 ? (
               <div className="col-span-2 py-8 text-center text-slate-400 text-sm border border-slate-200 dark:border-slate-600 rounded-lg">
-                No test cases — use Pair All or Add Test Case
+                No test cases — use From Library or Add Test Case
               </div>
             ) : (
               displayedSavedTestCases.map((tc, idx) => (
@@ -2137,7 +2709,7 @@ const TestCasesPage = () => {
                             addToast({ type: 'warning', message: 'This test case uses files in a running or pending set. Wait for the set to finish.' });
                             return;
                           }
-                          removeDisplayedTestCase(tc.id);
+                          removeDisplayedTestCase(tc.id, idx);
                           addToast({ type: 'success', message: 'Removed' });
                         }}
                         disabled={isTestCaseInUseByBatch(tc)}
@@ -2398,170 +2970,17 @@ const TestCasesPage = () => {
           </div>
         )}
 
-        {/* Saved Test Case Sets (collections) */}
-        {displayedSavedTestCaseSets && displayedSavedTestCaseSets.length > 0 && (
-          <div className="mt-4 border-t border-slate-200 dark:border-slate-700 pt-3">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wide">
-                Saved 
-              </h3>
-              <span className="text-[11px] text-slate-400 dark:text-slate-500">
-                {displayedSavedTestCaseSets.length} set(s)
-              </span>
-            </div>
-            <div className="space-y-1 max-h-52 overflow-y-auto">
-              {displayedSavedTestCaseSets.map((set, index) => (
-                <div
-                  key={set.id}
-                  className="flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700"
-                >
-                  <div className="flex flex-col gap-0 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => moveSavedTestCaseSetUp(set.id)}
-                      disabled={index === 0 || isViewingShared}
-                      className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30"
-                      title="Move up"
-                    >
-                      <ArrowUp size={12} className="text-slate-500" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => moveSavedTestCaseSetDown(set.id)}
-                      disabled={index === displayedSavedTestCaseSets.length - 1 || isViewingShared}
-                      className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-30"
-                      title="Move down"
-                    >
-                      <ArrowDown size={12} className="text-slate-500" />
-                    </button>
-                  </div>
-                  <span className="text-[10px] text-slate-400 w-4 shrink-0">#{index + 1}</span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-slate-700 dark:text-slate-200 truncate">
-                        {set.name}
-                      </span>
-                      {isSetInUseByJobs(set) && (
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[9px] font-semibold">
-                          In run
-                        </span>
-                      )}
-                      <span className="text-[10px] text-slate-400 dark:text-slate-500">
-                        {Array.isArray(set.items) ? `${set.items.length} cases` : ''}
-                      </span>
-                    </div>
-                    {set.createdAt && (
-                      <div className="text-[10px] text-slate-400 dark:text-slate-500">
-                        {new Date(set.createdAt).toLocaleString()}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        try {
-                          await api.restoreSetFilesToLibrary(set.id);
-                        } catch (_) {
-                          // Set อาจยังไม่มีไฟล์เก็บใน backend (บันทึกก่อน backend) — ไม่เป็นไร
-                        }
-                        await refreshFiles();
-                        setSetupClearedPersisted(activeProfileId, false);
-                        setTableClearedMode(false);
-                        setPendingDraftTestCases([]);
-                        loadSetForEditing(set.id);
-                        setSelectedTestCaseIds([]);
-                        const fileNames = set.fileLibrarySnapshot?.length
-                          ? set.fileLibrarySnapshot.map((s) => s.name)
-                          : (() => {
-                              const n = new Set();
-                              (set.items || []).forEach((t) => {
-                                if (t.vcdName) n.add(t.vcdName);
-                                if (t.binName) n.add(t.binName);
-                                if (t.linName) n.add(t.linName);
-                                const ec = t.extraColumns || {};
-                                Object.values(ec).forEach((v) => {
-                                  if ((v ?? '').toString().trim()) n.add(String(v).trim());
-                                });
-                              });
-                              return [...n];
-                            })();
-                        if (fileNames.length) {
-                          const files = useTestStore.getState().uploadedFiles || [];
-                          const ids = files.filter((f) => fileNames.includes(f.name)).map((f) => f.id);
-                          setSelectedIds(ids);
-                        }
-                        addToast({
-                          type: 'success',
-                          message: `Loaded set "${set.name}" — files restored to Library, table and selection updated`,
-                        });
-                      }}
-                      disabled={isViewingShared}
-                      className={`px-2 py-1 rounded font-semibold ${
-                        isViewingShared ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'
-                      }`}
-                    >
-                      Load
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSetupClearedPersisted(activeProfileId, false);
-                        setTableClearedMode(false);
-                        appendSavedTestCaseSet(set.id);
-                        setSelectedTestCaseIds([]);
-                        addToast({ type: 'success', message: `Appended set "${set.name}" to table` });
-                      }}
-                      disabled={isViewingShared}
-                      className={`px-2 py-1 rounded font-semibold ${
-                        isViewingShared ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-slate-600 hover:bg-slate-700 text-white'
-                      }`}
-                      title="Append this set to table (without replacing)"
-                    >
-                      +Append
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        duplicateSavedTestCaseSet(set.id);
-                        addToast({ type: 'success', message: `Duplicated set "${set.name}"` });
-                      }}
-                      disabled={isViewingShared}
-                      className={`p-1 rounded ${
-                        isViewingShared ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300'
-                      }`}
-                      title="Clone set"
-                    >
-                      <Copy size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (!window.confirm(`Delete set "${set.name}"? This will remove it from Saved sets only (test cases and files in Library will stay).`)) return;
-                        try {
-                          await api.deleteSet(set.id);
-                        } catch (e) {
-                          if (!String(e?.message || '').includes('404')) {
-                            addToast({ type: 'warning', message: `Backend: ${e?.message || 'Delete failed'}` });
-                          }
-                        }
-                        removeSavedTestCaseSet(set.id);
-                        addToast({ type: 'success', message: `Deleted set "${set.name}"` });
-                      }}
-                      disabled={isViewingShared}
-                      className={`p-1 rounded ${
-                        isViewingShared ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-600/10 text-red-600'
-                      }`}
-                      title="Delete set from Saved (ไม่ลบ test cases หรือไฟล์ใน Library)"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-700 flex justify-end">
+          <button
+            onClick={handleSaveToLibrary}
+            className="px-3 py-2 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5"
+            title="Save test cases. Pending local files are uploaded to Library when you save."
+          >
+            <Save size={14} />
+            <span>Save to library</span>
+          </button>
+        </div>
+
       </div>
     </div>
   );

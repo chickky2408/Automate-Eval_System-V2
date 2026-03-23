@@ -21,6 +21,20 @@ const getSetNamesUsingFile = (fileName, savedTestCaseSets) => {
   return names;
 };
 
+/** Pill classes for a saved set name, from job status map (running / pending / completed) or idle */
+const getSetJobStatusPillClass = (status) => {
+  if (status === 'running') {
+    return 'bg-blue-50 text-blue-800 border-blue-200 dark:bg-blue-900/35 dark:text-blue-200 dark:border-blue-600';
+  }
+  if (status === 'pending') {
+    return 'bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-700';
+  }
+  if (status === 'completed') {
+    return 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-900/25 dark:text-emerald-300 dark:border-emerald-700';
+  }
+  return 'bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-800/80 dark:text-slate-400 dark:border-slate-600';
+};
+
 /** Returns list of { name, set } for each test case that uses this file (VCD / ERoM / ULP / MDI). */
 const getTestCasesUsingFile = (fileName, savedTestCases, savedTestCaseSets) => {
   if (!fileName) return [];
@@ -268,7 +282,13 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const [fileOwnerSearch, setFileOwnerSearch] = useState('');
   const [tagInputByFileId, setTagInputByFileId] = useState({});
   const [isTagEditorOpenByFileId, setIsTagEditorOpenByFileId] = useState({});
+  const [editingDisplayNameFileId, setEditingDisplayNameFileId] = useState(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const skipRenameCommitRef = useRef(false);
   const [showAllTagsForFileId, setShowAllTagsForFileId] = useState(null);
+  /** Ellipsis on TC chips — was wrongly opening Tags modal; use file name to list test cases */
+  const [showAllUsedByTcForFileName, setShowAllUsedByTcForFileName] = useState(null);
+  const [showAllSetsForFileName, setShowAllSetsForFileName] = useState(null);
   const [bulkTagInput, setBulkTagInput] = useState('');
   const [fileSort, setFileSort] = useState('time');
   const [fileViewMode, setFileViewMode] = useState('all'); // 'all' | 'bySet'
@@ -916,6 +936,99 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
         </div>
       )}
 
+      {showAllUsedByTcForFileName && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setShowAllUsedByTcForFileName(null)}
+            role="presentation"
+          />
+          <div className="relative w-[min(520px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl">
+            <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+              <div className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">Used by test cases</div>
+              <button
+                type="button"
+                onClick={() => setShowAllUsedByTcForFileName(null)}
+                className="ml-auto p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-5 max-h-[min(60vh,360px)] overflow-y-auto">
+              {(() => {
+                const list = getTestCasesUsingFile(showAllUsedByTcForFileName, savedTestCases, savedTestCaseSets);
+                return list.length === 0 ? (
+                  <div className="text-sm text-slate-500 dark:text-slate-400">—</div>
+                ) : (
+                  <ul className="space-y-2 text-sm text-slate-700 dark:text-slate-200">
+                    {list.map((u, idx) => (
+                      <li
+                        key={`lib-tc-all-${idx}-${u.name}-${u.set || ''}`}
+                        className="flex flex-col gap-0.5 border-b border-slate-100 dark:border-slate-700 pb-2 last:border-0 last:pb-0"
+                      >
+                        <span className="font-medium text-emerald-700 dark:text-emerald-300">{u.name}</span>
+                        {u.set && (
+                          <span className="text-xs text-slate-500 dark:text-slate-400">
+                            {String(u.set).startsWith('Current') ? u.set : `Set: ${u.set}`}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAllSetsForFileName && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setShowAllSetsForFileName(null)}
+            role="presentation"
+          />
+          <div className="relative w-[min(480px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl">
+            <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+              <div className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">Sets using this file</div>
+              <button
+                type="button"
+                onClick={() => setShowAllSetsForFileName(null)}
+                className="ml-auto p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-5 max-h-[min(60vh,360px)] overflow-y-auto">
+              {(() => {
+                const names = getSetNamesUsingFile(showAllSetsForFileName, savedTestCaseSets);
+                return names.length === 0 ? (
+                  <div className="text-sm text-slate-500 dark:text-slate-400">—</div>
+                ) : (
+                  <ul className="flex flex-wrap gap-2">
+                    {names.map((sn) => {
+                      const st = setStatusByName.get(sn) || null;
+                      return (
+                        <li
+                          key={`lib-set-all-${showAllSetsForFileName}-${sn}`}
+                          className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${getSetJobStatusPillClass(st)}`}
+                          title={st ? `Job status: ${st}` : 'No active job for this set name'}
+                        >
+                          {sn}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Library</h1>
         <div className="flex items-center gap-2">
@@ -1420,7 +1533,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                   onClick={handleDeleteSelected}
                   disabled={selectedSet.size === 0 || hasRunningOrPendingInSelection}
                   className="p-2 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40 disabled:pointer-events-none transition-colors"
-                  title={hasRunningOrPendingInSelection ? 'ไม่สามารถลบได้ — มี test case ที่กำลัง Running/Pending' : selectedSet.size > 0 ? `Delete ${selectedSet.size} selected` : 'Select test cases to delete'}
+                  title={hasRunningOrPendingInSelection ? 'Cannot delete — running/pending test cases' : selectedSet.size > 0 ? `Delete ${selectedSet.size} selected` : 'Select test cases to delete'}
                 >
                   <Trash2 size={18} strokeWidth={2} />
                 </button>
@@ -1959,7 +2072,10 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                       return;
                     }
                     setFileToTestCaseDraft(selectedLibraryFileIds);
-                    addToast({ type: 'success', message: `Sent ${selectedLibraryFileIds.length} file(s) to Test Cases (Create)` });
+                    addToast({
+                      type: 'success',
+                      message: `ส่ง ${selectedLibraryFileIds.length} ไฟล์ไป Create Test Cases — จะจัดกลุ่มตาม TCxxxx ในชื่อไฟล์และสร้างแถวให้อัตโนมัติ`,
+                    });
                     if (onNavigateToTestCases) onNavigateToTestCases();
                   }}
                   disabled={selectedLibraryFileIds.length === 0}
@@ -2017,182 +2133,326 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                 )}
                 {/* Removed "Delete All" action to avoid accidental destructive UX */}
               </div>
-              <div className="max-h-[500px] overflow-y-auto">
+              <div className="max-h-[500px] overflow-y-auto overflow-x-auto">
                 {loading?.files ? <div className="p-8 text-center text-slate-400">Loading...</div> : errors?.files ? <div className="p-8 text-center text-red-500">{errors.files}</div> : fileViewMode === 'all' ? (
-                  <div className="divide-y divide-slate-100 dark:divide-slate-700">
-                    {filteredFiles.length > 0 && (
-                      <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-700">
-                        <input type="checkbox" checked={selectableFileIds.length > 0 && selectableFileIds.every((id) => selectedFileSet.has(id))} onChange={(e) => { if (e.target.checked) setSelectedLibraryFileIds([...selectableFileIds]); else setSelectedLibraryFileIds([]); }} className="w-4 h-4 rounded cursor-pointer" title="Select all (excluding files in use by running/pending set)" />
-                        <span className="text-xs text-slate-500">Select all ({filteredFiles.length}){selectableFileIds.length < filteredFiles.length ? ` — ${filteredFiles.length - selectableFileIds.length} ล็อก (in use)` : ''}</span>
-                      </div>
-                    )}
-                    {filteredFiles.length === 0 ? (
-                      <div className="p-8 text-center text-slate-400 space-y-2">
-                        <p className="font-medium">No files in library</p>
-                        <p className="text-xs max-w-md mx-auto">Files appear here only after you <strong>upload</strong> them on the Test Cases page (drag & drop or click the upload area). Saving a test case only saves the test case definition (names of VCD/ERoM/ULP); it does not upload files. Upload the files first, then save the test case.</p>
-                      </div>
-                    ) : filteredFiles.map((f, index) => {
-                      const setNames = getSetNamesUsingFile(f.name, savedTestCaseSets);
-                      const tagVal = (fileTags && fileTags[f.id]) || '';
-                      const tags = splitTags(tagVal);
-                      const usedByTcs = getTestCasesUsingFile(f.name, savedTestCases, savedTestCaseSets);
-                      const isSelected = selectedFileSet.has(f.id);
-                      const isFocused = libraryFocusFileName && f.name === libraryFocusFileName;
-                      const isHighlighted = isSelected || isFocused;
-                      const usedByTcsTitle = usedByTcs.length > 0 ? usedByTcs.map((u) => `${u.name}${u.set ? ` (${u.set})` : ''}`).join('\n') : '';
-                      const inUseByBatch = fileNamesInUseByBatch.has(f.name);
-                      const displayName = (fileDisplayNames && fileDisplayNames[f.id]) || (String(f.name || '').split('/').pop() || f.name);
-                      const lastModified = f.updatedAt || f.uploadDate || f.createdAt || null;
-                      return (
-                        <div
-                          key={f.id}
-                          ref={isFocused ? focusedLibraryFileRef : null}
-                          className={`flex items-center gap-2 px-4 py-2 select-none ${inUseByBatch ? 'opacity-75 cursor-not-allowed bg-slate-50/50 dark:bg-slate-800/30' : 'cursor-pointer'} ${isHighlighted ? 'bg-blue-50 dark:bg-blue-900/20' : !inUseByBatch ? 'hover:bg-slate-50 dark:hover:bg-slate-800/50' : ''}`}
-                          onClick={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button') || e.target.closest('input[type=\"text\"]')) return; toggleFileSelect(f.id, index, e); }}
-                          onMouseDown={(e) => { if (e.target.closest('input[type="checkbox"]') || e.target.closest('button') || e.target.closest('input[type=\"text\"]')) return; if (e.button === 0) { isDragSelectingFileRef.current = true; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); } }}
-                          onMouseEnter={() => { if (!isDragSelectingFileRef.current) return; if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]); }}
-                        >
-                          <input type="checkbox" checked={isSelected} onChange={() => { toggleFileSelect(f.id, index, { shiftKey: false, ctrlKey: false, metaKey: false }); }} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded shrink-0 cursor-pointer" title={inUseByBatch ? 'ไฟล์กำลังถูกใช้โดย set (running/pending) — ลบไม่ได้ แต่ยังเลือกได้' : undefined} />
-                          <div className="flex-1 min-w-0 flex items-center gap-2">
-                            <span className="truncate text-sm text-slate-700 dark:text-slate-200" title={displayName}>
-                              {displayName}
-                            </span>
-                            {displayName !== f.name && (
-                              <span className="text-[10px] text-slate-400 dark:text-slate-500 truncate" title={f.name}>
-                                ({String(f.name || '').split('/').pop() || f.name})
-                              </span>
-                            )}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const current = displayName || '';
-                                const next = window.prompt('Rename file (display name only):', current);
-                                if (next == null) return;
-                                const trimmed = next.trim();
-                                setFileDisplayName?.(f.id, trimmed || '');
-                              }}
-                              className="ml-1 p-1 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
-                              title="Rename display name"
-                            >
-                              <Pencil size={12} />
-                            </button>
-                          </div>
-                          <span className="text-[11px] text-slate-500 dark:text-slate-400 shrink-0 max-w-[70px] truncate" title={f.ownerId ? `Owner: ${f.ownerId}` : '—'}>
-                            {f.ownerId === currentClientId ? 'Me' : (f.ownerId ? 'Other' : '—')}
-                          </span>
-                          <span className="shrink-0 text-slate-400 dark:text-slate-500" title={f.visibility || 'public'}>
-                            {f.visibility === 'private' ? <Lock size={14} /> : f.visibility === 'team' ? <Users size={14} /> : <Globe size={14} />}
-                          </span>
-                          <div className="flex items-center gap-1 w-[260px] shrink-0 min-w-0">
-                            <div className="flex items-center gap-1 min-w-0 overflow-hidden whitespace-nowrap">
-                              {tags.slice(0, 3).map((t, ti) => (
-                                <span
-                                  key={`${f.id}-tag-${ti}-${t}`}
-                                  className="px-1.5 py-0.5 rounded-full text-[10px] bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700"
-                                  title={t}
-                                >
-                                  {t}
-                                </span>
-                              ))}
-                              {tags.length > 3 && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setShowAllTagsForFileId(f.id);
-                                  }}
-                                  className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
-                                  title="Show all tags"
-                                >
-                                  …
-                                </button>
-                              )}
-                            </div>
-
-                            {isTagEditorOpenByFileId[f.id] ? (
+                  filteredFiles.length === 0 ? (
+                    <div className="p-8 text-center text-slate-400 space-y-2">
+                      <p className="font-medium">No files in library</p>
+                      <p className="text-xs max-w-md mx-auto">Files appear here only after you <strong>upload</strong> them on the Test Cases page (drag & drop or click the upload area). Saving a test case only saves the test case definition (names of VCD/ERoM/ULP); it does not upload files. Upload the files first, then save the test case.</p>
+                    </div>
+                  ) : (
+                    <table className="w-full min-w-[1240px] text-left text-xs border-collapse select-none" title="Click and drag across rows to select multiple files">
+                      <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-600">
+                        <tr>
+                          <th colSpan={10} className="px-2 py-2 text-left bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-700">
+                            <div className="flex items-center gap-2">
                               <input
-                                type="text"
-                                value={tagInputByFileId[f.id] ?? ''}
+                                type="checkbox"
+                                checked={selectableFileIds.length > 0 && selectableFileIds.every((id) => selectedFileSet.has(id))}
                                 onChange={(e) => {
-                                  e.stopPropagation();
-                                  setTagInputByFileId((prev) => ({ ...prev, [f.id]: e.target.value }));
+                                  if (e.target.checked) setSelectedLibraryFileIds([...selectableFileIds]);
+                                  else setSelectedLibraryFileIds([]);
                                 }}
-                                onKeyDown={(e) => {
-                                  if (e.key !== 'Enter') return;
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  const raw = (tagInputByFileId[f.id] ?? '').trim();
-                                  if (!raw) return;
-                                  const next = upsertTagsString(tagVal, raw);
-                                  setFileTag?.(f.id, next);
-                                  setTagInputByFileId((prev) => ({ ...prev, [f.id]: '' }));
-                                  setIsTagEditorOpenByFileId((prev) => ({ ...prev, [f.id]: false }));
-                                }}
-                                onBlur={() => {
-                                  setIsTagEditorOpenByFileId((prev) => ({ ...prev, [f.id]: false }));
-                                  setTagInputByFileId((prev) => ({ ...prev, [f.id]: '' }));
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                                className="px-2 py-0.5 text-[11px] rounded-full border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 w-28"
-                                placeholder="tag…"
-                                title="Press Enter to add (comma supported)"
-                                autoFocus
+                                className="w-4 h-4 rounded cursor-pointer"
+                                title="Select all (excluding files in use by running/pending set)"
                               />
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setIsTagEditorOpenByFileId((prev) => ({ ...prev, [f.id]: true }));
-                                }}
-                                className="px-2 py-0.5 rounded-full text-[11px] font-semibold border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
-                                title="Add tag"
-                              >
-                                +
-                              </button>
-                            )}
-                          </div>
-                          {inUseByBatch && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 text-[10px] font-semibold shrink-0" title="In use by a running or pending set; cannot delete until set finishes">In use by set</span>
-                          )}
-                          {usedByTcs.length > 0 && (
-                            <div className="flex items-center gap-1 shrink-0">
-                              {usedByTcs.slice(0, 3).map((u, idx) => (
-                                <span
-                                  key={`${f.id}-tcchip-${idx}-${u.name}`}
-                                  className="px-1.5 py-0.5 rounded-full text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700"
-                                  title={u.set ? `${u.name} (${u.set})` : u.name}
-                                >
-                                  {u.name}
-                                </span>
-                              ))}
-                              {usedByTcs.length > 3 && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setShowAllTagsForFileId(f.id);
-                                  }}
-                                  className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
-                                  title={usedByTcsTitle || undefined}
-                                >
-                                  …
-                                </button>
-                              )}
+                              <span className="text-xs text-slate-500 dark:text-slate-400">
+                                Select all ({filteredFiles.length})
+                                {selectableFileIds.length < filteredFiles.length ? ` — ${filteredFiles.length - selectableFileIds.length} locked (in use)` : ''}
+                              </span>
                             </div>
-                          )}
-                          {setNames.length > 0 && <span className="text-[11px] text-blue-600 dark:text-blue-400 shrink-0" title={`In sets: ${setNames.join(', ')}`}>Sets: {setNames.slice(0, 2).join(', ')}{setNames.length > 2 ? ` +${setNames.length - 2}` : ''}</span>}
-                          {lastModified && (
-                            <span className="text-[11px] text-slate-400 dark:text-slate-500 shrink-0" title={String(lastModified)}>
-                              {String(lastModified).replace('T', ' ').slice(0, 16)}
-                            </span>
-                          )}
-                          <span className="text-xs text-slate-500 shrink-0">{f.sizeFormatted || f.size}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
+                          </th>
+                        </tr>
+                        <tr className="text-slate-600 dark:text-slate-300">
+                          <th className="w-10 px-2 py-2 font-semibold align-bottom">
+                            <span className="sr-only">Select</span>
+                          </th>
+                          <th className="px-2 py-2 font-semibold min-w-[140px]">Name</th>
+                          <th className="w-9 px-1 py-2 font-semibold text-center align-bottom">
+                            <span className="sr-only">Rename</span>
+                          </th>
+                          <th className="px-2 py-2 font-semibold min-w-[140px]">Tags</th>
+                          <th className="px-2 py-2 font-semibold min-w-[120px]">Used by TC</th>
+                          <th className="px-2 py-2 font-semibold min-w-[100px]" title="Saved sets that reference this file; color follows job status when available">
+                            Sets
+                          </th>
+                          <th className="px-2 py-2 font-semibold w-16">Owner</th>
+                          <th className="px-2 py-2 font-semibold w-10 text-center" title="Visibility">
+                            Vis
+                          </th>
+                          <th className="px-2 py-2 font-semibold min-w-[120px]">Modified</th>
+                          <th className="px-2 py-2 font-semibold w-24 text-right">Size</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                        {filteredFiles.map((f, index) => {
+                          const setNames = getSetNamesUsingFile(f.name, savedTestCaseSets);
+                          const tagVal = (fileTags && fileTags[f.id]) || '';
+                          const tags = splitTags(tagVal);
+                          const usedByTcs = getTestCasesUsingFile(f.name, savedTestCases, savedTestCaseSets);
+                          const isSelected = selectedFileSet.has(f.id);
+                          const isFocused = libraryFocusFileName && f.name === libraryFocusFileName;
+                          const isHighlighted = isSelected || isFocused;
+                          const usedByTcsTitle = usedByTcs.length > 0 ? usedByTcs.map((u) => `${u.name}${u.set ? ` (${u.set})` : ''}`).join('\n') : '';
+                          const inUseByBatch = fileNamesInUseByBatch.has(f.name);
+                          const displayName = (fileDisplayNames && fileDisplayNames[f.id]) || (String(f.name || '').split('/').pop() || f.name);
+                          const lastModified = f.updatedAt || f.uploadDate || f.createdAt || null;
+                          return (
+                            <tr
+                              key={f.id}
+                              ref={isFocused ? focusedLibraryFileRef : null}
+                              className={`text-slate-800 dark:text-slate-100 ${inUseByBatch ? 'opacity-75 bg-slate-50/50 dark:bg-slate-800/30' : ''} ${isHighlighted ? 'bg-blue-50 dark:bg-blue-900/20' : !inUseByBatch ? 'hover:bg-slate-50 dark:hover:bg-slate-700/40' : ''} ${inUseByBatch ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                              onClick={(e) => {
+                                if (e.target.closest('input[type="checkbox"]') || e.target.closest('button') || e.target.closest('input[type="text"]')) return;
+                                toggleFileSelect(f.id, index, e);
+                              }}
+                              onMouseDown={(e) => {
+                                if (editingDisplayNameFileId) return;
+                                if (e.target.closest('input[type="checkbox"]') || e.target.closest('button') || e.target.closest('input[type="text"]')) return;
+                                if (e.button === 0) {
+                                  isDragSelectingFileRef.current = true;
+                                  if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]);
+                                }
+                              }}
+                              onMouseEnter={() => {
+                                if (editingDisplayNameFileId) return;
+                                if (!isDragSelectingFileRef.current) return;
+                                if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]);
+                              }}
+                            >
+                              <td className="px-2 py-1.5 align-top">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => {
+                                    toggleFileSelect(f.id, index, { shiftKey: false, ctrlKey: false, metaKey: false });
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="w-4 h-4 rounded shrink-0 cursor-pointer border-slate-300 text-blue-600"
+                                  title={inUseByBatch ? 'File in use by a running/pending set — cannot delete, but can select' : undefined}
+                                />
+                              </td>
+                              <td className="px-2 py-1.5 align-top min-w-0">
+                                {editingDisplayNameFileId === f.id ? (
+                                  <input
+                                    type="text"
+                                    value={renameDraft}
+                                    onChange={(e) => setRenameDraft(e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        skipRenameCommitRef.current = true;
+                                        const t = (renameDraft || '').trim();
+                                        setFileDisplayName?.(f.id, t);
+                                        setEditingDisplayNameFileId(null);
+                                        setRenameDraft('');
+                                      } else if (e.key === 'Escape') {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        skipRenameCommitRef.current = true;
+                                        setEditingDisplayNameFileId(null);
+                                        setRenameDraft('');
+                                      }
+                                    }}
+                                    onBlur={() => {
+                                      if (skipRenameCommitRef.current) {
+                                        skipRenameCommitRef.current = false;
+                                        return;
+                                      }
+                                      const t = (renameDraft || '').trim();
+                                      setFileDisplayName?.(f.id, t);
+                                      setEditingDisplayNameFileId(null);
+                                      setRenameDraft('');
+                                    }}
+                                    className="w-full min-w-0 text-sm font-medium rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 px-2 py-1"
+                                    title={f.name ? `Storage name: ${f.name}` : undefined}
+                                    autoFocus
+                                  />
+                                ) : (
+                                  <span className="font-medium text-sm text-slate-700 dark:text-slate-200 break-all" title={f.name ? `File: ${f.name}` : displayName}>
+                                    {displayName}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-1 py-1.5 align-top text-center w-9">
+                                {editingDisplayNameFileId === f.id ? (
+                                  <span className="inline-block w-7" aria-hidden />
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingDisplayNameFileId(f.id);
+                                      setRenameDraft(displayName);
+                                    }}
+                                    className="inline-flex items-center justify-center p-1 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                    title="Rename display name (inline)"
+                                  >
+                                    <Pencil size={14} strokeWidth={2} />
+                                  </button>
+                                )}
+                              </td>
+                              <td className="px-2 py-1.5 align-top">
+                                <div className="flex flex-wrap items-center gap-1 min-w-0">
+                                  {tags.slice(0, 3).map((t, ti) => (
+                                    <span
+                                      key={`${f.id}-tag-${ti}-${t}`}
+                                      className="px-1.5 py-0.5 rounded-full text-[10px] bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700"
+                                      title={t}
+                                    >
+                                      {t}
+                                    </span>
+                                  ))}
+                                  {tags.length > 3 && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setShowAllUsedByTcForFileName(null);
+                                        setShowAllSetsForFileName(null);
+                                        setShowAllTagsForFileId(f.id);
+                                      }}
+                                      className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
+                                      title="Show all tags"
+                                    >
+                                      …
+                                    </button>
+                                  )}
+                                  {isTagEditorOpenByFileId[f.id] ? (
+                                    <input
+                                      type="text"
+                                      value={tagInputByFileId[f.id] ?? ''}
+                                      onChange={(e) => {
+                                        e.stopPropagation();
+                                        setTagInputByFileId((prev) => ({ ...prev, [f.id]: e.target.value }));
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key !== 'Enter') return;
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        const raw = (tagInputByFileId[f.id] ?? '').trim();
+                                        if (!raw) return;
+                                        const next = upsertTagsString(tagVal, raw);
+                                        setFileTag?.(f.id, next);
+                                        setTagInputByFileId((prev) => ({ ...prev, [f.id]: '' }));
+                                        setIsTagEditorOpenByFileId((prev) => ({ ...prev, [f.id]: false }));
+                                      }}
+                                      onBlur={() => {
+                                        setIsTagEditorOpenByFileId((prev) => ({ ...prev, [f.id]: false }));
+                                        setTagInputByFileId((prev) => ({ ...prev, [f.id]: '' }));
+                                      }}
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="px-2 py-0.5 text-[11px] rounded-full border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 w-28"
+                                      placeholder="tag…"
+                                      title="Press Enter to add (comma supported)"
+                                      autoFocus
+                                    />
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setIsTagEditorOpenByFileId((prev) => ({ ...prev, [f.id]: true }));
+                                      }}
+                                      className="px-2 py-0.5 rounded-full text-[11px] font-semibold border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
+                                      title="Add tag"
+                                    >
+                                      +
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-2 py-1.5 align-top">
+                                <div className="flex flex-wrap items-center gap-1">
+                                  {usedByTcs.length === 0 ? (
+                                    <span className="text-slate-400">—</span>
+                                  ) : (
+                                    <>
+                                      {usedByTcs.slice(0, 3).map((u, idx) => (
+                                        <span
+                                          key={`${f.id}-tcchip-${idx}-${u.name}`}
+                                          className="px-1.5 py-0.5 rounded-full text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700"
+                                          title={u.set ? `${u.name} (${u.set})` : u.name}
+                                        >
+                                          {u.name}
+                                        </span>
+                                      ))}
+                                      {usedByTcs.length > 3 && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setShowAllTagsForFileId(null);
+                                            setShowAllSetsForFileName(null);
+                                            setShowAllUsedByTcForFileName(f.name);
+                                          }}
+                                          className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+                                          title={usedByTcsTitle || undefined}
+                                        >
+                                          …
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-2 py-1.5 align-top min-w-0">
+                                <div className="flex flex-wrap items-center gap-1">
+                                  {setNames.length === 0 ? (
+                                    <span className="text-slate-400">—</span>
+                                  ) : (
+                                    <>
+                                      {setNames.slice(0, 3).map((sn) => {
+                                        const st = setStatusByName.get(sn) ?? null;
+                                        return (
+                                          <span
+                                            key={`${f.id}-setchip-${sn}`}
+                                            className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium border max-w-[120px] truncate ${getSetJobStatusPillClass(st)}`}
+                                            title={st ? `${sn} — job: ${st}` : `${sn} — no active job`}
+                                          >
+                                            {sn}
+                                          </span>
+                                        );
+                                      })}
+                                      {setNames.length > 3 && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setShowAllTagsForFileId(null);
+                                            setShowAllUsedByTcForFileName(null);
+                                            setShowAllSetsForFileName(f.name);
+                                          }}
+                                          className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
+                                          title={`All sets: ${setNames.join(', ')}`}
+                                        >
+                                          …
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-2 py-1.5 align-top text-slate-600 dark:text-slate-300 whitespace-nowrap" title={f.ownerId ? `Owner: ${f.ownerId}` : ''}>
+                                {f.ownerId === currentClientId ? 'Me' : f.ownerId ? 'Other' : '—'}
+                              </td>
+                              <td className="px-2 py-1.5 align-top text-center text-slate-400" title={f.visibility || 'public'}>
+                                {f.visibility === 'private' ? <Lock size={14} className="inline" /> : f.visibility === 'team' ? <Users size={14} className="inline" /> : <Globe size={14} className="inline" />}
+                              </td>
+                              <td className="px-2 py-1.5 align-top whitespace-nowrap text-slate-500 dark:text-slate-400 text-[11px]" title={lastModified ? String(lastModified) : ''}>
+                                {lastModified ? String(lastModified).replace('T', ' ').slice(0, 16) : '—'}
+                              </td>
+                              <td className="px-2 py-1.5 align-top text-right text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                                {f.sizeFormatted || f.size || '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )
                 ) : (
                   <div className="p-3 space-y-4">
                     {filteredFiles.length === 0 ? (
@@ -2263,7 +2523,9 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                               type="button"
                                               onClick={(e) => {
                                                 e.stopPropagation();
-                                                setShowAllTagsForFileId(f.id);
+                                                setShowAllTagsForFileId(null);
+                                                setShowAllSetsForFileName(null);
+                                                setShowAllUsedByTcForFileName(f.name);
                                               }}
                                               className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
                                               title={usedByTcsTitle || undefined}

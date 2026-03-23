@@ -787,14 +787,16 @@ export const useTestStore = create((set, get) => ({
     return { savedTestCases: next };
   }),
   removeSavedTestCase: (id) => set((state) => {
+    const idStr = id == null ? '' : String(id);
+    const matchId = (t) => String(t.id) === idStr;
     // ถ้ากำลังแก้ไข Set อยู่ ให้ลบเฉพาะจาก table ชั่วคราวของ Set นั้น
     if (state.loadedSetId) {
-      const next = (state.loadedSetTable || []).filter((t) => t.id !== id);
+      const next = (state.loadedSetTable || []).filter((t) => !matchId(t));
       return { loadedSetTable: next };
     }
 
-    const target = (state.savedTestCases || []).find((t) => t.id === id);
-    const nextCases = (state.savedTestCases || []).filter((t) => t.id !== id);
+    const target = (state.savedTestCases || []).find((t) => matchId(t));
+    const nextCases = (state.savedTestCases || []).filter((t) => !matchId(t));
 
     // ลบ test case ที่มี content ตรงกันออกจากทุก Saved Set ด้วย
     let nextSets = state.savedTestCaseSets || [];
