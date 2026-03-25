@@ -16,6 +16,60 @@ from db.orm_models import ProfileORM
 router = APIRouter()
 
 
+def _normalize_tc_name(name: Any) -> str:
+    return (name or "").strip() if isinstance(name, str) else ""
+
+
+def _validate_global_unique_test_case_names(
+    all_profiles: List[ProfileORM],
+    updating_profile_id: str,
+    new_full_data_for_profile: Dict[str, Any],
+) -> Optional[str]:
+    """
+    Ensure no duplicate trimmed test case names across all profiles (same DB).
+    Same name may only belong to one test case id (globally).
+    `new_full_data_for_profile` is the full merged JSON.data for the profile after the update.
+    """
+    merged: Dict[str, Dict[str, Any]] = {}
+    for p in all_profiles:
+        merged[p.id] = dict(p.data or {})
+    merged[updating_profile_id] = new_full_data_for_profile
+
+    name_to_id: Dict[str, str] = {}
+
+    def walk_tc(tc: Any, profile_id: str, idx: Any, kind: str) -> Optional[str]:
+        if not isinstance(tc, dict):
+            return None
+        n = _normalize_tc_name(tc.get("name"))
+        if not n:
+            return None
+        tid = str(tc.get("id") or "").strip()
+        if not tid:
+            tid = f"{profile_id}:{kind}:{idx}"
+        if n in name_to_id:
+            if name_to_id[n] != tid:
+                return f'Duplicate test case name "{n}" — names must be unique across all profiles'
+        else:
+            name_to_id[n] = tid
+        return None
+
+    for pid, data in merged.items():
+        if not isinstance(data, dict):
+            continue
+        for i, tc in enumerate(data.get("savedTestCases") or []):
+            err = walk_tc(tc, pid, i, "saved")
+            if err:
+                return err
+        for si, s in enumerate(data.get("savedTestCaseSets") or []):
+            if not isinstance(s, dict):
+                continue
+            for ii, tc in enumerate(s.get("items") or []):
+                err = walk_tc(tc, pid, f"{si}_{ii}", "setitem")
+                if err:
+                    return err
+    return None
+
+
 class ProfileCreate(BaseModel):
     name: str
     data: Optional[Dict[str, Any]] = None
@@ -138,25 +192,57 @@ async def get_profile_data(profile_id: str):
         return data
 
 
+@router.put("/{profile_id}/data")
+async def put_profile_data(profile_id: str, payload: Dict[str, Any]):
+    """Replace/merge profile JSON data (savedTestCases, savedTestCaseSets, …). Validates global TC name uniqueness."""
+    async with async_session() as session:
+        result = await session.execute(select(ProfileORM).where(ProfileORM.id == profile_id))
+        row = result.scalar_one_or_none()
+        if not row:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        all_profiles = (await session.execute(select(ProfileORM))).scalars().all()
+        new_data = {**(row.data or {}), **payload}
+        err = _validate_global_unique_test_case_names(list(all_profiles), profile_id, new_data)
+        if err:
+            raise HTTPException(status_code=409, detail=err)
+        await session.execute(
+            update(ProfileORM)
+            .where(ProfileORM.id == profile_id)
+            .values(data=new_data, updated_at=datetime.utcnow())
+        )
+        await session.commit()
+    return {"success": True}
+
+
 @router.patch("/{profile_id}")
 async def update_profile(profile_id: str, payload: ProfileUpdate):
     """Update a profile."""
     async with async_session() as session:
+        result = await session.execute(select(ProfileORM).where(ProfileORM.id == profile_id))
+        row = result.scalar_one_or_none()
+        if not row:
+            raise HTTPException(status_code=404, detail="Profile not found")
+
         values = {}
         if payload.name is not None:
             values["name"] = payload.name
         if payload.data is not None:
-            values["data"] = payload.data
+            all_profiles = (await session.execute(select(ProfileORM))).scalars().all()
+            new_data = {**(row.data or {}), **payload.data}
+            err = _validate_global_unique_test_case_names(list(all_profiles), profile_id, new_data)
+            if err:
+                raise HTTPException(status_code=409, detail=err)
+            values["data"] = new_data
         values["updated_at"] = datetime.utcnow()
-        
+
         result = await session.execute(
             update(ProfileORM).where(ProfileORM.id == profile_id).values(**values)
         )
         await session.commit()
-        
+
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Profile not found")
-        
+
         return {"success": True}
 
 

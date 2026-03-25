@@ -39,6 +39,8 @@ const RunSetPage = ({ onNavigateJobs }) => {
   const moveSavedTestCaseSetDown = useTestStore((s) => s.moveSavedTestCaseSetDown);
   const duplicateSavedTestCaseSet = useTestStore((s) => s.duplicateSavedTestCaseSet);
   const removeSavedTestCaseSet = useTestStore((s) => s.removeSavedTestCaseSet);
+  const runSetImportContext = useTestStore((s) => s.runSetImportContext);
+  const clearRunSetImportContext = useTestStore((s) => s.clearRunSetImportContext);
   const addToast = useTestStore((s) => s.addToast);
   const safeSets = Array.isArray(savedTestCaseSets) ? savedTestCaseSets : [];
   const safeCases = Array.isArray(savedTestCases) ? savedTestCases : [];
@@ -72,6 +74,30 @@ const RunSetPage = ({ onNavigateJobs }) => {
   const [editingSetId, setEditingSetId] = useState(null);
   const [editingSetName, setEditingSetName] = useState('');
   const runSetRightRef = useRef(null);
+
+  useEffect(() => {
+    if (!runSetImportContext || !Array.isArray(runSetImportContext.items)) return;
+    const imported = runSetImportContext.items.filter(Boolean);
+    if (imported.length === 0) {
+      clearRunSetImportContext();
+      return;
+    }
+    const importedName = (runSetImportContext.name || '').trim();
+    const setStub = { id: '__library_selected__', name: importedName || 'Selected from Library' };
+    const items = imported.map((tc, idx) => ({
+      key: `lib-send-${idx}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      setId: setStub.id,
+      set: setStub,
+      tc,
+      order: idx + 1,
+    }));
+    // Replace right panel with imported list, preserving selection order from Library.
+    setRunPreview(items);
+    setSelectedRunIndex(items.length ? 0 : null);
+    if (importedName) setRunSetName(importedName);
+    clearRunSetImportContext();
+    addToast({ type: 'info', message: `Loaded ${items.length} test case(s) from Library` });
+  }, [runSetImportContext, clearRunSetImportContext, addToast]);
 
   // Helper: job status for a Saved set on Run Set page ('pending' | 'running' | null)
   const getRunSetStatusForSet = useCallback(

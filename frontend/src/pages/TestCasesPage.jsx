@@ -24,6 +24,43 @@ const splitTags = (raw) =>
     .map((t) => t.trim())
     .filter(Boolean);
 
+const upsertTagsString = (currentRaw, addRaw) => {
+  const current = splitTags(currentRaw);
+  const toAdd = splitTags(addRaw);
+  const seen = new Set(current.map((t) => t.toLowerCase()));
+  const next = [...current];
+  toAdd.forEach((t) => {
+    const k = t.toLowerCase();
+    if (!k || seen.has(k)) return;
+    seen.add(k);
+    next.push(t);
+  });
+  return next.join(', ');
+};
+
+const removeOneTagFromString = (currentRaw, tagToRemove) => {
+  const target = String(tagToRemove || '').trim().toLowerCase();
+  if (!target) return String(currentRaw || '');
+  const next = splitTags(currentRaw).filter((t) => t.trim().toLowerCase() !== target);
+  return next.join(', ');
+};
+
+const replaceTagAtIndexInRaw = (raw, index, newTag) => {
+  const tags = splitTags(raw);
+  if (index < 0 || index >= tags.length) return String(raw || '');
+  const next = [...tags];
+  const tr = String(newTag ?? '').trim();
+  if (tr === '') next.splice(index, 1);
+  else next[index] = tr;
+  return next.join(', ');
+};
+
+const removeTagAtIndexFromRaw = (raw, index) => {
+  const tags = splitTags(raw);
+  if (index < 0 || index >= tags.length) return String(raw || '');
+  return tags.filter((_, j) => j !== index).join(', ');
+};
+
 const normalizeFileSizeBytes = (value) => {
   if (typeof value === 'number') return value;
   if (value == null) return 0;
@@ -70,7 +107,7 @@ const getTestCasesUsingFile = (fileName, savedTestCases, savedTestCaseSets) => {
   return out;
 };
 
-const TestCasesPage = () => {
+const TestCasesPage = ({ onNavigateBackToLibrary } = {}) => {
   const viewingSharedProfileId = useTestStore((s) => s.viewingSharedProfileId);
   const sharedProfileDataCache = useTestStore((s) => s.sharedProfileDataCache);
   const sharedProfiles = useTestStore((s) => s.sharedProfiles || []);
@@ -96,6 +133,7 @@ const TestCasesPage = () => {
     removeWorkingTestCaseCommand,
     saveWorkingToLibrary,
     addSavedTestCase,
+    ensureUniqueTestCaseName,
     updateSavedTestCase,
     removeSavedTestCase,
     setSavedTestCases,
@@ -314,6 +352,14 @@ const TestCasesPage = () => {
   const [libraryPickerTcOverflowFileName, setLibraryPickerTcOverflowFileName] = useState(null);
   /** Browse modal: show all sets that use this file (ellipsis) */
   const [libraryPickerSetsOverflowFileName, setLibraryPickerSetsOverflowFileName] = useState(null);
+  /** Test case table: show all tags (ellipsis) + edit in modal */
+  const [tcTagOverflowTcId, setTcTagOverflowTcId] = useState(null);
+  const [tcTagModalAddDraft, setTcTagModalAddDraft] = useState('');
+  const [tcTagModalEditIndex, setTcTagModalEditIndex] = useState(null);
+  const [tcTagModalEditDraft, setTcTagModalEditDraft] = useState('');
+  /** Inline “+” to add a tag (same idea as File Library) */
+  const [tcTagPlusInputTcId, setTcTagPlusInputTcId] = useState(null);
+  const [tcTagPlusInputDraft, setTcTagPlusInputDraft] = useState('');
   const libraryPickerDragSelectRef = useRef(false);
   const [draggingRowIndex, setDraggingRowIndex] = useState(null);
   const [dropTargetRowIndex, setDropTargetRowIndex] = useState(null);
@@ -347,20 +393,16 @@ const TestCasesPage = () => {
     clearTestCaseLibraryFocusOnNavigate();
   }, [testCaseLibraryFocusOnNavigate, displayedSavedTestCases, clearTestCaseLibraryFocusOnNavigate]);
 
-  // All test case names in Library: current list + every set's items (avoid duplicates when creating names)
+  // All test case names in Library: every profile + sets + drafts (for TC##### auto-number)
   const getAllLibraryNames = () => {
-    const state = useTestStore.getState();
-    const current = (state.savedTestCases || []).map((t) => (t.name || '').trim()).filter(Boolean);
-    const fromSets = (state.savedTestCaseSets || []).flatMap((set) =>
-      (Array.isArray(set.items) ? set.items : []).map((t) => (t.name || '').trim()).filter(Boolean)
-    );
-    return [...new Set([...current, ...fromSets])];
+    const global = useTestStore.getState().getAllGlobalTestCaseNames(null, {
+      extraTestCaseLists: [pendingDraftTestCases],
+    });
+    return [...global];
   };
 
   const getNextTestCaseName = () => {
-    const allNames = getAllLibraryNames();
-    const pendingNames = (pendingDraftTestCases || []).map((t) => (t.name || '').trim()).filter(Boolean);
-    const combined = [...new Set([...allNames, ...pendingNames])];
+    const combined = getAllLibraryNames();
     const nums = combined.map((name) => {
       const m = (name || '').match(/^TC(\d+)$/i);
       return m ? parseInt(m[1], 10) : 0;
@@ -663,20 +705,9 @@ const TestCasesPage = () => {
     return extraPart ? `${base}||${extraPart}` : base;
   };
 
-  // ชื่อไม่ซ้ำ: สร้างชื่อที่ยังไม่มีในคลัง (ดึงจาก Library ทั้ง savedTestCases + ทุก set items), excludeId = id ของแถวที่กำลังแก้
-  const getUniqueName = (baseName, excludeId = null) => {
-    const currentNames = (savedTestCases || []).filter((t) => t.id !== excludeId).map((t) => (t.name || '').trim()).filter(Boolean);
-    const draftNames = (pendingDraftTestCases || []).filter((t) => t.id !== excludeId).map((t) => (t.name || '').trim()).filter(Boolean);
-    const setNames = (savedTestCaseSets || []).flatMap((set) =>
-      (Array.isArray(set.items) ? set.items : []).map((t) => (t.name || '').trim()).filter(Boolean)
-    );
-    const existing = [...new Set([...currentNames, ...draftNames, ...setNames])];
-    const base = (baseName || 'Test case').trim() || 'Test case';
-    if (!existing.includes(base)) return base;
-    let n = 2;
-    while (existing.includes(`${base} (${n})`)) n++;
-    return `${base} (${n})`;
-  };
+  // ชื่อไม่ซ้ำทั้งระบบ (ทุกโปรไฟล์ + แบบร่างบนหน้านี้)
+  const getUniqueName = (baseName, excludeId = null) =>
+    ensureUniqueTestCaseName(baseName, excludeId, { extraTestCaseLists: [pendingDraftTestCases] });
 
   const isTestCaseLocked = (tcId) => {
     // Locked if this test case is part of any saved set (to avoid surprising changes to sets/runs)
@@ -694,16 +725,145 @@ const TestCasesPage = () => {
     return testCaseFileKeysInUseByBatch.has(baseKey);
   };
 
+  /** Tag column: first tag + … (if >1) + + — same idea as File Library; คลิก tag แรกหรือ … เปิด modal แก้ไขได้ */
+  const renderTestCaseTagCell = (tc) => {
+    const raw = (tc.extraColumns && (tc.extraColumns.tag || tc.extraColumns.Tag)) || '';
+    const tags = splitTags(raw);
+    const tagDisabled = isTestCaseInUseByBatch(tc) || isViewingShared;
+
+    const openTagModal = () => {
+      setTcTagOverflowTcId(tc.id);
+      setTcTagModalAddDraft('');
+      setTcTagModalEditIndex(null);
+      setTcTagModalEditDraft('');
+    };
+
+    const showEllipsis = tags.length > 1;
+
+    return (
+      <div className="flex flex-wrap items-center gap-1 min-w-0">
+        {tags.length === 0 ? (
+          tagDisabled ? (
+            <span className="text-slate-400">—</span>
+          ) : (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setTcTagPlusInputTcId(tc.id);
+                setTcTagPlusInputDraft('');
+              }}
+              className="inline-flex items-center px-2 py-0.5 rounded-full border border-dashed border-slate-400/60 text-[11px] text-slate-400 hover:border-slate-300 hover:text-slate-300 transition-colors"
+              title="Add tag (or use +)"
+            >
+              No tag
+            </button>
+          )
+        ) : (
+          <>
+            {!tagDisabled ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openTagModal();
+                }}
+                className="px-1.5 py-0.5 rounded-full text-[10px] max-w-[120px] truncate bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700 hover:brightness-95 text-left"
+                title="View / edit tags"
+              >
+                {tags[0]}
+              </button>
+            ) : (
+              <span
+                className="px-1.5 py-0.5 rounded-full text-[10px] max-w-[120px] truncate bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700"
+                title={tags[0]}
+              >
+                {tags[0]}
+              </span>
+            )}
+            {showEllipsis && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openTagModal();
+                }}
+                className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
+                title="Show all tags"
+              >
+                …
+              </button>
+            )}
+          </>
+        )}
+        {!tagDisabled && (
+          <>
+            {tcTagPlusInputTcId === tc.id ? (
+              <input
+                type="text"
+                value={tcTagPlusInputDraft}
+                onChange={(e) => setTcTagPlusInputDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const add = tcTagPlusInputDraft.trim();
+                    if (!add) {
+                      setTcTagPlusInputTcId(null);
+                      setTcTagPlusInputDraft('');
+                      return;
+                    }
+                    const next = upsertTagsString(raw, add);
+                    handleExtraColumnChange(tc.id, 'tag', next);
+                    setTcTagPlusInputDraft('');
+                    setTcTagPlusInputTcId(null);
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setTcTagPlusInputTcId(null);
+                    setTcTagPlusInputDraft('');
+                  }
+                }}
+                onBlur={() => {
+                  setTcTagPlusInputTcId(null);
+                  setTcTagPlusInputDraft('');
+                }}
+                onClick={(e) => e.stopPropagation()}
+                className="px-2 py-0.5 text-[11px] rounded-full border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 w-28 min-w-0"
+                placeholder="tag…"
+                title="Press Enter to add (comma supported)"
+                autoFocus
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setTcTagPlusInputTcId(tc.id);
+                  setTcTagPlusInputDraft('');
+                }}
+                className="px-2 py-0.5 rounded-full text-[11px] font-semibold border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
+                title="Add tag"
+              >
+                +
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
+
   const handleNameChange = (tcId, newName, prevName = '') => {
     const trimmed = (newName || '').trim();
-    const inCurrent = (savedTestCases || []).some((t) => t.id !== tcId && (t.name || '').trim() === trimmed);
-    const inDraft = (pendingDraftTestCases || []).some((t) => t.id !== tcId && (t.name || '').trim() === trimmed);
-    const inSets = (savedTestCaseSets || []).some((set) =>
-      (Array.isArray(set.items) ? set.items : []).some((t) => (t.name || '').trim() === trimmed)
-    );
-    const isDuplicate = trimmed !== '' && (inCurrent || inDraft || inSets);
+    const used = useTestStore.getState().getAllGlobalTestCaseNames(tcId, {
+      extraTestCaseLists: [pendingDraftTestCases],
+    });
+    const isDuplicate = trimmed !== '' && used.has(trimmed);
     if (isDuplicate) {
-      addToast({ type: 'warning', message: 'Duplicate name — use a unique name for this test case' });
+      addToast({
+        type: 'warning',
+        message: 'ชื่อนี้ถูกใช้แล้วในระบบ (ทุกโปรไฟล์) — ใช้ชื่ออื่น',
+      });
       updateDisplayedTestCase(tcId, { name: prevName });
       return;
     }
@@ -915,10 +1075,11 @@ const TestCasesPage = () => {
       (savedTestCases || []).forEach((t) => existingKeys.add(normalizeTCTestCaseKeyFull(t)));
       (pendingDraftTestCases || []).forEach((t) => existingKeys.add(normalizeTCTestCaseKeyFull(t)));
 
-      const namesUsed = new Set();
-      (savedTestCases || []).forEach((t) => namesUsed.add((t.name || '').trim()));
-      (state.loadedSetTable || []).forEach((t) => namesUsed.add((t.name || '').trim()));
-      (savedTestCaseSets || []).flatMap((s) => s.items || []).forEach((t) => namesUsed.add((t.name || '').trim()));
+      const namesUsed = new Set(
+        useTestStore.getState().getAllGlobalTestCaseNames(null, {
+          extraTestCaseLists: [pendingDraftTestCases],
+        })
+      );
 
       let added = 0;
       const skipped = [];
@@ -970,11 +1131,11 @@ const TestCasesPage = () => {
       (savedTestCases || []).forEach((t) => existingKeys.add(normalizeTCTestCaseKeyFull(t)));
       prev.forEach((t) => existingKeys.add(normalizeTCTestCaseKeyFull(t)));
 
-      const namesUsed = new Set([
-        ...(savedTestCases || []).map((t) => (t.name || '').trim()),
-        ...prev.map((t) => (t.name || '').trim()),
-        ...(savedTestCaseSets || []).flatMap((set) => (set.items || []).map((t) => (t.name || '').trim())),
-      ]);
+      const namesUsed = new Set(
+        useTestStore.getState().getAllGlobalTestCaseNames(null, {
+          extraTestCaseLists: [prev],
+        })
+      );
 
       const newRows = [];
       const skipped = [];
@@ -1195,12 +1356,11 @@ const TestCasesPage = () => {
         return;
       }
 
-      const currentNames = (savedTestCases || []).map((t) => (t.name || '').trim()).filter((n) => n !== '');
-      const draftNames = (pendingDraftTestCases || []).map((t) => (t.name || '').trim()).filter((n) => n !== '');
-      const setNames = (savedTestCaseSets || []).flatMap((set) =>
-        (Array.isArray(set.items) ? set.items : []).map((t) => (t.name || '').trim()).filter((n) => n !== '')
+      const existingNames = new Set(
+        useTestStore.getState().getAllGlobalTestCaseNames(null, {
+          extraTestCaseLists: [pendingDraftTestCases],
+        })
       );
-      const existingNames = new Set([...currentNames, ...draftNames, ...setNames]);
       const created = [];
 
       const makeUniqueName = (baseRaw) => {
@@ -1400,6 +1560,9 @@ const TestCasesPage = () => {
       const total = useTestStore.getState().savedTestCases?.length || 0;
       addToast({ type: 'success', message: `Library updated (${total} test case(s))` });
     }
+
+    // Continuous workflow: after user saves to Library, jump back to Library (Step 2).
+    onNavigateBackToLibrary?.();
   };
 
   const libraryPickerFiles = useMemo(() => {
@@ -1461,6 +1624,11 @@ const TestCasesPage = () => {
             setLibraryPickerTagOverflowFileId(null);
             setLibraryPickerTcOverflowFileName(null);
             setLibraryPickerSetsOverflowFileName(null);
+            setTcTagOverflowTcId(null);
+            setTcTagModalAddDraft('');
+            setTcTagModalEditIndex(null);
+            setTcTagModalEditDraft('');
+            setTcTagPlusInputTcId(null);
           }}
           role="presentation"
         >
@@ -1644,7 +1812,7 @@ const TestCasesPage = () => {
                                 <span className="text-slate-400">—</span>
                               ) : (
                                 <>
-                                  {tags.slice(0, 3).map((t, ti) => (
+                                  {tags.slice(0, 1).map((t, ti) => (
                                     <span
                                       key={`${f.id}-t-${ti}`}
                                       className="px-1 py-0.5 rounded-full text-[10px] bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700"
@@ -1653,7 +1821,7 @@ const TestCasesPage = () => {
                                       {t}
                                     </span>
                                   ))}
-                                  {tags.length > 3 && (
+                                  {tags.length > 1 && (
                                     <button
                                       type="button"
                                       onClick={(e) => {
@@ -1769,6 +1937,11 @@ const TestCasesPage = () => {
                   setLibraryPickerOpen(false);
                   setLibraryPickerTagOverflowFileId(null);
                   setLibraryPickerTcOverflowFileName(null);
+                  setTcTagOverflowTcId(null);
+                  setTcTagModalAddDraft('');
+                  setTcTagModalEditIndex(null);
+                  setTcTagModalEditDraft('');
+                  setTcTagPlusInputTcId(null);
                 }}
                 className="px-4 py-2 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600"
               >
@@ -1785,6 +1958,11 @@ const TestCasesPage = () => {
                   setLibraryPickerOpen(false);
                   setLibraryPickerTagOverflowFileId(null);
                   setLibraryPickerTcOverflowFileName(null);
+                  setTcTagOverflowTcId(null);
+                  setTcTagModalAddDraft('');
+                  setTcTagModalEditIndex(null);
+                  setTcTagModalEditDraft('');
+                  setTcTagPlusInputTcId(null);
                   setLibraryPickerNameQ('');
                   setLibraryPickerTagQ('');
                   setLibraryPickerSizeQ('');
@@ -1833,6 +2011,180 @@ const TestCasesPage = () => {
                         <span className="max-w-[360px] truncate" title={t}>{t}</span>
                       </span>
                     ))}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+      {tcTagOverflowTcId && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => {
+              setTcTagOverflowTcId(null);
+              setTcTagModalAddDraft('');
+              setTcTagModalEditIndex(null);
+              setTcTagModalEditDraft('');
+            }}
+            role="presentation"
+          />
+          <div
+            className="relative w-[min(520px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+              <div className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">Tags</div>
+              <button
+                type="button"
+                onClick={() => {
+                  setTcTagOverflowTcId(null);
+                  setTcTagModalAddDraft('');
+                  setTcTagModalEditIndex(null);
+                  setTcTagModalEditDraft('');
+                }}
+                className="ml-auto p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-5 max-h-[min(60vh,360px)] overflow-y-auto">
+              {(() => {
+                const otc = displayedSavedTestCases.find((t) => t.id === tcTagOverflowTcId);
+                if (!otc) {
+                  return <div className="text-sm text-slate-500 dark:text-slate-400">—</div>;
+                }
+                const raw =
+                  (otc.extraColumns && (otc.extraColumns.tag || otc.extraColumns.Tag)) || '';
+                const allTags = splitTags(raw);
+                const modalLocked = isTestCaseInUseByBatch(otc) || isViewingShared;
+                const commitTcTagModalEdit = () => {
+                  if (tcTagModalEditIndex == null) return;
+                  const row = displayedSavedTestCases.find((x) => x.id === tcTagOverflowTcId);
+                  if (!row) {
+                    setTcTagModalEditIndex(null);
+                    setTcTagModalEditDraft('');
+                    return;
+                  }
+                  const r =
+                    (row.extraColumns && (row.extraColumns.tag || row.extraColumns.Tag)) || '';
+                  const next = replaceTagAtIndexInRaw(r, tcTagModalEditIndex, tcTagModalEditDraft);
+                  handleExtraColumnChange(row.id, 'tag', next);
+                  setTcTagModalEditIndex(null);
+                  setTcTagModalEditDraft('');
+                };
+                return (
+                  <div className="space-y-3">
+                    {allTags.length === 0 ? (
+                      <div className="text-sm text-slate-500 dark:text-slate-400">
+                        {modalLocked ? 'No tags' : 'No tags yet — add below'}
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {allTags.map((t, i) => (
+                          <span
+                            key={`tc-alltag-${tcTagOverflowTcId}-${i}`}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700"
+                          >
+                            {tcTagModalEditIndex === i ? (
+                              <input
+                                type="text"
+                                value={tcTagModalEditDraft}
+                                onChange={(e) => setTcTagModalEditDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    commitTcTagModalEdit();
+                                  }
+                                  if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    setTcTagModalEditIndex(null);
+                                    setTcTagModalEditDraft('');
+                                  }
+                                }}
+                                onBlur={commitTcTagModalEdit}
+                                className="min-w-[100px] max-w-[280px] px-2 py-0.5 text-xs rounded-md border border-blue-400 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                                autoFocus
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={modalLocked}
+                                onClick={() => {
+                                  if (modalLocked) return;
+                                  setTcTagModalEditIndex(i);
+                                  setTcTagModalEditDraft(t);
+                                }}
+                                className="max-w-[260px] truncate text-left font-medium hover:underline disabled:cursor-default disabled:no-underline"
+                                title={modalLocked ? t : 'คลิกเพื่อแก้ไขชื่อ'}
+                              >
+                                {t}
+                              </button>
+                            )}
+                            {!modalLocked && (
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  if (tcTagModalEditIndex === i) {
+                                    setTcTagModalEditIndex(null);
+                                    setTcTagModalEditDraft('');
+                                  }
+                                  const row = displayedSavedTestCases.find((x) => x.id === tcTagOverflowTcId);
+                                  if (!row) return;
+                                  const r =
+                                    (row.extraColumns &&
+                                      (row.extraColumns.tag || row.extraColumns.Tag)) ||
+                                    '';
+                                  handleExtraColumnChange(
+                                    row.id,
+                                    'tag',
+                                    removeTagAtIndexFromRaw(r, i)
+                                  );
+                                }}
+                                className="ml-0.5 w-5 h-5 rounded-full inline-flex items-center justify-center hover:bg-blue-100 dark:hover:bg-blue-900/40"
+                                title="Remove tag"
+                              >
+                                <X size={12} />
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {!modalLocked && (
+                      <div>
+                        <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">
+                          Add tag
+                        </label>
+                        <input
+                          type="text"
+                          value={tcTagModalAddDraft}
+                          onChange={(e) => setTcTagModalAddDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key !== 'Enter') return;
+                            e.preventDefault();
+                            const add = tcTagModalAddDraft.trim();
+                            if (!add) return;
+                            const r =
+                              (otc.extraColumns &&
+                                (otc.extraColumns.tag || otc.extraColumns.Tag)) ||
+                              '';
+                            const next = upsertTagsString(r, add);
+                            handleExtraColumnChange(otc.id, 'tag', next);
+                            setTcTagModalAddDraft('');
+                          }}
+                          className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100"
+                          placeholder="Type and press Enter (comma allowed)"
+                        />
+                        <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                          
+                        </p>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -1931,7 +2283,7 @@ const TestCasesPage = () => {
       </>
       )}
       <div>
-        <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Create Test Cases</h1>
+        <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Create Test Case</h1>
         <p className="text-slate-500 dark:text-slate-400 mt-1 text-sm max-w-2xl">
         </p>
       </div>
@@ -1992,6 +2344,11 @@ const TestCasesPage = () => {
                 setLibraryPickerSelectedIds([]);
                 setLibraryPickerTagOverflowFileId(null);
                 setLibraryPickerTcOverflowFileName(null);
+                setTcTagOverflowTcId(null);
+                setTcTagModalAddDraft('');
+                setTcTagModalEditIndex(null);
+                setTcTagModalEditDraft('');
+                setTcTagPlusInputTcId(null);
                 setLibraryPickerOpen(true);
               }}
               disabled={isViewingShared || !(uploadedFiles?.length > 0)}
@@ -2309,16 +2666,8 @@ const TestCasesPage = () => {
                         title={isTestCaseInUseByBatch(tc) ? 'ล็อก — test case อยู่ใน process (running/pending)' : 'Use a unique name for this test case'}
                       />
                     </td>
-                    <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700">
-                      <input
-                        type="text"
-                        value={(tc.extraColumns && (tc.extraColumns.tag || tc.extraColumns.Tag)) || ''}
-                        onChange={(e) => handleExtraColumnChange(tc.id, 'tag', e.target.value)}
-                        disabled={isTestCaseInUseByBatch(tc) || isViewingShared}
-                        className={`w-full min-w-0 px-1.5 py-1 text-xs border border-slate-200 dark:border-slate-600 rounded bg-white dark:bg-slate-800 ${isTestCaseInUseByBatch(tc) ? 'opacity-70 cursor-not-allowed' : ''}`}
-                        placeholder="tag"
-                        title={isTestCaseInUseByBatch(tc) ? 'ล็อก — test case อยู่ใน process' : 'Tag for grouping or filtering'}
-                      />
+                    <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700 min-w-[100px]">
+                      {renderTestCaseTagCell(tc)}
                     </td>
                     <td className="px-2 py-1.5 border-r border-slate-100 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-xs text-center whitespace-nowrap">
                       {tc.createdAt ? new Date(tc.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}
@@ -2832,7 +3181,9 @@ const TestCasesPage = () => {
                           return (
                             <div key={col} className="flex items-center gap-2 min-w-0">
                               <span className="text-xs font-semibold text-slate-500 shrink-0">{col}:</span>
-                              {isFileCol ? (
+                              {/^tag$/i.test(col) ? (
+                                <div className="flex-1 min-w-0">{renderTestCaseTagCell(tc)}</div>
+                              ) : isFileCol ? (
                                 <select
                                   value={displayVal}
                                   onChange={(e) => handleExtraColumnChange(tc.id, col, e.target.value)}

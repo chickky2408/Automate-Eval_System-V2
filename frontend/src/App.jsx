@@ -140,7 +140,7 @@ const App = () => {
         <nav className="mt-6 px-3 space-y-2">
           <NavItem icon={<LayoutDashboard size={20}/>} label="Dashboard" active={activePage === 'dashboard'} isOpen={isSidebarOpen} onClick={() => setActivePage('dashboard')} />
           <NavItem icon={<Database size={20}/>} label="Library" active={activePage === 'fileLibrary'} isOpen={isSidebarOpen} onClick={() => setActivePage('fileLibrary')} />
-          <NavItem icon={<FileCode size={20}/>} label="Test Cases" active={activePage === 'testCases'} isOpen={isSidebarOpen} onClick={() => setActivePage('testCases')} />
+          <NavItem icon={<FileCode size={20}/>} label="Create Test Case" active={activePage === 'testCases'} isOpen={isSidebarOpen} onClick={() => setActivePage('testCases')} />
           <NavItem icon={<PlayCircle size={20}/>} label="Run Set" active={activePage === 'runSet'} isOpen={isSidebarOpen} onClick={() => setActivePage('runSet')} />
           <NavItem icon={<Monitor size={20}/>} label="Jobs Manager" active={activePage === 'jobs'} isOpen={isSidebarOpen} onClick={() => setActivePage('jobs')} />
           <NavItem icon={<Cpu size={20}/>} label="Board Status" active={activePage === 'boards'} isOpen={isSidebarOpen} onClick={() => setActivePage('boards')} />
@@ -219,19 +219,62 @@ const App = () => {
 
         {/* CONTENT PAGES */}
         <div className="p-4 sm:p-6 lg:p-8 overflow-x-hidden overflow-y-auto min-w-0">
+          {/* Keep these 3 pages mounted so local "in-progress" UI state doesn't reset */}
+          <div className={activePage === 'fileLibrary' ? '' : 'hidden'}>
+            <FileLibraryPage
+              onNavigateToTestCases={() => setActivePage('testCases')}
+              onNavigateToRunSet={() => setActivePage('runSet')}
+            />
+          </div>
+          <div className={activePage === 'testCases' ? '' : 'hidden'}>
+            <TestCasesPage
+              onNavigateBackToLibrary={() => {
+                useTestStore.getState().setFileLibraryViewOnNavigate('rawTestCases');
+                setActivePage('fileLibrary');
+              }}
+            />
+          </div>
+          <div className={activePage === 'runSet' ? '' : 'hidden'}>
+            <RunSetPage onNavigateJobs={() => setActivePage('jobs')} />
+          </div>
+
+          {/* Other pages can unmount normally */}
           {activePage === 'dashboard' && (
             <DashboardPage
               onNavigateBoards={() => setActivePage('boards')}
               onNavigateJobs={() => setActivePage('jobs')}
             />
           )}
-          {activePage === 'fileLibrary' && <FileLibraryPage onNavigateToTestCases={() => setActivePage('testCases')} />}
-          {activePage === 'testCases' && <TestCasesPage />}
-          {activePage === 'runSet' && <RunSetPage onNavigateJobs={() => setActivePage('jobs')} />}
-          {activePage === 'setup' && <SetupPage editJobId={expandJobId} onEditComplete={() => setExpandJobId(null)} />}
-          {activePage === 'jobs' && <JobsPage expandJobId={expandJobId} onExpandComplete={() => setExpandJobId(null)} onEditJob={(jobId) => { setExpandJobId(jobId); setActivePage('setup'); }} onNavigateToFileLibrary={(fileName) => { useTestStore.getState().setLibraryFocusFileNameOnNavigate(fileName); setActivePage('fileLibrary'); }} onNavigateToTestCases={(focus) => { useTestStore.getState().setTestCaseLibraryFocusOnNavigate(focus); setActivePage('testCases'); }} />}
+          {activePage === 'setup' && (
+            <SetupPage editJobId={expandJobId} onEditComplete={() => setExpandJobId(null)} />
+          )}
+          {activePage === 'jobs' && (
+            <JobsPage
+              expandJobId={expandJobId}
+              onExpandComplete={() => setExpandJobId(null)}
+              onEditJob={(jobId) => {
+                setExpandJobId(jobId);
+                setActivePage('setup');
+              }}
+              onNavigateToFileLibrary={(fileName) => {
+                useTestStore.getState().setLibraryFocusFileNameOnNavigate(fileName);
+                setActivePage('fileLibrary');
+              }}
+              onNavigateToTestCases={(focus) => {
+                useTestStore.getState().setTestCaseLibraryFocusOnNavigate(focus);
+                setActivePage('testCases');
+              }}
+            />
+          )}
           {activePage === 'boards' && <BoardsPage />}
-          {activePage === 'history' && <HistoryPage onViewJob={(jobId) => { setExpandJobId(jobId); setActivePage('jobs'); }} />}
+          {activePage === 'history' && (
+            <HistoryPage
+              onViewJob={(jobId) => {
+                setExpandJobId(jobId);
+                setActivePage('jobs');
+              }}
+            />
+          )}
           {activePage === 'waveform' && <WaveformPage />}
         </div>
       </main>

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, AlertCircle, ArrowDown, ArrowUp, Bell, CheckCircle2, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock, Copy, Cpu, Download, Eye, FileCode, FileDown, FileJson, FileUp, Filter, FolderOpen, Globe, GripVertical, Grid3x3, HardDrive, History, Layers, LayoutDashboard, List, Lock, LogOut, Menu, Monitor, MoreVertical, Pause, Pencil, Play, PlayCircle, Plus, RefreshCw, Save, Search, Settings, Square, StopCircle, Tag, Terminal, Trash2, Upload, User, UserPlus, Users, Wifi, WifiOff, X, XCircle, Zap
+  Activity, AlertCircle, ArrowDown, ArrowUp, Bell, CheckCircle2, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock, Cpu, Download, Eye, FileCode, FileDown, FileJson, FileUp, Filter, FolderOpen, Globe, GripVertical, Grid3x3, HardDrive, History, Layers, LayoutDashboard, List, Lock, LogOut, Menu, Monitor, MoreVertical, Pause, PaintBucket, Pencil, Play, PlayCircle, Plus, RefreshCw, Save, Search, Settings, Square, StopCircle, Tag, Terminal, Trash2, Upload, User, UserPlus, Users, Wifi, WifiOff, X, XCircle, Zap
 } from 'lucide-react';
 import { useTestStore } from '../store/useTestStore';
 import api from '../services/api';
@@ -61,23 +61,128 @@ const getTestCasesUsingFile = (fileName, savedTestCases, savedTestCaseSets) => {
   return out;
 };
 
+/** สร้าง id สำหรับแถว extra file ใน editor */
+const newRawTcSlotId = () => `slot-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+/**
+ * รวบรวมไฟล์เสริม (VCD2+, ERoM2+, ULP2+, MDI) จาก commands ก่อน แล้วเติมจาก extraColumns ถ้ายังไม่มีใน commands
+ */
+function collectExtraSlotsFromTc(tc) {
+  const slots = [];
+  const seen = new Set();
+  const addSlot = (kind, file) => {
+    const f = (file || '').trim();
+    if (!f) return;
+    const sig = `${kind}:${f}`;
+    if (seen.has(sig)) return;
+    seen.add(sig);
+    slots.push({ id: newRawTcSlotId(), kind, file: f });
+  };
+
+  for (const c of tc.commands || []) {
+    if (!c?.file?.trim()) continue;
+    if (c.type === 'vcd') addSlot('vcd', c.file);
+    else if (c.type === 'erom') addSlot('erom', c.file);
+    else if (c.type === 'ulp') addSlot('ulp', c.file);
+    else if (c.type === 'mdi') addSlot('mdi', c.file);
+  }
+
+  const ex = tc.extraColumns || {};
+  const numFromKey = (k) => parseInt(String(k).match(/(\d+)$/)?.[1] || '0', 10);
+  const addFromExtra = (key, kind) => {
+    const val = String(ex[key] || '').trim();
+    if (!val) return;
+    const sig = `${kind}:${val}`;
+    if (seen.has(sig)) return;
+    addSlot(kind, val);
+  };
+
+  Object.keys(ex)
+    .filter((k) => /^VCD\d+$/i.test(k) && numFromKey(k) >= 2)
+    .sort((a, b) => numFromKey(a) - numFromKey(b))
+    .forEach((k) => addFromExtra(k, 'vcd'));
+  Object.keys(ex)
+    .filter((k) => /^ERoM\d+$/i.test(k) && numFromKey(k) >= 2)
+    .sort((a, b) => numFromKey(a) - numFromKey(b))
+    .forEach((k) => addFromExtra(k, 'erom'));
+  Object.keys(ex)
+    .filter((k) => /^ULP\d+$/i.test(k) && numFromKey(k) >= 2)
+    .sort((a, b) => numFromKey(a) - numFromKey(b))
+    .forEach((k) => addFromExtra(k, 'ulp'));
+
+  return slots;
+}
+
+/**
+ * ป้ายชื่อคอลัมน์ในตาราง Raw Test Cases สำหรับแถว extra (ลำดับตามแถวใน editor)
+ * VCD/ERoM/ULP: ไฟล์หลัก = คอลัมน์หลัก — ไฟล์เสริมเริ่มที่ *2 (VCD2, ERoM2, ULP2)
+ * MDI: ไม่มีช่องหลักใน extraSlots — ใช้ MDI1, MDI2, …
+ */
+function getExtraSlotColumnLabel(kind, ordinalAmongKind) {
+  const n = Math.max(1, ordinalAmongKind);
+  if (kind === 'vcd') return `VCD${n + 1}`;
+  if (kind === 'erom') return `ERoM${n + 1}`;
+  if (kind === 'ulp') return `ULP${n + 1}`;
+  if (kind === 'mdi') return `MDI${n}`;
+  return '';
+}
+
+const isTcManuallyClosed = (tc) => {
+  const vis = String(tc?.extraColumns?.vis || '').trim().toLowerCase();
+  return vis === 'close' || vis === 'closed' || vis === 'lock' || vis === 'locked' || vis === 'private';
+};
+
+/** Tag pill colors in Files tab + Tags modal (per file id in store) */
+const FILE_TAG_PALETTE_MAP = {
+  mint: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-700',
+  sky: 'bg-sky-100 text-sky-800 border-sky-200 dark:bg-sky-900/30 dark:text-sky-200 dark:border-sky-700',
+  rose: 'bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-700',
+  amber: 'bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-900/30 dark:text-amber-200 dark:border-amber-700',
+  violet: 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200 dark:bg-fuchsia-900/30 dark:text-fuchsia-200 dark:border-fuchsia-700',
+  slate: 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-600',
+};
+
 // FILE LIBRARY PAGE — default: Test Case Library (เรียง set ลงมา แต่ละ set มีตารางแนวนอน + แสดงไฟล์); ปุ่มสลับView files in Library
-const FileLibraryPage = ({ onNavigateToTestCases }) => {
-  const { uploadedFiles, addUploadedFile, removeUploadedFile, loading, errors, savedTestCaseSets, savedTestCases, removeSavedTestCase, updateSavedTestCaseSet, removeSavedTestCaseSet, fileTags, setFileTag, fileDisplayNames, setFileDisplayName } = useTestStore();
+const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
+  const {
+    uploadedFiles,
+    addUploadedFile,
+    removeUploadedFile,
+    loading,
+    errors,
+    savedTestCaseSets,
+    savedTestCases,
+    removeSavedTestCase,
+    updateSavedTestCase,
+    updateSavedTestCaseSet,
+    removeSavedTestCaseSet,
+    fileTags,
+    setFileTag,
+    fileTagColors,
+    setFileTagColor,
+    fileDisplayNames,
+    setFileDisplayName,
+  } = useTestStore();
   const setFileToTestCaseDraft = useTestStore((s) => s.setFileToTestCaseDraft);
   const activeProfileId = useTestStore((s) => s.activeProfileId);
   const profiles = useTestStore((s) => s.profiles) || [];
   const activeProfile = profiles.find((p) => p.id === activeProfileId) || { id: 'default', name: 'Default' };
   const currentClientId = getClientId();
   const jobs = useTestStore((s) => s.jobs);
+  const boards = useTestStore((s) => s.boards);
+  const runBoardSelection = useTestStore((s) => s.runBoardSelection);
+  const createJob = useTestStore((s) => s.createJob);
   const refreshFiles = useTestStore((s) => s.refreshFiles);
   const addToast = useTestStore((s) => s.addToast);
   const setLibraryEditContext = useTestStore((s) => s.setLibraryEditContext);
   const clearLibraryEditContext = useTestStore((s) => s.clearLibraryEditContext);
+  const setRunSetImportContext = useTestStore((s) => s.setRunSetImportContext);
   const setLoadedSetId = useTestStore((s) => s.setLoadedSetId);
   const syncFullLibraryToSavedTestCases = useTestStore((s) => s.syncFullLibraryToSavedTestCases);
   const libraryFocusFileNameOnNavigate = useTestStore((s) => s.libraryFocusFileNameOnNavigate);
   const clearLibraryFocusFileNameOnNavigate = useTestStore((s) => s.clearLibraryFocusFileNameOnNavigate);
+  const fileLibraryViewOnNavigate = useTestStore((s) => s.fileLibraryViewOnNavigate);
+  const clearFileLibraryViewOnNavigate = useTestStore((s) => s.clearFileLibraryViewOnNavigate);
 
   // Status helpers for mapping jobs → sets / test cases / files
   const STATUS_PRIORITY = { completed: 1, pending: 2, running: 3 };
@@ -274,6 +379,11 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
     if (ok === 0 && dup === 0) addToast({ type: 'warning', message: 'No file saved' });
   }, [importDrafts, uploadedFiles, addUploadedFile, addToast, setFileTag]);
   const [libraryView, setLibraryView] = useState('files'); // 'files' | 'rawTestCases' | 'testCases'
+  useEffect(() => {
+    if (!fileLibraryViewOnNavigate) return;
+    setLibraryView(fileLibraryViewOnNavigate);
+    clearFileLibraryViewOnNavigate();
+  }, [fileLibraryViewOnNavigate, clearFileLibraryViewOnNavigate]);
   const [fileFilter, setFileFilter] = useState('all');
   const [fileStatusFilter, setFileStatusFilter] = useState('all'); // 'all' | 'pending' | 'running' | 'completed'
   const [fileSearch, setFileSearch] = useState('');
@@ -286,6 +396,10 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const [renameDraft, setRenameDraft] = useState('');
   const skipRenameCommitRef = useRef(false);
   const [showAllTagsForFileId, setShowAllTagsForFileId] = useState(null);
+  const [fileTagsModalEditIndex, setFileTagsModalEditIndex] = useState(null);
+  const [fileTagsModalEditDraft, setFileTagsModalEditDraft] = useState('');
+  const [fileTagsModalAddDraft, setFileTagsModalAddDraft] = useState('');
+  const [fileTagsModalAddOpen, setFileTagsModalAddOpen] = useState(false);
   /** Ellipsis on TC chips — was wrongly opening Tags modal; use file name to list test cases */
   const [showAllUsedByTcForFileName, setShowAllUsedByTcForFileName] = useState(null);
   const [showAllSetsForFileName, setShowAllSetsForFileName] = useState(null);
@@ -298,6 +412,16 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
   const [libraryTcTagFilter, setLibraryTcTagFilter] = useState('');
   const [libraryTcStatusFilter, setLibraryTcStatusFilter] = useState('all'); // 'all' | 'pending' | 'running' | 'completed'
   const [selectedLibraryTcKeys, setSelectedLibraryTcKeys] = useState([]);
+  /** Raw Test Cases: inline editor — key = row _key */
+  const [rawTcEditorKey, setRawTcEditorKey] = useState(null);
+  const [rawTcEditorDraft, setRawTcEditorDraft] = useState(null);
+  /** Raw Test Cases table: tag overflow modal + inline + (same UX as Test Cases page) */
+  const [libraryRawTcTagOverflowKey, setLibraryRawTcTagOverflowKey] = useState(null);
+  const [libraryRawTcTagModalAddDraft, setLibraryRawTcTagModalAddDraft] = useState('');
+  const [libraryRawTcTagModalEditIndex, setLibraryRawTcTagModalEditIndex] = useState(null);
+  const [libraryRawTcTagModalEditDraft, setLibraryRawTcTagModalEditDraft] = useState('');
+  const [libraryRawTcTagPlusKey, setLibraryRawTcTagPlusKey] = useState(null);
+  const [libraryRawTcTagPlusDraft, setLibraryRawTcTagPlusDraft] = useState('');
   const lastClickedLibraryTcIndexRef = useRef(null);
   const isDragSelectingLibraryRef = useRef(false);
   const [librarySetTcNameFilter, setLibrarySetTcNameFilter] = useState('');
@@ -323,6 +447,22 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
   };
   const [allProfilesTestData, setAllProfilesTestData] = useState({ savedTestCases: [], savedTestCaseSets: [] });
   const [allProfilesTestDataLoading, setAllProfilesTestDataLoading] = useState(false);
+  const [fileVisById, setFileVisById] = useState(() => {
+    try {
+      const raw = localStorage.getItem('fileVisById');
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('fileVisById', JSON.stringify(fileVisById || {}));
+    } catch {
+      // ignore
+    }
+  }, [fileVisById]);
 
   // Load test cases/sets from all profiles when filtering by "all" or "shared"
   useEffect(() => {
@@ -386,6 +526,22 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
     if (!target) return String(currentRaw || '');
     const next = splitTags(currentRaw).filter((t) => t.trim().toLowerCase() !== target);
     return next.join(', ');
+  };
+
+  const replaceTagAtIndexInRaw = (raw, index, newTag) => {
+    const tags = splitTags(raw);
+    if (index < 0 || index >= tags.length) return String(raw || '');
+    const next = [...tags];
+    const tr = String(newTag ?? '').trim();
+    if (tr === '') next.splice(index, 1);
+    else next[index] = tr;
+    return next.join(', ');
+  };
+
+  const removeTagAtIndexFromRaw = (raw, index) => {
+    const tags = splitTags(raw);
+    if (index < 0 || index >= tags.length) return String(raw || '');
+    return tags.filter((_, j) => j !== index).join(', ');
   };
 
   const normalizeFileSize = (value) => {
@@ -662,6 +818,391 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
     });
   }, [libraryRawRows, libraryTcNameFilter, libraryTcTagFilter, libraryTcStatusFilter, libraryCreatedByFilter, activeProfileId]);
 
+  const fileOptionsByKind = useMemo(() => {
+    const list = uploadedFiles || [];
+    const by = { vcd: [], bin: [], lin: [], mdi: [] };
+    const kindOf = (name) => {
+      const ext = String(name || '').split('.').pop()?.toLowerCase();
+      if (ext === 'vcd') return 'vcd';
+      if (['bin', 'hex', 'elf', 'erom'].includes(ext)) return 'bin';
+      if (['lin', 'ulp'].includes(ext)) return 'lin';
+      if (ext === 'txt') return 'mdi';
+      return null;
+    };
+    list.forEach((f) => {
+      const k = kindOf(f.name);
+      if (k && by[k]) by[k].push(f.name);
+    });
+    return by;
+  }, [uploadedFiles]);
+
+  const mergeCommandsIntoExtraForTc = useCallback((tc) => {
+    const extra = tc.extraColumns && typeof tc.extraColumns === 'object' ? { ...tc.extraColumns } : {};
+    const cmds = Array.isArray(tc.commands) ? tc.commands : [];
+    cmds.filter((c) => c.type === 'vcd' && (c.file || '').trim()).forEach((c, i) => {
+      extra[`VCD${i + 2}`] = c.file || '';
+    });
+    cmds.filter((c) => c.type === 'erom' && (c.file || '').trim()).forEach((c, i) => {
+      extra[`ERoM${i + 2}`] = c.file || '';
+    });
+    cmds.filter((c) => c.type === 'ulp' && (c.file || '').trim()).forEach((c, i) => {
+      extra[`ULP${i + 2}`] = c.file || '';
+    });
+    return Object.fromEntries(Object.entries(extra).filter(([, v]) => (v ?? '').toString().trim() !== ''));
+  }, []);
+
+  const patchLibraryTcExtraColumns = useCallback(
+    (tc, patch) => {
+      const nextExtra = { ...(tc.extraColumns || {}), ...patch };
+      if (Object.prototype.hasOwnProperty.call(patch, 'tag')) delete nextExtra.Tag;
+      if (tc._source === 'current' && tc.id) {
+        updateSavedTestCase(tc.id, { extraColumns: nextExtra });
+      } else if (tc._source === 'set' && tc._setId != null && tc._itemIndex != null) {
+        const set = (savedTestCaseSets || []).find((s) => s.id === tc._setId);
+        if (!set || !Array.isArray(set.items)) return;
+        const items = [...set.items];
+        if (!items[tc._itemIndex]) return;
+        items[tc._itemIndex] = {
+          ...items[tc._itemIndex],
+          extraColumns: nextExtra,
+        };
+        updateSavedTestCaseSet(tc._setId, { items });
+      }
+    },
+    [savedTestCaseSets, updateSavedTestCase, updateSavedTestCaseSet]
+  );
+
+  const collectFileNamesFromTestCase = useCallback((tc) => {
+    const names = new Set();
+    const add = (n) => {
+      const s = (n ?? '').toString().trim();
+      if (s) names.add(s);
+    };
+    add(tc.vcdName);
+    add(tc.binName);
+    add(tc.linName);
+    (tc.commands || []).forEach((c) => {
+      if (c?.file) add(c.file);
+    });
+    const ex = tc.extraColumns || {};
+    Object.keys(ex).forEach((k) => {
+      if (/^(VCD|ERoM|ULP)\d+$/i.test(k)) add(ex[k]);
+    });
+    return [...names];
+  }, []);
+
+  const buildRawTcDraft = useCallback((tc) => {
+    const tag =
+      (tc.extraColumns && (tc.extraColumns.tag || tc.extraColumns.Tag)) != null
+        ? String(tc.extraColumns.tag || tc.extraColumns.Tag)
+        : '';
+    return {
+      name: (tc.name || '').trim(),
+      tag: tag.trim(),
+      tryCount: typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1,
+      vcdName: (tc.vcdName || '').trim(),
+      binName: (tc.binName || '').trim(),
+      linName: (tc.linName || '').trim(),
+      extraSlots: collectExtraSlotsFromTc(tc),
+    };
+  }, []);
+
+  const canEditRawTcRow = useCallback(
+    (row) => {
+      if (!row) return false;
+      if (row._status === 'running' || row._status === 'pending') return false;
+      if (row._ownerId != null && row._ownerId !== activeProfileId) return false;
+      return true;
+    },
+    [activeProfileId]
+  );
+
+  const openRawTcEditor = useCallback(
+    (tc) => {
+      if (!canEditRawTcRow(tc)) {
+        addToast({
+          type: 'warning',
+          message:
+            tc._ownerId != null && tc._ownerId !== activeProfileId
+              ? 'แก้ได้เฉพาะเทสต์เคสในโปรไฟล์ของคุณ'
+              : 'เทสต์เคสกำลัง Running/Pending — แก้ไม่ได้จนกว่า process จะจบ',
+        });
+        return;
+      }
+      setRawTcEditorKey(tc._key);
+      setRawTcEditorDraft(buildRawTcDraft(tc));
+    },
+    [activeProfileId, addToast, buildRawTcDraft, canEditRawTcRow]
+  );
+
+  const isFileManuallyClosed = useCallback(
+    (file) => {
+      const vis = String(fileVisById?.[file?.id] || file?.visibility || 'open').toLowerCase();
+      return vis === 'close' || vis === 'closed' || vis === 'lock' || vis === 'locked' || vis === 'private';
+    },
+    [fileVisById]
+  );
+
+  const updateTcVisibility = useCallback(
+    (row, isClosed) => {
+      const visVal = isClosed ? 'close' : 'open';
+      const nextExtra = { ...(row.extraColumns || {}), vis: visVal };
+      if (row._source === 'current' && row.id) {
+        updateSavedTestCase(row.id, { extraColumns: nextExtra });
+        return;
+      }
+      if (row._source === 'set' && row._setId != null && row._itemIndex != null) {
+        const set = (savedTestCaseSets || []).find((s) => s.id === row._setId);
+        if (!set || !Array.isArray(set.items) || !set.items[row._itemIndex]) return;
+        const items = [...set.items];
+        items[row._itemIndex] = {
+          ...items[row._itemIndex],
+          extraColumns: nextExtra,
+        };
+        updateSavedTestCaseSet(row._setId, { items });
+      }
+    },
+    [savedTestCaseSets, updateSavedTestCase, updateSavedTestCaseSet]
+  );
+
+  const runSavedSetNow = useCallback(
+    async (set) => {
+      const setName = (set?.name || '').trim() || 'Set';
+      const items = Array.isArray(set?.items) ? set.items : [];
+      if (items.length === 0) {
+        addToast({ type: 'warning', message: 'Set นี้ไม่มี test case ให้รัน' });
+        return;
+      }
+      const mode = runBoardSelection?.mode || 'auto';
+      const boardIds = Array.isArray(runBoardSelection?.boardIds) ? runBoardSelection.boardIds : [];
+      if (mode === 'manual' && boardIds.length === 0) {
+        addToast({ type: 'warning', message: 'ไม่มีบอร์ดที่เลือกไว้ (manual) — ไปที่ Run Set เพื่อเลือกบอร์ดก่อน' });
+        return;
+      }
+      const boardNames =
+        mode === 'auto'
+          ? []
+          : (boards || [])
+              .filter((b) => boardIds.includes(b.id))
+              .map((b) => b.name)
+              .filter(Boolean);
+
+      const libFiles = Array.isArray(uploadedFiles) ? uploadedFiles : [];
+      // Match by normalized filename to avoid false "not found" due to case/whitespace.
+      const libByName = new Map(
+        libFiles.map((f) => [String(f?.name || '').trim().toLowerCase(), f]).filter(([k]) => k)
+      );
+      const missingNames = new Set();
+      const filesPayload = [];
+      let firstBinName = '';
+      const pairsData = [];
+      items.forEach((tc, idx) => {
+        const vcdKey = String(tc?.vcdName || '').trim().toLowerCase();
+        const eromKey = String(tc?.binName || '').trim().toLowerCase();
+        const ulpKey = tc?.linName ? String(tc?.linName || '').trim().toLowerCase() : '';
+        const vcd = vcdKey ? libByName.get(vcdKey) : null;
+        const erom = eromKey ? libByName.get(eromKey) : null;
+        const ulp = ulpKey ? libByName.get(ulpKey) : null;
+        if (!vcd || !erom) {
+          if (tc?.vcdName && !vcd) missingNames.add(String(tc.vcdName).trim());
+          if (tc?.binName && !erom) missingNames.add(String(tc.binName).trim());
+          return;
+        }
+        if (!firstBinName) firstBinName = erom.name;
+        filesPayload.push({
+          name: vcd.name,
+          order: filesPayload.length + 1,
+          vcd: vcd.name,
+          erom: erom.name,
+          ulp: ulp?.name || null,
+          try_count: typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1,
+          testCaseName: (tc.name || '').trim() || `Test case ${idx + 1}`,
+        });
+        pairsData.push({
+          vcdId: vcd.id,
+          binId: erom.id,
+          linId: ulp?.id || null,
+          vcdName: tc.vcdName || '',
+          binName: tc.binName || '',
+          linName: tc.linName || null,
+          try: typeof tc.tryCount === 'number' && tc.tryCount > 0 ? tc.tryCount : 1,
+          boardId: tc.boardId || null,
+          boardName: tc.boardId ? (boards || []).find((b) => b.id === tc.boardId)?.name : null,
+          testCaseName: (tc.name || '').trim() || `Test case ${idx + 1}`,
+        });
+      });
+
+      if (filesPayload.length === 0) {
+        const miss = [...missingNames];
+        if (miss.length > 0) {
+          addToast({
+            type: 'error',
+            message: `Run ไม่ได้ — ไฟล์ไม่ครบใน Library: ${miss.slice(0, 5).join(', ')}${miss.length > 5 ? ` +${miss.length - 5}` : ''}`,
+            duration: 8000,
+          });
+        } else {
+          addToast({ type: 'warning', message: 'Run ไม่ได้ — ไม่มี test case ที่มีทั้ง VCD และ ERoM' });
+        }
+        return;
+      }
+      if (missingNames.size > 0) {
+        addToast({
+          type: 'warning',
+          message: `ข้ามไฟล์ที่ไม่ครบใน Library: ${[...missingNames].slice(0, 4).join(', ')}${missingNames.size > 4 ? ` +${missingNames.size - 4}` : ''}`,
+        });
+      }
+
+      const payload = {
+        name: setName,
+        configName: setName,
+        firmware: firstBinName,
+        boards: boardNames,
+        files: filesPayload,
+        pairsData,
+      };
+      const created = await createJob(payload, { startImmediately: true });
+      if (created) addToast({ type: 'success', message: `ส่ง Run สำหรับ set "${setName}" แล้ว` });
+      else addToast({ type: 'error', message: `Run set "${setName}" ไม่สำเร็จ` });
+    },
+    [addToast, boards, createJob, runBoardSelection, uploadedFiles]
+  );
+
+  const closeRawTcEditor = useCallback(() => {
+    setRawTcEditorKey(null);
+    setRawTcEditorDraft(null);
+  }, []);
+
+  const handleSaveRawTcEditor = useCallback(() => {
+    if (!rawTcEditorKey || !rawTcEditorDraft) return;
+    const row = libraryRawRows.find((r) => r._key === rawTcEditorKey);
+    if (!row) {
+      addToast({ type: 'warning', message: 'ไม่สามารถบันทึกรายการนี้ได้' });
+      return;
+    }
+    if (!canEditRawTcRow(row)) {
+      addToast({ type: 'warning', message: 'ไม่สามารถบันทึกรายการนี้ได้' });
+      return;
+    }
+    const name = (rawTcEditorDraft.name || '').trim();
+    if (!name) {
+      addToast({ type: 'warning', message: 'กรุณากรอกชื่อเทสต์เคส' });
+      return;
+    }
+    const tryCount = Math.min(100, Math.max(1, parseInt(String(rawTcEditorDraft.tryCount), 10) || 1));
+    const vcdName = (rawTcEditorDraft.vcdName || '').trim();
+    const binName = (rawTcEditorDraft.binName || '').trim();
+    const linName = (rawTcEditorDraft.linName || '').trim();
+    const tag = (rawTcEditorDraft.tag || '').trim();
+
+    const mkCmd = (type, file, idx) => ({
+      id: `cmd-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 9)}`,
+      type,
+      file,
+    });
+    let cmdIdx = 0;
+    const vcdCmds = [];
+    const eromCmds = [];
+    const ulpCmds = [];
+    const mdiCmds = [];
+    for (const slot of rawTcEditorDraft.extraSlots || []) {
+      const f = (slot?.file || '').trim();
+      if (!f) continue;
+      const k = slot?.kind;
+      if (k === 'vcd') vcdCmds.push(mkCmd('vcd', f, cmdIdx++));
+      else if (k === 'erom') eromCmds.push(mkCmd('erom', f, cmdIdx++));
+      else if (k === 'ulp') ulpCmds.push(mkCmd('ulp', f, cmdIdx++));
+      else if (k === 'mdi') mdiCmds.push(mkCmd('mdi', f, cmdIdx++));
+    }
+    const commands = [...vcdCmds, ...eromCmds, ...ulpCmds, ...mdiCmds];
+
+    const baseExtra = row.extraColumns && typeof row.extraColumns === 'object' ? { ...row.extraColumns } : {};
+    Object.keys(baseExtra).forEach((k) => {
+      const m = k.match(/^(VCD|ERoM|ULP)(\d+)$/i);
+      if (m && parseInt(m[2], 10) >= 2) delete baseExtra[k];
+    });
+    const nextExtra = { ...baseExtra };
+    if (tag) nextExtra.tag = tag;
+    else {
+      delete nextExtra.tag;
+      delete nextExtra.Tag;
+    }
+
+    const nextTc = {
+      ...row,
+      name,
+      tryCount,
+      vcdName,
+      binName,
+      linName,
+      commands,
+      extraColumns: nextExtra,
+    };
+    const mergedExtra = mergeCommandsIntoExtraForTc(nextTc);
+    const payload = {
+      name,
+      tryCount,
+      vcdName,
+      binName,
+      linName,
+      commands,
+      extraColumns: Object.keys(mergedExtra).length ? mergedExtra : undefined,
+    };
+
+    if (row._source === 'current' && row.id) {
+      updateSavedTestCase(row.id, payload);
+      addToast({ type: 'success', message: 'บันทึกเทสต์เคสแล้ว' });
+      closeRawTcEditor();
+      return;
+    }
+    if (row._source === 'set' && row._setId != null && row._itemIndex != null) {
+      const set = (savedTestCaseSets || []).find((s) => s.id === row._setId);
+      if (!set || !Array.isArray(set.items)) {
+        addToast({ type: 'error', message: 'ไม่พบชุดเทสต์เคส' });
+        return;
+      }
+      const prevItem = set.items[row._itemIndex];
+      if (!prevItem) {
+        addToast({ type: 'error', message: 'ไม่พบรายการใน set' });
+        return;
+      }
+      const updatedItem = {
+        ...prevItem,
+        ...payload,
+        id: prevItem.id,
+      };
+      const newItems = [...set.items];
+      newItems[row._itemIndex] = updatedItem;
+      const allNames = new Set();
+      newItems.forEach((t) => {
+        collectFileNamesFromTestCase(t).forEach((n) => allNames.add(n));
+      });
+      const fileLibrarySnapshot = [...allNames].map((n) => ({ name: n }));
+      updateSavedTestCaseSet(row._setId, { items: newItems, fileLibrarySnapshot });
+      addToast({ type: 'success', message: 'บันทึกเทสต์เคสใน set แล้ว' });
+      closeRawTcEditor();
+      return;
+    }
+    addToast({ type: 'warning', message: 'บันทึกไม่สำเร็จ — ไม่รู้จักแหล่งข้อมูล' });
+  }, [
+    rawTcEditorKey,
+    rawTcEditorDraft,
+    libraryRawRows,
+    canEditRawTcRow,
+    addToast,
+    mergeCommandsIntoExtraForTc,
+    collectFileNamesFromTestCase,
+    updateSavedTestCase,
+    updateSavedTestCaseSet,
+    savedTestCaseSets,
+    closeRawTcEditor,
+  ]);
+
+  useEffect(() => {
+    if (!rawTcEditorKey) return;
+    const stillThere = libraryRawRows.some((r) => r._key === rawTcEditorKey);
+    if (!stillThere) closeRawTcEditor();
+  }, [rawTcEditorKey, libraryRawRows, closeRawTcEditor]);
+
   useEffect(() => {
     const onMouseUp = () => {
       isDragSelectingLibraryRef.current = false;
@@ -880,54 +1421,351 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
       )}
 
       {showAllTagsForFileId && (
-        <div className="fixed inset-0 z-[85] flex items-center justify-center">
+        <div className="fixed inset-0 z-[85] flex items-center justify-center p-4">
           <div
             className="absolute inset-0 bg-black/50"
-            onClick={() => setShowAllTagsForFileId(null)}
+            onClick={() => {
+              setShowAllTagsForFileId(null);
+              setFileTagsModalEditIndex(null);
+              setFileTagsModalEditDraft('');
+              setFileTagsModalAddDraft('');
+              setFileTagsModalAddOpen(false);
+            }}
+            role="presentation"
           />
-          <div className="relative w-[min(520px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl">
-            <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
-              <div className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
-                Tags
-              </div>
+          <div
+            className="relative w-[min(520px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2 flex-wrap">
+              <div className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">Tags</div>
               <button
                 type="button"
-                onClick={() => setShowAllTagsForFileId(null)}
+                onClick={() => {
+                  const id = showAllTagsForFileId;
+                  if (!id) return;
+                  const keys = Object.keys(FILE_TAG_PALETTE_MAP);
+                  const cur = fileTagColors?.[id] || 'mint';
+                  const idx = Math.max(0, keys.indexOf(cur));
+                  setFileTagColor?.(id, keys[(idx + 1) % keys.length]);
+                }}
+                className="inline-flex items-center justify-center p-2 rounded-xl border border-amber-200/80 dark:border-amber-700/60 bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/50 dark:to-orange-950/40 text-amber-700 dark:text-amber-300 shadow-sm hover:brightness-105 dark:hover:brightness-110 transition-[filter]"
+                title="สลับสี tag (ทั้งแถวใน Files)"
+              >
+                <PaintBucket size={18} strokeWidth={2} className="shrink-0" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAllTagsForFileId(null);
+                  setFileTagsModalEditIndex(null);
+                  setFileTagsModalEditDraft('');
+                  setFileTagsModalAddDraft('');
+                  setFileTagsModalAddOpen(false);
+                }}
                 className="ml-auto p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
                 title="Close"
               >
                 <X size={18} />
               </button>
             </div>
-            <div className="p-5">
+            <div className="p-5 max-h-[min(60vh,360px)] overflow-y-auto">
               {(() => {
-                const raw = (fileTags && fileTags[showAllTagsForFileId]) || '';
+                const fid = showAllTagsForFileId;
+                const raw = (fileTags && fileTags[fid]) || '';
                 const tags = splitTags(raw);
-                return tags.length === 0 ? (
-                  <div className="text-sm text-slate-500 dark:text-slate-400">No tags</div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {tags.map((t, i) => (
-                      <span
-                        key={`${showAllTagsForFileId}-alltag-${i}-${t}`}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700"
-                      >
-                        <span className="max-w-[360px] truncate" title={t}>{t}</span>
+                const colorKey = FILE_TAG_PALETTE_MAP[fileTagColors?.[fid]] ? fileTagColors[fid] : 'mint';
+                const pillClass = FILE_TAG_PALETTE_MAP[colorKey] || FILE_TAG_PALETTE_MAP.mint;
+                const commitFileTagsModalEdit = () => {
+                  if (fileTagsModalEditIndex == null) return;
+                  const r = (fileTags && fileTags[fid]) || '';
+                  const next = replaceTagAtIndexInRaw(r, fileTagsModalEditIndex, fileTagsModalEditDraft);
+                  setFileTag?.(fid, next);
+                  setFileTagsModalEditIndex(null);
+                  setFileTagsModalEditDraft('');
+                };
+                return (
+                  <div className="space-y-3">
+                    {tags.length === 0 ? (
+                      <div className="text-sm text-slate-500 dark:text-slate-400">No tags yet</div>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {tags.map((t, i) => (
+                          <span
+                            key={`${fid}-alltag-${i}`}
+                            className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border ${pillClass}`}
+                          >
+                            {fileTagsModalEditIndex === i ? (
+                              <input
+                                type="text"
+                                value={fileTagsModalEditDraft}
+                                onChange={(e) => setFileTagsModalEditDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    commitFileTagsModalEdit();
+                                  }
+                                  if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    setFileTagsModalEditIndex(null);
+                                    setFileTagsModalEditDraft('');
+                                  }
+                                }}
+                                onBlur={commitFileTagsModalEdit}
+                                className="min-w-[100px] max-w-[280px] px-2 py-0.5 text-xs rounded-md border border-blue-400 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                                autoFocus
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFileTagsModalEditIndex(i);
+                                  setFileTagsModalEditDraft(t);
+                                }}
+                                className="max-w-[260px] truncate text-left font-medium hover:underline"
+                                title="คลิกเพื่อแก้ไขชื่อ"
+                              >
+                                {t}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                if (fileTagsModalEditIndex === i) {
+                                  setFileTagsModalEditIndex(null);
+                                  setFileTagsModalEditDraft('');
+                                }
+                                const r0 = (fileTags && fileTags[fid]) || '';
+                                setFileTag?.(fid, removeTagAtIndexFromRaw(r0, i));
+                              }}
+                              className="ml-0.5 w-5 h-5 rounded-full inline-flex items-center justify-center hover:bg-black/10 dark:hover:bg-white/10"
+                              title="Remove tag"
+                            >
+                              <X size={12} />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {fileTagsModalAddOpen ? (
+                        <input
+                          type="text"
+                          value={fileTagsModalAddDraft}
+                          onChange={(e) => setFileTagsModalAddDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Escape') {
+                              e.preventDefault();
+                              setFileTagsModalAddOpen(false);
+                              setFileTagsModalAddDraft('');
+                              return;
+                            }
+                            if (e.key !== 'Enter') return;
+                            e.preventDefault();
+                            const add = fileTagsModalAddDraft.trim();
+                            if (!add) {
+                              setFileTagsModalAddOpen(false);
+                              return;
+                            }
+                            const r = (fileTags && fileTags[fid]) || '';
+                            setFileTag?.(fid, upsertTagsString(r, add));
+                            setFileTagsModalAddDraft('');
+                            setFileTagsModalAddOpen(false);
+                          }}
+                          onBlur={() => {
+                            const add = fileTagsModalAddDraft.trim();
+                            if (!add) {
+                              setFileTagsModalAddOpen(false);
+                              setFileTagsModalAddDraft('');
+                            }
+                          }}
+                          className="flex-1 min-w-[160px] px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100"
+                          placeholder="Type and press Enter (comma allowed)"
+                          autoFocus
+                        />
+                      ) : (
                         <button
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const current = (fileTags && fileTags[showAllTagsForFileId]) || '';
-                            const next = removeOneTagFromString(current, t);
-                            setFileTag?.(showAllTagsForFileId, next);
+                          onClick={() => {
+                            setFileTagsModalAddOpen(true);
+                            setFileTagsModalAddDraft('');
                           }}
-                          className="ml-0.5 w-5 h-5 rounded-full inline-flex items-center justify-center hover:bg-blue-100 dark:hover:bg-blue-900/40"
-                          title="Remove tag"
+                          className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 shadow-sm"
+                          title="Add tag"
                         >
-                          <X size={12} />
+                          <Plus size={18} strokeWidth={2.5} />
                         </button>
-                      </span>
-                    ))}
+                      )}
+                    </div>
+                    
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {libraryRawTcTagOverflowKey && (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/50"
+            onClick={() => {
+              setLibraryRawTcTagOverflowKey(null);
+              setLibraryRawTcTagModalAddDraft('');
+              setLibraryRawTcTagModalEditIndex(null);
+              setLibraryRawTcTagModalEditDraft('');
+            }}
+            role="presentation"
+          />
+          <div
+            className="relative w-[min(520px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+              <div className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">Tags</div>
+              <button
+                type="button"
+                onClick={() => {
+                  setLibraryRawTcTagOverflowKey(null);
+                  setLibraryRawTcTagModalAddDraft('');
+                  setLibraryRawTcTagModalEditIndex(null);
+                  setLibraryRawTcTagModalEditDraft('');
+                }}
+                className="ml-auto p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-5 max-h-[min(60vh,360px)] overflow-y-auto">
+              {(() => {
+                const otc = libraryFilteredRows.find((r) => (r._key || '') === libraryRawTcTagOverflowKey);
+                if (!otc) {
+                  return <div className="text-sm text-slate-500 dark:text-slate-400">—</div>;
+                }
+                const raw = (otc.extraColumns && (otc.extraColumns.tag || otc.extraColumns.Tag)) || '';
+                const allTags = splitTags(raw);
+                const modalLocked =
+                  otc._status === 'running' ||
+                  otc._status === 'pending' ||
+                  isTcManuallyClosed(otc);
+                const commitLibraryRawTcTagModalEdit = () => {
+                  if (libraryRawTcTagModalEditIndex == null) return;
+                  const row = libraryFilteredRows.find((r) => (r._key || '') === libraryRawTcTagOverflowKey);
+                  if (!row) {
+                    setLibraryRawTcTagModalEditIndex(null);
+                    setLibraryRawTcTagModalEditDraft('');
+                    return;
+                  }
+                  const r = (row.extraColumns && (row.extraColumns.tag || row.extraColumns.Tag)) || '';
+                  const next = replaceTagAtIndexInRaw(r, libraryRawTcTagModalEditIndex, libraryRawTcTagModalEditDraft);
+                  patchLibraryTcExtraColumns(row, { tag: next });
+                  setLibraryRawTcTagModalEditIndex(null);
+                  setLibraryRawTcTagModalEditDraft('');
+                };
+                return (
+                  <div className="space-y-3">
+                    {allTags.length === 0 ? (
+                      <div className="text-sm text-slate-500 dark:text-slate-400">
+                        {modalLocked ? 'No tags' : 'No tags yet — add below'}
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {allTags.map((t, i) => (
+                          <span
+                            key={`lib-raw-tc-alltag-${libraryRawTcTagOverflowKey}-${i}`}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700"
+                          >
+                            {libraryRawTcTagModalEditIndex === i ? (
+                              <input
+                                type="text"
+                                value={libraryRawTcTagModalEditDraft}
+                                onChange={(e) => setLibraryRawTcTagModalEditDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    commitLibraryRawTcTagModalEdit();
+                                  }
+                                  if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    setLibraryRawTcTagModalEditIndex(null);
+                                    setLibraryRawTcTagModalEditDraft('');
+                                  }
+                                }}
+                                onBlur={commitLibraryRawTcTagModalEdit}
+                                className="min-w-[100px] max-w-[280px] px-2 py-0.5 text-xs rounded-md border border-blue-400 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                                autoFocus
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={modalLocked}
+                                onClick={() => {
+                                  if (modalLocked) return;
+                                  setLibraryRawTcTagModalEditIndex(i);
+                                  setLibraryRawTcTagModalEditDraft(t);
+                                }}
+                                className="max-w-[260px] truncate text-left font-medium hover:underline disabled:cursor-default disabled:no-underline"
+                                title={modalLocked ? t : 'คลิกเพื่อแก้ไขชื่อ'}
+                              >
+                                {t}
+                              </button>
+                            )}
+                            {!modalLocked && (
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  if (libraryRawTcTagModalEditIndex === i) {
+                                    setLibraryRawTcTagModalEditIndex(null);
+                                    setLibraryRawTcTagModalEditDraft('');
+                                  }
+                                  const row = libraryFilteredRows.find(
+                                    (r) => (r._key || '') === libraryRawTcTagOverflowKey
+                                  );
+                                  if (!row) return;
+                                  const r0 = (row.extraColumns && (row.extraColumns.tag || row.extraColumns.Tag)) || '';
+                                  patchLibraryTcExtraColumns(row, { tag: removeTagAtIndexFromRaw(r0, i) });
+                                }}
+                                className="ml-0.5 w-5 h-5 rounded-full inline-flex items-center justify-center hover:bg-blue-100 dark:hover:bg-blue-900/40"
+                                title="Remove tag"
+                              >
+                                <X size={12} />
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {!modalLocked && (
+                      <div>
+                        <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">
+                          Add tag
+                        </label>
+                        <input
+                          type="text"
+                          value={libraryRawTcTagModalAddDraft}
+                          onChange={(e) => setLibraryRawTcTagModalAddDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key !== 'Enter') return;
+                            e.preventDefault();
+                            const add = libraryRawTcTagModalAddDraft.trim();
+                            if (!add) return;
+                            const r =
+                              (otc.extraColumns && (otc.extraColumns.tag || otc.extraColumns.Tag)) || '';
+                            const next = upsertTagsString(r, add);
+                            patchLibraryTcExtraColumns(otc, { tag: next });
+                            setLibraryRawTcTagModalAddDraft('');
+                          }}
+                          className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100"
+                          placeholder="Type and press Enter (comma allowed)"
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -1057,7 +1895,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
           </div>
           {onNavigateToTestCases && (
             <button type="button" onClick={onNavigateToTestCases} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-sm font-medium hover:bg-slate-200 dark:hover:bg-slate-600">
-              Go to Test Cases <ChevronRight size={14} />
+              Go to Create Test Case <ChevronRight size={14} />
             </button>
           )}
         </div>
@@ -1159,17 +1997,25 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                     }
                     return true;
                   });
-                  const extraCols = [...new Set((items || []).flatMap((t) => Object.keys(t.extraColumns || {})))].sort();
+                  const extraCols = [...new Set((items || []).flatMap((t) => Object.keys(t.extraColumns || {})))]
+                    .filter((col) => !/^tag(color)?$/i.test(col))
+                    .filter((col) => !/^vis$/i.test(col))
+                    .sort();
                   const setName = set.name || `Set ${setIdx + 1}`;
                   const setStatusRaw = setStatusByName.get(setName) || null;
                   const setStatus = (setStatusRaw || '').toLowerCase();
-                  const isSetLocked = setStatus === 'running';
+                  const isSetLocked = setStatus === 'running' || setStatus === 'pending';
                   const toggleSetTc = (key, rowIndex, e) => {
+                    const row = filteredItems[rowIndex];
+                    if (row && isTcManuallyClosed(row)) return;
                     const last = lastClickedLibrarySetTcRef.current;
                     if (e.shiftKey && last.setId === set.id) {
                       const from = Math.min(last.index, rowIndex);
                       const to = Math.max(last.index, rowIndex);
-                      const keysToAdd = filteredItems.slice(from, to + 1).map((r) => `${set.id}::${r._origIndex}`);
+                      const keysToAdd = filteredItems
+                        .slice(from, to + 1)
+                        .filter((r) => !isTcManuallyClosed(r))
+                        .map((r) => `${set.id}::${r._origIndex}`);
                       setSelectedLibrarySetTcKeys((prev) => [...new Set([...prev, ...keysToAdd])]);
                       lastClickedLibrarySetTcRef.current = { setId: set.id, index: rowIndex };
                       return;
@@ -1218,35 +2064,27 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                           {setSelectedKeysInSet > 0 && (
                             <span className="text-xs text-slate-500">{setSelectedKeysInSet} selected</span>
                           )}
-                          {onNavigateToTestCases && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (isSetLocked) {
-                                  addToast({
-                                    type: 'warning',
-                                    message:
-                                      'ชุด Set นี้กำลังถูกใช้รันอยู่ (pending/running) — กรุณารอให้จบก่อนจึงจะแก้ไขได้',
-                                  });
-                                  return;
-                                }
-                                onNavigateToTestCases();
-                              }}
-                              className={`text-xs font-medium hover:underline ${
-                                isSetLocked
-                                  ? 'text-slate-400 dark:text-slate-500 cursor-not-allowed'
-                                  : 'text-blue-600 dark:text-blue-400'
-                              }`}
-                              disabled={isSetLocked}
-                              title={
-                                isSetLocked
-                                  ? 'Set is running or pending — cannot edit test cases now'
-                                  : 'Edit test cases in this set'
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isSetLocked) {
+                                addToast({ type: 'warning', message: 'Set นี้กำลัง running/pending — ยัง run ซ้ำไม่ได้' });
+                                return;
                               }
-                            >
-                              Edit Test Cases
-                            </button>
-                          )}
+                              void runSavedSetNow(set);
+                            }}
+                            disabled={isSetLocked}
+                            className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-semibold ${
+                              isSetLocked
+                                ? 'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed'
+                                : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                            }`}
+                            title={isSetLocked ? 'Set นี้กำลัง running/pending' : 'Run this set now'}
+                          >
+                            <Play size={12} />
+                            Run
+                          </button>
+                          <span className="w-px h-6 bg-slate-200 dark:bg-slate-700 mx-1" aria-hidden />
                           <button
                             type="button"
                             onClick={async () => {
@@ -1266,7 +2104,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                             }}
                             disabled={isSetLocked}
                             className={`p-1.5 rounded ${isSetLocked ? 'opacity-50 cursor-not-allowed text-slate-400' : 'hover:bg-red-600/10 text-red-600 dark:text-red-400'}`}
-                            title={isSetLocked ? 'ไม่สามารถลบได้ — Set กำลัง running/pending' : 'Delete set from Saved (ไม่ลบ test cases หรือไฟล์ใน Library)'}
+                            title={isSetLocked ? 'Cannot delete — Set is running/pending' : 'Delete set from Saved (ไม่ลบ test cases หรือไฟล์ใน Library)'}
                           >
                             <Trash2 size={14} />
                           </button>
@@ -1300,30 +2138,55 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                               filteredItems.map((tc, idx) => {
                                 const key = rowKey(tc);
                                 const isSelected = selectedSetKeys.has(key);
+                                const isClosed = isTcManuallyClosed(tc);
                                 const historyCount = getTestCaseHistory(tc).length;
                                 return (
                                   <tr
                                     key={key}
-                                    className={`border-b border-slate-100 dark:border-slate-700 cursor-pointer select-none ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'}`}
-                                    onClick={(e) => { if (e.target.closest('input[type="checkbox"]')) return; toggleSetTc(key, idx, e); }}
+                                    className={`border-b border-slate-100 dark:border-slate-700 cursor-pointer select-none ${isClosed ? 'opacity-70 bg-slate-50 dark:bg-slate-800/50 cursor-not-allowed' : ''} ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : !isClosed ? 'hover:bg-slate-50 dark:hover:bg-slate-800/50' : ''}`}
+                                    onClick={(e) => {
+                                      if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return;
+                                      if (isClosed) return;
+                                      toggleSetTc(key, idx, e);
+                                    }}
                                     onDoubleClick={(e) => {
                                       if (e.target.closest('input[type="checkbox"]')) return;
+                                      if (isClosed) return;
                                       if (onNavigateToTestCases && setLibraryEditContext) {
                                         setLibraryEditContext({ loadSetId: set.id, focusTcIndex: tc._origIndex });
                                         onNavigateToTestCases();
                                       }
                                     }}
                                     title="Double-click to edit in Test Cases page"
-                                    onMouseDown={(e) => { if (e.target.closest('input[type="checkbox"]')) return; if (e.button === 0) { isDragSelectingLibrarySetRef.current = true; if (!selectedSetKeys.has(key)) setSelectedLibrarySetTcKeys((prev) => [...prev, key]); } }}
-                                    onMouseEnter={() => { if (!isDragSelectingLibrarySetRef.current) return; if (!selectedSetKeys.has(key)) setSelectedLibrarySetTcKeys((prev) => [...prev, key]); }}
+                                    onMouseDown={(e) => {
+                                      if (e.target.closest('input[type="checkbox"]') || e.target.closest('button') || isClosed) return;
+                                      if (e.button === 0) {
+                                        isDragSelectingLibrarySetRef.current = true;
+                                        if (!selectedSetKeys.has(key)) setSelectedLibrarySetTcKeys((prev) => [...prev, key]);
+                                      }
+                                    }}
+                                    onMouseEnter={() => { if (!isDragSelectingLibrarySetRef.current || isClosed) return; if (!selectedSetKeys.has(key)) setSelectedLibrarySetTcKeys((prev) => [...prev, key]); }}
                                   >
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700" onClick={(e) => e.stopPropagation()}>
-                                      <input type="checkbox" checked={isSelected} onChange={() => toggleSetTc(key, idx, { shiftKey: false, ctrlKey: false, metaKey: false })} className="w-4 h-4 rounded cursor-pointer" />
+                                      <input type="checkbox" checked={isSelected} disabled={isClosed} onChange={() => { if (!isClosed) toggleSetTc(key, idx, { shiftKey: false, ctrlKey: false, metaKey: false }); }} className={`w-4 h-4 rounded ${isClosed ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`} />
                                     </td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-500">{idx + 1}</td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 font-medium text-slate-800 dark:text-slate-200">{tc.name || '—'}</td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400 truncate max-w-[80px]" title={activeProfile.name}>{activeProfile.name}</td>
-                                    <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center" title="public"><span className="inline-flex items-center justify-center text-slate-400 dark:text-slate-500"><Globe size={14} /></span></td>
+                                    <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          updateTcVisibility({ ...tc, _source: 'set', _setId: set.id, _itemIndex: tc._origIndex }, !isClosed);
+                                          setSelectedLibrarySetTcKeys((prev) => prev.filter((k) => k !== key));
+                                        }}
+                                        className={`inline-flex items-center justify-center p-1 rounded ${isClosed ? 'text-amber-500 hover:bg-amber-500/10' : 'text-slate-400 hover:bg-slate-500/10'}`}
+                                        title={isClosed ? 'Closed — click to open/selectable' : 'Open — click to close/lock from select all'}
+                                      >
+                                        {isClosed ? <Lock size={14} /> : <Globe size={14} />}
+                                      </button>
+                                    </td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center text-slate-500 dark:text-slate-400 text-xs">{tc.createdAt ? new Date(tc.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">{tc.binName || '—'}</td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-600 dark:text-slate-300">{tc.linName || '—'}</td>
@@ -1386,7 +2249,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
         /* Raw Test Cases — filter name/tag, multi-select (shift/ctrl + drag), delete selected */
         (() => {
           const selectedSet = new Set(selectedLibraryTcKeys);
-          const isTcRowLocked = (row) => (row._status === 'running' || row._status === 'pending');
+          const isTcRowLocked = (row) => (row._status === 'running' || row._status === 'pending' || isTcManuallyClosed(row));
           const selectableTcKeys = libraryFilteredRows.filter((r) => !isTcRowLocked(r)).map((r) => r._key).filter(Boolean);
           const hasRunningOrPendingInSelection = libraryFilteredRows.some((r) => selectedSet.has(r._key) && isTcRowLocked(r));
           const getExtraColKeys = (t) => {
@@ -1421,6 +2284,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
          const allCols = [...new Set(libraryFilteredRows.flatMap(getExtraColKeys))].sort();
          const extraCols = allCols
            .filter((col) => !/^tag(color)?$/i.test(col))
+           .filter((col) => !/^vis$/i.test(col))
            .filter((col) => libraryFilteredRows.some((t) => (getExtraVal(t, col) ?? '').toString().trim() !== ''));
           const toggleSelect = (key, idx, e) => {
             const row = libraryFilteredRows[idx];
@@ -1464,34 +2328,77 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
               return;
             }
             if (hasRunningOrPendingInSelection) {
-              addToast({ type: 'warning', message: 'Test case ที่มีสถานะ Running/Pending ไม่สามารถลบได้ — รอให้ process จบก่อน' });
+              addToast({ type: 'warning', message: 'Test case are running/pending — cannot be deleted until process is finished' });
               return;
             }
-            if (!window.confirm(`Delete ${selectedSet.size} selected test case(s)?`)) return;
-            const toRemove = libraryRawRows.filter((r) => r._key && selectedSet.has(r._key)).filter((r) => !isTcRowLocked(r));
+            const toRemove = libraryRawRows
+              .filter((r) => r._key && selectedSet.has(r._key))
+              .filter((r) => !isTcRowLocked(r));
+            if (!window.confirm(`Delete ${toRemove.length} selected test case(s)?`)) return;
+
             const bySet = {};
             toRemove.forEach((row) => {
+              // Library item: remove from Test Case Library
               if (row._source === 'current' && row.id) {
                 removeSavedTestCase(row.id);
-              } else if (row._source === 'set' && row._setId != null && row._itemIndex != null) {
+                return;
+              }
+
+              // Set item: remove from that set only (do NOT delete library item)
+              if (row._source === 'set' && row._setId != null && row._itemIndex != null) {
                 if (!bySet[row._setId]) bySet[row._setId] = new Set();
                 bySet[row._setId].add(row._itemIndex);
               }
             });
+
             Object.entries(bySet).forEach(([setId, indices]) => {
               const set = (savedTestCaseSets || []).find((s) => s.id === setId);
               if (!set || !Array.isArray(set.items)) return;
               const newItems = set.items.filter((_, i) => !indices.has(i));
               updateSavedTestCaseSet(setId, { items: newItems });
             });
+
             setSelectedLibraryTcKeys([]);
             addToast({ type: 'success', message: `Deleted ${toRemove.length} test case(s)` });
+          };
+          const handleSendSelectedToRunSet = () => {
+            if (selectedSet.size === 0) {
+              addToast({ type: 'info', message: 'Select test case(s) first' });
+              return;
+            }
+            if (!onNavigateToRunSet || !setRunSetImportContext) return;
+            const byKey = new Map(libraryRawRows.filter((r) => r._key).map((r) => [r._key, r]));
+            const orderedKeys = selectedLibraryTcKeys.filter((k) => selectedSet.has(k) && byKey.has(k));
+            const rows = orderedKeys
+              .map((k) => byKey.get(k))
+              .filter(Boolean)
+              .map((row) => ({
+                name: (row.name || '').trim(),
+                vcdName: row.vcdName || '',
+                binName: row.binName || '',
+                linName: row.linName || '',
+                tryCount: typeof row.tryCount === 'number' && row.tryCount > 0 ? row.tryCount : 1,
+                extraColumns: row.extraColumns && typeof row.extraColumns === 'object' ? { ...row.extraColumns } : {},
+                createdAt: row.createdAt || new Date().toISOString(),
+              }));
+            if (!rows.length) {
+              addToast({ type: 'warning', message: 'ไม่พบ test case ที่เลือก' });
+              return;
+            }
+            setRunSetImportContext({
+              items: rows,
+              name: `Selected ${rows.length} test case(s)`,
+            });
+            onNavigateToRunSet();
+            addToast({ type: 'success', message: `Sent ${rows.length} test case(s) to Run Set` });
           };
           return (
             <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
               <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-600">
                 <h2 className="text-sm font-bold text-slate-700 dark:text-slate-200">Raw Test Cases</h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1"></p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  
+                </p>
               </div>
               <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-700 flex flex-wrap items-center gap-3">
                 <select
@@ -1537,11 +2444,24 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                 >
                   <Trash2 size={18} strokeWidth={2} />
                 </button>
+                {onNavigateToRunSet && (
+                  <button
+                    type="button"
+                    onClick={handleSendSelectedToRunSet}
+                    disabled={selectedSet.size === 0}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                    title={selectedSet.size > 0 ? `Send ${selectedSet.size} selected to Run Set` : 'Select test cases to send'}
+                  >
+                    <Plus size={14} />
+                    Send to Run Set
+                  </button>
+                )}
                 {selectedSet.size > 0 && (
                   <span className="text-xs text-slate-500">{selectedSet.size} selected{hasRunningOrPendingInSelection ? ' (มีรายการที่ล็อก)' : ''}</span>
                 )}
               </div>
-              <div className="overflow-x-auto overflow-y-visible rounded-b-xl table-scroll-smooth" style={{ scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch' }}>
+              <div className="flex flex-col xl:flex-row gap-4 px-4 pb-4 xl:items-start">
+                <div className="flex-1 min-w-0 overflow-x-auto overflow-y-visible rounded-b-xl table-scroll-smooth" style={{ scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch' }}>
                 <table className="w-full text-sm min-w-max">
                   <thead>
                     <tr className="bg-slate-100 dark:bg-slate-800 text-left text-xs font-bold text-slate-600 dark:text-slate-400">
@@ -1561,7 +2481,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                       <th className="min-w-[120px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">Name</th>
                       <th className="w-24 px-2 py-2 border-r border-slate-200 dark:border-slate-600" title="Owner">Owner</th>
                       <th className="w-10 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center" title="Visibility">Vis</th>
-                      <th className="w-28 px-2 py-2 border-r border-slate-200 dark:border-slate-600">Tag</th>
+                      <th className="min-w-[168px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">Tag</th>
                       <th className="w-24 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Date</th>
                       <th className="min-w-[100px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">ERoM</th>
                       <th className="min-w-[100px] px-2 py-2 border-r border-slate-200 dark:border-slate-600">ULP</th>
@@ -1572,13 +2492,14 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                       ))}
                       <th className="w-14 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Try</th>
                       <th className="w-24 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Status</th>
+                      <th className="w-20 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">Edit</th>
                       <th className="w-20 px-2 py-2 border-r border-slate-200 dark:border-slate-600 text-center">History</th>
                     </tr>
                   </thead>
                   <tbody>
                     {libraryFilteredRows.length === 0 ? (
                       <tr>
-                        <td colSpan={14 + extraCols.length} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400 text-sm">
+                        <td colSpan={15 + extraCols.length} className="px-4 py-8 text-center text-slate-500 dark:text-slate-400 text-sm">
                           No test cases yet — or no match for filter. Create on Test Cases page or clear filters.
                         </td>
                       </tr>
@@ -1593,30 +2514,39 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                             key={key}
                             className={`border-b border-slate-100 dark:border-slate-700 select-none ${isRowLocked ? 'opacity-75 bg-slate-50 dark:bg-slate-800/50 cursor-not-allowed' : 'cursor-pointer'} ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : !isRowLocked ? 'hover:bg-slate-50 dark:hover:bg-slate-800/50' : ''}`}
                             onClick={(e) => {
-                              if (e.target.closest('input[type="checkbox"]')) return;
+                              if (
+                                e.target.closest('input[type="checkbox"]') ||
+                                e.target.closest('input[type="text"]') ||
+                                e.target.closest('button')
+                              ) {
+                                return;
+                              }
                               if (isRowLocked) return;
                               toggleSelect(key, idx, e);
                             }}
                             onDoubleClick={(e) => {
-                              if (e.target.closest('input[type="checkbox"]')) return;
+                              if (
+                                e.target.closest('input[type="checkbox"]') ||
+                                e.target.closest('input[type="text"]') ||
+                                e.target.closest('button')
+                              ) {
+                                return;
+                              }
                               if (isRowLocked) {
                                 addToast({ type: 'warning', message: 'Test case กำลัง Running/Pending — ไม่สามารถแก้ไขได้จนกว่า process จะจบ' });
                                 return;
                               }
-                              if (onNavigateToTestCases && setLibraryEditContext) {
-                                if (tc._source === 'current' && tc.id) {
-                                  setLibraryEditContext({ focusTcId: tc.id });
-                                } else if (tc._source === 'set' && tc._setId != null && tc._itemIndex != null) {
-                                  setLibraryEditContext({ loadSetId: tc._setId, focusTcIndex: tc._itemIndex });
-                                } else {
-                                  setLibraryEditContext(null);
-                                }
-                                onNavigateToTestCases();
-                              }
+                              openRawTcEditor(tc);
                             }}
-                            title={isRowLocked ? 'กำลัง Running/Pending — ล็อกการแก้ไข/ลบ' : 'Double-click to edit in Test Cases page'}
+                            title={isRowLocked ? 'รายการนี้ถูกล็อก (Running/Pending หรือ Vis=close)' : 'ดับเบิลคลิกเพื่อแก้ไขในหน้านี้'}
                             onMouseDown={(e) => {
-                              if (e.target.closest('input[type="checkbox"]')) return;
+                              if (
+                                e.target.closest('input[type="checkbox"]') ||
+                                e.target.closest('input[type="text"]') ||
+                                e.target.closest('button')
+                              ) {
+                                return;
+                              }
                               if (isRowLocked) return;
                               if (e.button === 0) handleRowMouseDown(key, idx);
                             }}
@@ -1629,7 +2559,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                 disabled={isRowLocked}
                                 onChange={() => { if (!isRowLocked) toggleSelect(key, idx, { shiftKey: false, ctrlKey: false, metaKey: false }); }}
                                 className={`w-4 h-4 rounded ${isRowLocked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
-                                title={isRowLocked ? 'ไม่สามารถเลือก — กำลัง Running/Pending' : undefined}
+                                title={isRowLocked ? 'ไม่สามารถเลือก — Running/Pending หรือ Vis=close' : undefined}
                               />
                             </td>
                             <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-500">
@@ -1641,13 +2571,24 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                             <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400 truncate max-w-[80px]" title={tc._owner || '—'}>
                               {tc._owner || '—'}
                             </td>
-                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center" title="public">
-                              <span className="inline-flex items-center justify-center text-slate-400 dark:text-slate-500" title="public"><Globe size={14} /></span>
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  updateTcVisibility(tc, !isTcManuallyClosed(tc));
+                                  setSelectedLibraryTcKeys((prev) => prev.filter((k) => k !== key));
+                                }}
+                                className={`inline-flex items-center justify-center p-1 rounded ${isTcManuallyClosed(tc) ? 'text-amber-500 hover:bg-amber-500/10' : 'text-slate-400 hover:bg-slate-500/10'}`}
+                                title={isTcManuallyClosed(tc) ? 'Closed — click to open/selectable' : 'Open — click to close/lock from select all'}
+                              >
+                                {isTcManuallyClosed(tc) ? <Lock size={14} /> : <Globe size={14} />}
+                              </button>
                             </td>
-                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700">
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 min-w-[160px]">
                               {(() => {
                                 const rawTag = (tc.extraColumns && (tc.extraColumns.tag || tc.extraColumns.Tag)) || '';
-                                const tagVal = String(rawTag || '').trim();
+                                const tags = splitTags(rawTag);
                                 const paletteMap = {
                                   mint: 'bg-emerald-100 text-emerald-800 border-emerald-200',
                                   sky: 'bg-sky-100 text-sky-800 border-sky-200',
@@ -1661,50 +2602,187 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                 const palette = paletteMap[colorKey];
                                 const cycleColor = (e) => {
                                   e.stopPropagation();
-                                  if (!tagVal) return;
+                                  if (!tags.length) return;
                                   const keys = Object.keys(paletteMap);
                                   const idx = Math.max(0, keys.indexOf(colorKey));
                                   const nextKey = keys[(idx + 1) % keys.length];
-                                  const nextExtra = {
-                                    ...(tc.extraColumns || {}),
-                                    tagColor: nextKey,
-                                  };
-                                  if (tc._source === 'current' && tc.id) {
-                                    updateSavedTestCase(tc.id, { extraColumns: nextExtra });
-                                  } else if (tc._source === 'set' && tc._setId != null && tc._itemIndex != null) {
-                                    const set = (savedTestCaseSets || []).find((s) => s.id === tc._setId);
-                                    if (!set || !Array.isArray(set.items)) return;
-                                    const items = [...set.items];
-                                    if (!items[tc._itemIndex]) return;
-                                    items[tc._itemIndex] = {
-                                      ...items[tc._itemIndex],
-                                      extraColumns: nextExtra,
-                                    };
-                                    updateSavedTestCaseSet(tc._setId, { items });
-                                  }
+                                  patchLibraryTcExtraColumns(tc, { tagColor: nextKey });
                                 };
-                                if (!tagVal) {
+                                const openTagModal = () => {
+                                  setLibraryRawTcTagOverflowKey(key);
+                                  setLibraryRawTcTagModalAddDraft('');
+                                  setLibraryRawTcTagModalEditIndex(null);
+                                  setLibraryRawTcTagModalEditDraft('');
+                                };
+                                const tagLocked = isRowLocked;
+                                /** … = จัดการ tag ทั้งหมด — pill คลิกสลับสีอย่างเดียว */
+                                const showEllipsis = tagLocked ? tags.length > 1 : tags.length >= 1;
+
+                                if (tags.length === 0) {
                                   return (
-                                    <button
-                                      type="button"
-                                      onClick={cycleColor}
-                                      className="inline-flex items-center px-2 py-0.5 rounded-full border border-dashed border-slate-400/60 text-[11px] text-slate-300 hover:border-slate-300 hover:text-slate-200 transition-colors"
-                                      title="Click to choose tag color"
-                                    >
-                                      No tag
-                                    </button>
+                                    <div className="flex flex-wrap items-center gap-1 min-w-0">
+                                      {tagLocked ? (
+                                        <span className="inline-flex items-center px-2 py-0.5 rounded-full border border-dashed border-slate-400/50 text-[11px] text-slate-400">
+                                          No tag
+                                        </span>
+                                      ) : (
+                                        <>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setLibraryRawTcTagPlusKey(key);
+                                              setLibraryRawTcTagPlusDraft('');
+                                            }}
+                                            className="inline-flex items-center px-2 py-0.5 rounded-full border border-dashed border-slate-400/60 text-[11px] text-slate-300 hover:border-slate-300 hover:text-slate-200 transition-colors"
+                                            title="Add tag (or use +)"
+                                          >
+                                            No tag
+                                          </button>
+                                          {libraryRawTcTagPlusKey === key ? (
+                                            <input
+                                              type="text"
+                                              value={libraryRawTcTagPlusDraft}
+                                              onChange={(e) => setLibraryRawTcTagPlusDraft(e.target.value)}
+                                              onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                  e.preventDefault();
+                                                  const add = libraryRawTcTagPlusDraft.trim();
+                                                  if (!add) {
+                                                    setLibraryRawTcTagPlusKey(null);
+                                                    setLibraryRawTcTagPlusDraft('');
+                                                    return;
+                                                  }
+                                                  const next = upsertTagsString(rawTag, add);
+                                                  patchLibraryTcExtraColumns(tc, { tag: next });
+                                                  setLibraryRawTcTagPlusDraft('');
+                                                  setLibraryRawTcTagPlusKey(null);
+                                                }
+                                                if (e.key === 'Escape') {
+                                                  e.preventDefault();
+                                                  setLibraryRawTcTagPlusKey(null);
+                                                  setLibraryRawTcTagPlusDraft('');
+                                                }
+                                              }}
+                                              onBlur={() => {
+                                                setLibraryRawTcTagPlusKey(null);
+                                                setLibraryRawTcTagPlusDraft('');
+                                              }}
+                                              onClick={(e) => e.stopPropagation()}
+                                              className="px-2 py-0.5 text-[11px] rounded-full border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 w-28 min-w-0"
+                                              placeholder="tag…"
+                                              title="Enter — add (comma ok)"
+                                              autoFocus
+                                            />
+                                          ) : (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setLibraryRawTcTagPlusKey(key);
+                                                setLibraryRawTcTagPlusDraft('');
+                                              }}
+                                              className="px-2 py-0.5 rounded-full text-[11px] font-semibold border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
+                                              title="Add tag"
+                                            >
+                                              +
+                                            </button>
+                                          )}
+                                        </>
+                                      )}
+                                    </div>
                                   );
                                 }
+
                                 return (
-                                  <button
-                                    type="button"
-                                    onClick={cycleColor}
-                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-medium max-w-[130px] ${palette} hover:brightness-95 transition-colors`}
-                                    title="Click to change tag color"
-                                  >
-                                    <span className="w-2 h-2 rounded-full bg-current/70" />
-                                    <span className="truncate">{tagVal}</span>
-                                  </button>
+                                  <div className="flex flex-wrap items-center gap-1 min-w-0">
+                                    {!tagLocked ? (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          cycleColor(e);
+                                        }}
+                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-medium max-w-[130px] ${palette} hover:brightness-95 transition-colors`}
+                                        title="คลิกเพื่อเปลี่ยนสี tag — ใช้ … เพื่อแก้ไขรายการ tag"
+                                      >
+                                        <span className="w-2 h-2 rounded-full shrink-0 bg-current/70" />
+                                        <span className="truncate">{tags[0]}</span>
+                                      </button>
+                                    ) : (
+                                      <span
+                                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-medium max-w-[120px] ${palette}`}
+                                        title={tags[0]}
+                                      >
+                                        <span className="w-2 h-2 rounded-full shrink-0 bg-current/70" />
+                                        <span className="truncate">{tags[0]}</span>
+                                      </span>
+                                    )}
+                                    {showEllipsis && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          openTagModal();
+                                        }}
+                                        className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
+                                        title="Show all tags"
+                                      >
+                                        …
+                                      </button>
+                                    )}
+                                    {!tagLocked &&
+                                      (libraryRawTcTagPlusKey === key ? (
+                                        <input
+                                          type="text"
+                                          value={libraryRawTcTagPlusDraft}
+                                          onChange={(e) => setLibraryRawTcTagPlusDraft(e.target.value)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                              e.preventDefault();
+                                              const add = libraryRawTcTagPlusDraft.trim();
+                                              if (!add) {
+                                                setLibraryRawTcTagPlusKey(null);
+                                                setLibraryRawTcTagPlusDraft('');
+                                                return;
+                                              }
+                                              const next = upsertTagsString(rawTag, add);
+                                              patchLibraryTcExtraColumns(tc, { tag: next });
+                                              setLibraryRawTcTagPlusDraft('');
+                                              setLibraryRawTcTagPlusKey(null);
+                                            }
+                                            if (e.key === 'Escape') {
+                                              e.preventDefault();
+                                              setLibraryRawTcTagPlusKey(null);
+                                              setLibraryRawTcTagPlusDraft('');
+                                            }
+                                          }}
+                                          onBlur={() => {
+                                            setLibraryRawTcTagPlusKey(null);
+                                            setLibraryRawTcTagPlusDraft('');
+                                          }}
+                                          onClick={(e) => e.stopPropagation()}
+                                          className="px-2 py-0.5 text-[11px] rounded-full border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 w-28 min-w-0"
+                                          placeholder="tag…"
+                                          title="Enter — add (comma ok)"
+                                          autoFocus
+                                        />
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setLibraryRawTcTagPlusKey(key);
+                                            setLibraryRawTcTagPlusDraft('');
+                                          }}
+                                          className="px-2 py-0.5 rounded-full text-[11px] font-semibold border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
+                                          title="Add tag"
+                                        >
+                                          +
+                                        </button>
+                                      )
+                                    )}
+                                  </div>
                                 );
                               })()}
                             </td>
@@ -1855,6 +2933,26 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                             <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center">
                               <button
                                 type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openRawTcEditor(tc);
+                                }}
+                                disabled={!canEditRawTcRow(tc)}
+                                className={`inline-flex items-center justify-center p-1.5 rounded-lg transition-colors ${
+                                  canEditRawTcRow(tc)
+                                    ? rawTcEditorKey === key
+                                      ? 'bg-blue-600 text-white'
+                                      : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                                    : 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                                }`}
+                                title={canEditRawTcRow(tc) ? 'แก้ไขในหน้านี้' : 'แก้ไม่ได้ (ล็อกหรือไม่ใช่โปรไฟล์คุณ)'}
+                              >
+                                <Pencil size={16} />
+                              </button>
+                            </td>
+                            <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center">
+                              <button
+                                type="button"
                                 onClick={(e) => { e.stopPropagation(); setTestCaseHistoryFor({ tc }); }}
                                 className="inline-flex items-center justify-center gap-1 px-1.5 py-1 rounded text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
                                 title="View job/set history for this test case"
@@ -1869,23 +2967,294 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                     )}
                   </tbody>
                 </table>
-              </div>
-              {onNavigateToTestCases && (
-                <div className="px-4 py-2 border-t border-slate-200 dark:border-slate-600 bg-slate-50/50 dark:bg-slate-800/30">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      syncFullLibraryToSavedTestCases();
-                      clearLibraryEditContext();
-                      setLoadedSetId(null);
-                      onNavigateToTestCases();
-                    }}
-                    className="text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
-                  >
-                    Edit test case in Test Cases →
-                  </button>
                 </div>
-              )}
+                {rawTcEditorDraft && (
+                  <div className="w-full xl:w-[min(400px,calc(100vw-2rem))] flex-shrink-0 rounded-xl border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800/50 p-4 space-y-3 shadow-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-bold text-slate-800 dark:text-slate-100">Edit Test Case</span>
+                      <button
+                        type="button"
+                        onClick={closeRawTcEditor}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700"
+                        title="ปิด"
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
+                    <datalist id="raw-tc-vcd-datalist">
+                      {fileOptionsByKind.vcd.map((n) => (
+                        <option key={n} value={n} />
+                      ))}
+                    </datalist>
+                    <datalist id="raw-tc-bin-datalist">
+                      {fileOptionsByKind.bin.map((n) => (
+                        <option key={n} value={n} />
+                      ))}
+                    </datalist>
+                    <datalist id="raw-tc-lin-datalist">
+                      {fileOptionsByKind.lin.map((n) => (
+                        <option key={n} value={n} />
+                      ))}
+                    </datalist>
+                    <datalist id="raw-tc-mdi-datalist">
+                      {fileOptionsByKind.mdi.map((n) => (
+                        <option key={n} value={n} />
+                      ))}
+                    </datalist>
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      Name
+                      <input
+                        type="text"
+                        value={rawTcEditorDraft.name}
+                        onChange={(e) => setRawTcEditorDraft((d) => (d ? { ...d, name: e.target.value } : d))}
+                        className="mt-1 w-full px-2 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900"
+                      />
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                        Tag
+                        <input
+                          type="text"
+                          value={rawTcEditorDraft.tag}
+                          onChange={(e) => setRawTcEditorDraft((d) => (d ? { ...d, tag: e.target.value } : d))}
+                          className="mt-1 w-full px-2 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900"
+                        />
+                      </label>
+                      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                        Try
+                        <input
+                          type="number"
+                          min={1}
+                          max={100}
+                          value={rawTcEditorDraft.tryCount}
+                          onChange={(e) => setRawTcEditorDraft((d) => (d ? { ...d, tryCount: e.target.value } : d))}
+                          className="mt-1 w-full px-2 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900"
+                        />
+                      </label>
+                    </div>
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      ERoM
+                      <input
+                        type="text"
+                        list="raw-tc-bin-datalist"
+                        value={rawTcEditorDraft.binName}
+                        onChange={(e) => setRawTcEditorDraft((d) => (d ? { ...d, binName: e.target.value } : d))}
+                        className="mt-1 w-full px-2 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900"
+                        placeholder="select file"
+                      />
+                    </label>
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      VCD
+                      <input
+                        type="text"
+                        list="raw-tc-vcd-datalist"
+                        value={rawTcEditorDraft.vcdName}
+                        onChange={(e) => setRawTcEditorDraft((d) => (d ? { ...d, vcdName: e.target.value } : d))}
+                        className="mt-1 w-full px-2 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900"
+                        placeholder="select file"
+                      />
+                    </label>
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      ULP
+                      <input
+                        type="text"
+                        list="raw-tc-lin-datalist"
+                        value={rawTcEditorDraft.linName}
+                        onChange={(e) => setRawTcEditorDraft((d) => (d ? { ...d, linName: e.target.value } : d))}
+                        className="mt-1 w-full px-2 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900"
+                        placeholder="select file"
+                      />
+                    </label>
+                    <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-600">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                          add extra file
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRawTcEditorDraft((d) =>
+                              d
+                                ? {
+                                    ...d,
+                                    extraSlots: [
+                                      ...(d.extraSlots || []),
+                                      { id: newRawTcSlotId(), kind: 'vcd', file: '' },
+                                    ],
+                                  }
+                                : d
+                            )
+                          }
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+                          title="add extra file"
+                        >
+                          <Plus size={14} />
+                          add
+                        </button>
+                      </div>
+                      {(rawTcEditorDraft.extraSlots || []).length === 0 ? (
+                        <p className="text-[11px] text-slate-400 dark:text-slate-500 italic">no extra file — click + to add</p>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-x-3 text-[10px] font-medium text-slate-500 dark:text-slate-400">
+                            <div className="w-[4.25rem]">column</div>
+                            <div className="w-[5.75rem]">type</div>
+                            <div className="flex-1 min-w-0">select file</div>
+                            <div className="w-9" />
+                          </div>
+                          {(rawTcEditorDraft.extraSlots || []).map((slot, slotIndex) => {
+                          const slotsList = rawTcEditorDraft.extraSlots || [];
+                          const ordinalAmongKind = slotsList.slice(0, slotIndex + 1).filter((s) => s.kind === slot.kind).length;
+                          const columnLabel = getExtraSlotColumnLabel(slot.kind, ordinalAmongKind);
+                          const listId =
+                            slot.kind === 'vcd'
+                              ? 'raw-tc-vcd-datalist'
+                              : slot.kind === 'erom'
+                                ? 'raw-tc-bin-datalist'
+                                : slot.kind === 'ulp'
+                                  ? 'raw-tc-lin-datalist'
+                                  : 'raw-tc-mdi-datalist';
+                          return (
+                            <div
+                              key={slot.id}
+                              className={`flex items-center gap-x-3 ${slot.kind === 'mdi' ? 'rounded-lg border border-dashed border-slate-300 dark:border-slate-600 p-2' : ''}`}
+                              onDragOver={
+                                slot.kind === 'mdi'
+                                  ? (e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                    }
+                                  : undefined
+                              }
+                              onDrop={
+                                slot.kind === 'mdi'
+                                  ? (e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      const f = e.dataTransfer.files?.[0];
+                                      if (!f?.name) return;
+                                      setRawTcEditorDraft((d) =>
+                                        d
+                                          ? {
+                                              ...d,
+                                              extraSlots: d.extraSlots.map((s) =>
+                                                s.id === slot.id ? { ...s, file: f.name.trim() } : s
+                                              ),
+                                            }
+                                          : d
+                                      );
+                                    }
+                                  : undefined
+                              }
+                            >
+                              <div
+                                className="box-border flex h-9 w-[4.25rem] flex-shrink-0 items-center text-xs font-bold tabular-nums text-blue-700 dark:text-blue-300"
+                                title="Matches the Raw Test Cases table header for this file"
+                              >
+                                {columnLabel}
+                              </div>
+                              <select
+                                value={slot.kind}
+                                onChange={(e) => {
+                                  const kind = e.target.value;
+                                  setRawTcEditorDraft((d) =>
+                                    d
+                                      ? {
+                                          ...d,
+                                          extraSlots: d.extraSlots.map((s) =>
+                                            s.id === slot.id ? { ...s, kind } : s
+                                          ),
+                                        }
+                                      : d
+                                  );
+                                }}
+                                className="box-border h-9 w-[5.75rem] flex-shrink-0 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                                title={`Maps to table column ${columnLabel}`}
+                              >
+                                <option value="vcd">VCD</option>
+                                <option value="erom">ERoM</option>
+                                <option value="ulp">ULP</option>
+                                <option value="mdi">MDI</option>
+                              </select>
+                              <input
+                                type="text"
+                                list={listId}
+                                value={slot.file}
+                                onChange={(e) =>
+                                  setRawTcEditorDraft((d) =>
+                                    d
+                                      ? {
+                                          ...d,
+                                          extraSlots: d.extraSlots.map((s) =>
+                                            s.id === slot.id ? { ...s, file: e.target.value } : s
+                                          ),
+                                        }
+                                      : d
+                                  )
+                                }
+                                className="box-border h-9 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500"
+                                placeholder={slot.kind === 'mdi' ? `${columnLabel} — select or drop` : 'select file'}
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setRawTcEditorDraft((d) =>
+                                    d
+                                      ? {
+                                          ...d,
+                                          extraSlots: d.extraSlots.filter((s) => s.id !== slot.id),
+                                        }
+                                      : d
+                                  )
+                                }
+                                className="box-border flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                                title="delete extra file"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </div>
+                          );
+                          })}
+                        </>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleSaveRawTcEditor}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700"
+                      >
+                        <Save size={14} />
+                        save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={closeRawTcEditor}
+                        className="px-3 py-2 rounded-lg text-xs font-semibold border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+                      >
+                        cancel
+                      </button>
+                    </div>
+                    {onNavigateToTestCases && (
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 border-t border-slate-200 dark:border-slate-600 pt-3">
+                        want to create test case? —{' '}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            syncFullLibraryToSavedTestCases();
+                            clearLibraryEditContext();
+                            setLoadedSetId(null);
+                            onNavigateToTestCases();
+                          }}
+                          className="font-medium text-blue-600 dark:text-blue-400 hover:underline"
+                        >
+                          go to Create Test Case
+                        </button>
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           );
         })()
@@ -1893,15 +3262,24 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
         /* File in Library — filter, multi-select (shift/ctrl/drag), delete icon */
         (() => {
           const selectedFileSet = new Set(selectedLibraryFileIds);
-          const selectableFileIds = filteredFiles.filter((f) => !fileNamesInUseByBatch.has(f.name)).map((f) => f.id).filter(Boolean);
+          const selectableFileIds = filteredFiles
+            .filter((f) => !fileNamesInUseByBatch.has(f.name) && !isFileManuallyClosed(f))
+            .map((f) => f.id)
+            .filter(Boolean);
           const allFilesInUse = (uploadedFiles || []).length > 0 && (uploadedFiles || []).every((f) => fileNamesInUseByBatch.has(f.name));
           const toggleFileSelect = (fileId, index, e) => {
+            const row = filteredFiles[index];
+            if (row && isFileManuallyClosed(row)) return;
             // Allow selecting in-use files; lock destructive actions instead.
             if (e.shiftKey) {
               const last = lastClickedFileIndexRef.current;
               const from = last != null ? Math.min(last, index) : index;
               const to = last != null ? Math.max(last, index) : index;
-              const idsToAdd = filteredFiles.slice(from, to + 1).map((f) => f.id).filter(Boolean);
+              const idsToAdd = filteredFiles
+                .slice(from, to + 1)
+                .filter((f) => !isFileManuallyClosed(f))
+                .map((f) => f.id)
+                .filter(Boolean);
               setSelectedLibraryFileIds((prev) => [...new Set([...prev, ...idsToAdd])]);
               lastClickedFileIndexRef.current = index;
               return;
@@ -2195,20 +3573,23 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                           const isHighlighted = isSelected || isFocused;
                           const usedByTcsTitle = usedByTcs.length > 0 ? usedByTcs.map((u) => `${u.name}${u.set ? ` (${u.set})` : ''}`).join('\n') : '';
                           const inUseByBatch = fileNamesInUseByBatch.has(f.name);
+                          const isFileClosed = isFileManuallyClosed(f);
                           const displayName = (fileDisplayNames && fileDisplayNames[f.id]) || (String(f.name || '').split('/').pop() || f.name);
                           const lastModified = f.updatedAt || f.uploadDate || f.createdAt || null;
                           return (
                             <tr
                               key={f.id}
                               ref={isFocused ? focusedLibraryFileRef : null}
-                              className={`text-slate-800 dark:text-slate-100 ${inUseByBatch ? 'opacity-75 bg-slate-50/50 dark:bg-slate-800/30' : ''} ${isHighlighted ? 'bg-blue-50 dark:bg-blue-900/20' : !inUseByBatch ? 'hover:bg-slate-50 dark:hover:bg-slate-700/40' : ''} ${inUseByBatch ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                              className={`text-slate-800 dark:text-slate-100 ${(inUseByBatch || isFileClosed) ? 'opacity-75 bg-slate-50/50 dark:bg-slate-800/30' : ''} ${isHighlighted ? 'bg-blue-50 dark:bg-blue-900/20' : !(inUseByBatch || isFileClosed) ? 'hover:bg-slate-50 dark:hover:bg-slate-700/40' : ''} ${(inUseByBatch || isFileClosed) ? 'cursor-not-allowed' : 'cursor-pointer'}`}
                               onClick={(e) => {
                                 if (e.target.closest('input[type="checkbox"]') || e.target.closest('button') || e.target.closest('input[type="text"]')) return;
+                                if (isFileClosed) return;
                                 toggleFileSelect(f.id, index, e);
                               }}
                               onMouseDown={(e) => {
                                 if (editingDisplayNameFileId) return;
                                 if (e.target.closest('input[type="checkbox"]') || e.target.closest('button') || e.target.closest('input[type="text"]')) return;
+                                if (isFileClosed) return;
                                 if (e.button === 0) {
                                   isDragSelectingFileRef.current = true;
                                   if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]);
@@ -2216,6 +3597,7 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                               }}
                               onMouseEnter={() => {
                                 if (editingDisplayNameFileId) return;
+                                if (isFileClosed) return;
                                 if (!isDragSelectingFileRef.current) return;
                                 if (!selectedFileSet.has(f.id)) setSelectedLibraryFileIds((prev) => [...prev, f.id]);
                               }}
@@ -2224,12 +3606,13 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                 <input
                                   type="checkbox"
                                   checked={isSelected}
+                                  disabled={isFileClosed}
                                   onChange={() => {
-                                    toggleFileSelect(f.id, index, { shiftKey: false, ctrlKey: false, metaKey: false });
+                                    if (!isFileClosed) toggleFileSelect(f.id, index, { shiftKey: false, ctrlKey: false, metaKey: false });
                                   }}
                                   onClick={(e) => e.stopPropagation()}
-                                  className="w-4 h-4 rounded shrink-0 cursor-pointer border-slate-300 text-blue-600"
-                                  title={inUseByBatch ? 'File in use by a running/pending set — cannot delete, but can select' : undefined}
+                                  className={`w-4 h-4 rounded shrink-0 border-slate-300 text-blue-600 ${isFileClosed ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+                                  title={isFileClosed ? 'Vis=close — not selectable' : inUseByBatch ? 'File in use by a running/pending set — cannot delete, but can select' : undefined}
                                 />
                               </td>
                               <td className="px-2 py-1.5 align-top min-w-0">
@@ -2296,15 +3679,30 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                               </td>
                               <td className="px-2 py-1.5 align-top">
                                 <div className="flex flex-wrap items-center gap-1 min-w-0">
-                                  {tags.slice(0, 3).map((t, ti) => (
-                                    <span
-                                      key={`${f.id}-tag-${ti}-${t}`}
-                                      className="px-1.5 py-0.5 rounded-full text-[10px] bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700"
-                                      title={t}
-                                    >
-                                      {t}
-                                    </span>
-                                  ))}
+                                  {tags.slice(0, 3).map((t, ti) => {
+                                    const colorKey = FILE_TAG_PALETTE_MAP[fileTagColors?.[f.id]]
+                                      ? fileTagColors[f.id]
+                                      : 'mint';
+                                    const palette =
+                                      FILE_TAG_PALETTE_MAP[colorKey] || FILE_TAG_PALETTE_MAP.mint;
+                                    return (
+                                      <button
+                                        key={`${f.id}-tag-${ti}-${t}`}
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          const keys = Object.keys(FILE_TAG_PALETTE_MAP);
+                                          const cur = fileTagColors?.[f.id] || 'mint';
+                                          const idx = Math.max(0, keys.indexOf(cur));
+                                          setFileTagColor?.(f.id, keys[(idx + 1) % keys.length]);
+                                        }}
+                                        className={`px-1.5 py-0.5 rounded-full text-[10px] border font-medium ${palette} hover:brightness-95`}
+                                        title={`${t} — คลิกเพื่อเปลี่ยนสี`}
+                                      >
+                                        {t}
+                                      </button>
+                                    );
+                                  })}
                                   {tags.length > 3 && (
                                     <button
                                       type="button"
@@ -2312,6 +3710,10 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                                         e.stopPropagation();
                                         setShowAllUsedByTcForFileName(null);
                                         setShowAllSetsForFileName(null);
+                                        setFileTagsModalEditIndex(null);
+                                        setFileTagsModalEditDraft('');
+                                        setFileTagsModalAddDraft('');
+                                        setFileTagsModalAddOpen(false);
                                         setShowAllTagsForFileId(f.id);
                                       }}
                                       className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 shrink-0"
@@ -2438,8 +3840,20 @@ const FileLibraryPage = ({ onNavigateToTestCases }) => {
                               <td className="px-2 py-1.5 align-top text-slate-600 dark:text-slate-300 whitespace-nowrap" title={f.ownerId ? `Owner: ${f.ownerId}` : ''}>
                                 {f.ownerId === currentClientId ? 'Me' : f.ownerId ? 'Other' : '—'}
                               </td>
-                              <td className="px-2 py-1.5 align-top text-center text-slate-400" title={f.visibility || 'public'}>
-                                {f.visibility === 'private' ? <Lock size={14} className="inline" /> : f.visibility === 'team' ? <Users size={14} className="inline" /> : <Globe size={14} className="inline" />}
+                              <td className="px-2 py-1.5 align-top text-center text-slate-400">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const nextClosed = !isFileClosed;
+                                    setFileVisById((prev) => ({ ...prev, [f.id]: nextClosed ? 'close' : 'open' }));
+                                    setSelectedLibraryFileIds((prev) => prev.filter((id) => id !== f.id));
+                                  }}
+                                  className={`inline-flex items-center justify-center p-1 rounded ${isFileClosed ? 'text-amber-500 hover:bg-amber-500/10' : 'text-slate-400 hover:bg-slate-500/10'}`}
+                                  title={isFileClosed ? 'Closed — click to open/selectable' : 'Open — click to close/lock from select all'}
+                                >
+                                  {isFileClosed ? <Lock size={14} className="inline" /> : <Globe size={14} className="inline" />}
+                                </button>
                               </td>
                               <td className="px-2 py-1.5 align-top whitespace-nowrap text-slate-500 dark:text-slate-400 text-[11px]" title={lastModified ? String(lastModified) : ''}>
                                 {lastModified ? String(lastModified).replace('T', ' ').slice(0, 16) : '—'}

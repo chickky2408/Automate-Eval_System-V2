@@ -55,6 +55,7 @@ const PROFILES_LIST_KEY = 'app_profiles_list';
 const ACTIVE_PROFILE_ID_KEY = 'app_active_profile_id';
 const PROFILE_DATA_PREFIX = 'app_profile_';
 const FILE_TAGS_KEY = 'app_file_tags';
+const FILE_TAG_COLORS_KEY = 'app_file_tag_colors';
 const FILE_DISPLAY_NAMES_KEY = 'app_file_display_names';
 const SHARED_PROFILES_KEY = 'app_shared_profiles';
 const RUN_BOARD_SELECTION_KEY = 'app_run_board_selection';
@@ -174,6 +175,26 @@ const saveFileTags = (tags) => {
     localStorage.setItem(FILE_TAGS_KEY, JSON.stringify(tags || {}));
   } catch (e) {
     console.error('Failed to save file tags', e);
+  }
+};
+
+const loadFileTagColors = () => {
+  try {
+    const raw = localStorage.getItem(FILE_TAG_COLORS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    console.error('Failed to load file tag colors', e);
+    return {};
+  }
+};
+
+const saveFileTagColors = (colors) => {
+  try {
+    localStorage.setItem(FILE_TAG_COLORS_KEY, JSON.stringify(colors || {}));
+  } catch (e) {
+    console.error('Failed to save file tag colors', e);
   }
 };
 
@@ -331,6 +352,58 @@ const inferFileType = (name, typeHint) => {
   return 'firmware';
 };
 
+/** Trimmed display name — global uniqueness uses this string (all profiles + shared cache). */
+const normalizeTestCaseName = (name) => (name || '').trim();
+
+/**
+ * All in-use test case names across every local profile, shared profile cache, loaded set, working list, and optional extra rows (e.g. drafts).
+ * @param excludeId — test case id to ignore (when renaming that row)
+ */
+const buildGlobalTestCaseNameSet = (state, excludeId, extraTestCaseLists = []) => {
+  const ex = excludeId == null ? null : String(excludeId);
+  const names = new Set();
+  const addTc = (tc) => {
+    if (!tc) return;
+    if (ex && String(tc.id) === ex) return;
+    const n = normalizeTestCaseName(tc.name);
+    if (n) names.add(n);
+  };
+  (state.loadedSetTable || []).forEach(addTc);
+  (state.workingTestCases || []).forEach(addTc);
+  const cache = state.sharedProfileDataCache || {};
+  Object.values(cache).forEach((data) => {
+    if (!data) return;
+    (data.savedTestCases || []).forEach(addTc);
+    (data.savedTestCaseSets || []).forEach((set) => {
+      (set.items || []).forEach(addTc);
+    });
+  });
+  const activeId = state.activeProfileId;
+  for (const p of loadProfilesList()) {
+    const prof =
+      p.id === activeId
+        ? { savedTestCases: state.savedTestCases, savedTestCaseSets: state.savedTestCaseSets }
+        : loadProfile(p.id);
+    if (!prof) continue;
+    (prof.savedTestCases || []).forEach(addTc);
+    (prof.savedTestCaseSets || []).forEach((set) => {
+      (set.items || []).forEach(addTc);
+    });
+  }
+  for (const list of extraTestCaseLists) {
+    (list || []).forEach(addTc);
+  }
+  return names;
+};
+
+const pickUniqueTestCaseName = (desired, usedSet) => {
+  const base = normalizeTestCaseName(desired) || 'Test case';
+  if (!usedSet.has(base)) return base;
+  let n = 2;
+  while (usedSet.has(`${base} (${n})`)) n += 1;
+  return `${base} (${n})`;
+};
+
 export const useTestStore = create((set, get) => ({
   // System Health
   systemHealth: {
@@ -376,6 +449,8 @@ export const useTestStore = create((set, get) => ({
 
   // File metadata (per device) — tags keyed by file.id
   fileTags: (() => loadFileTags())(),
+  /** Accent color key for tag pills in File Library (mint | sky | …) */
+  fileTagColors: (() => loadFileTagColors())(),
   fileDisplayNames: (() => loadFileDisplayNames())(),
 
   // Saved Test Cases (library) — persisted; only shown in Library after "Save to library"
@@ -408,10 +483,21 @@ export const useTestStore = create((set, get) => ({
   setLibraryFocusFileNameOnNavigate: (name) => set({ libraryFocusFileNameOnNavigate: name }),
   clearLibraryFocusFileNameOnNavigate: () => set({ libraryFocusFileNameOnNavigate: null }),
 
+  // When navigating to File Library, force which tab/view to open.
+  // Used for a continuous workflow (e.g. after "Save to library" from Test Cases).
+  fileLibraryViewOnNavigate: null, // 'files' | 'rawTestCases' | 'testCases'
+  setFileLibraryViewOnNavigate: (view) => set({ fileLibraryViewOnNavigate: view }),
+  clearFileLibraryViewOnNavigate: () => set({ fileLibraryViewOnNavigate: null }),
+
   // When JobsPage wants to navigate to Test Cases tab and auto-select a test case row (by name/vcd/bin/lin)
   testCaseLibraryFocusOnNavigate: null,
   setTestCaseLibraryFocusOnNavigate: (payload) => set({ testCaseLibraryFocusOnNavigate: payload }),
   clearTestCaseLibraryFocusOnNavigate: () => set({ testCaseLibraryFocusOnNavigate: null }),
+
+  // When Library sends selected test cases to Run Set page (right panel)
+  runSetImportContext: null, // { items: TestCase[], name?: string } | null
+  setRunSetImportContext: (payload) => set({ runSetImportContext: payload }),
+  clearRunSetImportContext: () => set({ runSetImportContext: null }),
 
   // File → Test Case builder draft (selected file ids)
   fileToTestCaseDraft: null, // { fileIds: string[], createdAt: string } | null
@@ -526,6 +612,18 @@ export const useTestStore = create((set, get) => ({
       else next[fileId] = value;
       saveFileTags(next);
       return { fileTags: next };
+    });
+  },
+  setFileTagColor: (fileId, colorKey) => {
+    const allowed = new Set(['mint', 'sky', 'rose', 'amber', 'violet', 'slate']);
+    set((state) => {
+      const next = { ...(state.fileTagColors || {}) };
+      if (!fileId) return {};
+      const k = String(colorKey || '').trim();
+      if (!k || !allowed.has(k)) delete next[fileId];
+      else next[fileId] = k;
+      saveFileTagColors(next);
+      return { fileTagColors: next };
     });
   },
   setFileDisplayName: (fileId, name) => {
@@ -764,9 +862,28 @@ export const useTestStore = create((set, get) => ({
   },
 
   // Saved Test Cases (library)
-  addSavedTestCase: (tc) => {
+  getAllGlobalTestCaseNames: (excludeId, options = {}) => {
+    const extra = options.extraTestCaseLists || [];
+    return buildGlobalTestCaseNameSet(get(), excludeId, extra);
+  },
+  ensureUniqueTestCaseName: (desired, excludeId, options = {}) => {
+    const used = buildGlobalTestCaseNameSet(get(), excludeId, options.extraTestCaseLists || []);
+    return pickUniqueTestCaseName(desired, used);
+  },
+  addSavedTestCase: (tc, options = {}) => {
+    const extraLists = options.extraTestCaseLists || [];
+    const state = get();
+    const used = buildGlobalTestCaseNameSet(state, null, extraLists);
+    const rawDesired = normalizeTestCaseName(tc.name);
+    const finalName = pickUniqueTestCaseName(rawDesired || 'Test case', used);
+    if (rawDesired && finalName !== rawDesired) {
+      get().addToast({
+        type: 'info',
+        message: `ชื่อ "${rawDesired}" ถูกใช้แล้วในระบบ — ตั้งชื่อเป็น "${finalName}"`,
+      });
+    }
     const id = `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    const entry = { ...tc, id, createdAt: tc.createdAt || new Date().toISOString() };
+    const entry = { ...tc, id, name: finalName, createdAt: tc.createdAt || new Date().toISOString() };
     set((state) => {
       if (state.loadedSetId) {
         return { loadedSetTable: [...(state.loadedSetTable || []), entry] };
@@ -778,11 +895,33 @@ export const useTestStore = create((set, get) => ({
     return id;
   },
   updateSavedTestCase: (id, updates) => set((state) => {
+    if (updates.name !== undefined) {
+      const newName = normalizeTestCaseName(updates.name);
+      if (newName) {
+        const used = buildGlobalTestCaseNameSet(state, id, []);
+        if (used.has(newName)) {
+          get().addToast({
+            type: 'warning',
+            message: 'ชื่อนี้ถูกใช้แล้วในระบบ (ทุกโปรไฟล์) — ใช้ชื่ออื่น',
+          });
+          return state;
+        }
+      }
+    }
+    const idStr = id == null ? '' : String(id);
+    const matchId = (t) => String(t.id) === idStr;
+    // Library / File Library แก้ saved test case ต้องอัปเดต savedTestCases เสมอ — แม้จะมี loadedSetId จากหน้า Create Test Case อยู่
+    const inSaved = (state.savedTestCases || []).some(matchId);
+    if (inSaved) {
+      const next = state.savedTestCases.map((t) => (matchId(t) ? { ...t, ...updates } : t));
+      saveSavedTestCases(next);
+      return { savedTestCases: next };
+    }
     if (state.loadedSetId) {
-      const next = (state.loadedSetTable || []).map((t) => (t.id === id ? { ...t, ...updates } : t));
+      const next = (state.loadedSetTable || []).map((t) => (matchId(t) ? { ...t, ...updates } : t));
       return { loadedSetTable: next };
     }
-    const next = state.savedTestCases.map((t) => (t.id === id ? { ...t, ...updates } : t));
+    const next = state.savedTestCases.map((t) => (matchId(t) ? { ...t, ...updates } : t));
     saveSavedTestCases(next);
     return { savedTestCases: next };
   }),
@@ -807,10 +946,13 @@ export const useTestStore = create((set, get) => ({
         (item.binName || '').trim() === (target.binName || '').trim() &&
         (item.linName || '').trim() === (target.linName || '').trim();
 
-      nextSets = (state.savedTestCaseSets || []).map((set) => ({
-        ...set,
-        items: Array.isArray(set.items) ? set.items.filter((item) => !sameContent(item)) : set.items,
-      }));
+      nextSets = (state.savedTestCaseSets || [])
+        .map((set) => ({
+          ...set,
+          items: Array.isArray(set.items) ? set.items.filter((item) => !sameContent(item)) : set.items,
+        }))
+        // ถ้า source ใน set ถูกลบจนไม่เหลือ test case แล้ว ให้ลบ set นั้นออกเลย
+        .filter((set) => Array.isArray(set.items) && set.items.length > 0);
       saveSavedTestCaseSets(nextSets);
     }
 
@@ -857,7 +999,16 @@ export const useTestStore = create((set, get) => ({
       ...c,
       id: `cmd-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 9)}`,
     }));
-    const newTc = { ...tc, id: newId, commands, createdAt: new Date().toISOString(), ...overrides };
+    const used = buildGlobalTestCaseNameSet(state, null, []);
+    const baseName = normalizeTestCaseName(overrides.name != null ? overrides.name : tc.name) || 'Test case';
+    const uniqueName = pickUniqueTestCaseName(baseName, used);
+    if (uniqueName !== baseName) {
+      get().addToast({
+        type: 'info',
+        message: `ชื่อ "${baseName}" ถูกใช้แล้ว — ใช้ "${uniqueName}" สำหรับสำเนา`,
+      });
+    }
+    const newTc = { ...tc, id: newId, commands, createdAt: new Date().toISOString(), ...overrides, name: uniqueName };
     const i = list.findIndex((t) => t.id === id);
     const next = [...list];
     next.splice(i + 1, 0, newTc);
@@ -1018,16 +1169,29 @@ export const useTestStore = create((set, get) => ({
   addSavedTestCaseSet: (name, items, options = {}) => set((state) => {
     const id = `tcs-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const now = new Date().toISOString();
-    const normalizedItems = (items || []).map((t, idx) => ({
-      name: t.name || `Test case ${idx + 1}`,
-      vcdName: t.vcdName || '',
-      binName: t.binName || '',
-      linName: t.linName || '',
-      boardId: t.boardId || '',
-      tryCount: typeof t.tryCount === 'number' && t.tryCount > 0 ? t.tryCount : 1,
-      extraColumns: t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {},
-      createdAt: t.createdAt || now,
-    }));
+    const usedInSet = new Set();
+    let renamedInSet = false;
+    const normalizedItems = (items || []).map((t, idx) => {
+      const itemId = t.id || `tc-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 9)}`;
+      const base = normalizeTestCaseName(t.name) || `Test case ${idx + 1}`;
+      const finalName = pickUniqueTestCaseName(base, usedInSet);
+      if (finalName !== base) renamedInSet = true;
+      usedInSet.add(finalName);
+      return {
+        id: itemId,
+        name: finalName,
+        vcdName: t.vcdName || '',
+        binName: t.binName || '',
+        linName: t.linName || '',
+        boardId: t.boardId || '',
+        tryCount: typeof t.tryCount === 'number' && t.tryCount > 0 ? t.tryCount : 1,
+        extraColumns: t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {},
+        createdAt: t.createdAt || now,
+      };
+    });
+    if (renamedInSet) {
+      get().addToast({ type: 'info', message: 'พบชื่อซ้ำใน set เดียวกัน — ปรับชื่ออัตโนมัติใน set นี้เท่านั้น' });
+    }
     const fileLibrarySnapshot = options.fileLibrarySnapshot || [];
     const entry = { id, name: name || 'Unnamed Set', createdAt: now, updatedAt: now, items: normalizedItems, fileLibrarySnapshot };
     const next = [...state.savedTestCaseSets, entry];
@@ -1035,6 +1199,28 @@ export const useTestStore = create((set, get) => ({
     return { savedTestCaseSets: next };
   }),
   updateSavedTestCaseSet: (id, updates) => set((state) => {
+    if (updates.items) {
+      const items = updates.items;
+      const namesSeen = new Set();
+      for (const tc of items) {
+        const n = normalizeTestCaseName(tc.name);
+        if (!n) continue;
+        if (namesSeen.has(n)) {
+          get().addToast({ type: 'warning', message: 'ชื่อเทสต์เคสซ้ำในชุดเดียวกัน — ไม่บันทึก' });
+          return state;
+        }
+        namesSeen.add(n);
+        const ex = tc.id;
+        const used = buildGlobalTestCaseNameSet(state, ex, []);
+        if (used.has(n)) {
+          get().addToast({
+            type: 'warning',
+            message: `ชื่อ "${n}" ถูกใช้แล้วในระบบ (โปรไฟล์อื่นหรือเทสต์เคสอื่น)`,
+          });
+          return state;
+        }
+      }
+    }
     const next = state.savedTestCaseSets.map((s) => (s.id === id ? { ...s, ...updates, updatedAt: new Date().toISOString() } : s));
     saveSavedTestCaseSets(next);
     return { savedTestCaseSets: next };
@@ -1089,17 +1275,11 @@ export const useTestStore = create((set, get) => ({
   applySavedTestCaseSet: (id) => set((state) => {
     const setEntry = state.savedTestCaseSets.find((s) => s.id === id);
     if (!setEntry) return state;
-    const existingNames = new Set();
-    const ensureUnique = (baseName) => {
-      const base = (baseName || 'Test case').trim() || 'Test case';
-      if (!existingNames.has(base)) return base;
-      let n = 2;
-      while (existingNames.has(`${base} (${n})`)) n++;
-      return `${base} (${n})`;
-    };
+    const used = buildGlobalTestCaseNameSet(state, null, []);
     const list = (setEntry.items || []).map((t) => {
-      const name = ensureUnique((t.name || '').trim() || 'Test case');
-      existingNames.add(name);
+      const base = normalizeTestCaseName(t.name) || 'Test case';
+      const name = pickUniqueTestCaseName(base, used);
+      used.add(name);
       const extra = t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {};
       const commands = [];
       ['VCD2', 'VCD3', 'VCD4', 'ERoM2', 'ERoM3', 'ULP2', 'ULP3'].forEach((col) => {
@@ -1130,17 +1310,11 @@ export const useTestStore = create((set, get) => ({
   loadSetForEditing: (id) => set((state) => {
     const setEntry = state.savedTestCaseSets.find((s) => s.id === id);
     if (!setEntry) return state;
-    const existingNames = new Set();
-    const ensureUnique = (baseName) => {
-      const base = (baseName || 'Test case').trim() || 'Test case';
-      if (!existingNames.has(base)) return base;
-      let n = 2;
-      while (existingNames.has(`${base} (${n})`)) n++;
-      return `${base} (${n})`;
-    };
+    const used = buildGlobalTestCaseNameSet(state, null, []);
     const list = (setEntry.items || []).map((t) => {
-      const name = ensureUnique((t.name || '').trim() || 'Test case');
-      existingNames.add(name);
+      const base = normalizeTestCaseName(t.name) || 'Test case';
+      const name = pickUniqueTestCaseName(base, used);
+      used.add(name);
       const extra = t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {};
       const commands = [];
       ['VCD2', 'VCD3', 'VCD4', 'ERoM2', 'ERoM3', 'ULP2', 'ULP3'].forEach((col) => {
@@ -1183,13 +1357,20 @@ export const useTestStore = create((set, get) => ({
         id: t.id || `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       }))
     );
-    const toAdd = fromSets.filter((tc) => {
+    const toAddRaw = fromSets.filter((tc) => {
       const key = contentKey(tc);
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
-    if (toAdd.length === 0) return {};
+    if (toAddRaw.length === 0) return {};
+    const usedNames = buildGlobalTestCaseNameSet(state, null, []);
+    const toAdd = toAddRaw.map((tc) => {
+      const base = normalizeTestCaseName(tc.name) || 'Test case';
+      const name = pickUniqueTestCaseName(base, usedNames);
+      usedNames.add(name);
+      return { ...tc, name };
+    });
     const next = [...fromCurrent, ...toAdd];
     saveSavedTestCases(next);
     const activeId = getActiveProfileId();
@@ -1214,6 +1395,7 @@ export const useTestStore = create((set, get) => ({
         (t.linName || '').trim(),
       ].join('\0');
       const seen = new Set(baseList.map(contentKey));
+      const usedNames = buildGlobalTestCaseNameSet(state, null, []);
       const appended = (setEntry.items || [])
         // ถ้าใน 2 set มี test case content ซ้ำกัน ให้ใช้แค่ตัวที่มีอยู่แล้ว (ไม่สร้างซ้ำ)
         .filter((t) => {
@@ -1223,7 +1405,9 @@ export const useTestStore = create((set, get) => ({
           return true;
         })
         .map((t) => {
-          const name = (t.name || '').trim() || 'Test case';
+          const base = normalizeTestCaseName(t.name) || 'Test case';
+          const name = pickUniqueTestCaseName(base, usedNames);
+          usedNames.add(name);
           const extra = t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {};
           const commands = [];
           ['VCD2', 'VCD3', 'VCD4', 'ERoM2', 'ERoM3', 'ULP2', 'ULP3'].forEach((col) => {
@@ -1260,6 +1444,7 @@ export const useTestStore = create((set, get) => ({
       (tc.linName || '').trim(),
     ].join('\0');
     const seen = new Set(baseList.map(contentKey));
+    const usedNames = buildGlobalTestCaseNameSet(state, null, []);
 
     const appended = (setEntry.items || [])
       .filter((t) => {
@@ -1268,17 +1453,22 @@ export const useTestStore = create((set, get) => ({
         seen.add(key);
         return true;
       })
-      .map((t) => ({
-        id: `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        name: t.name || 'Test case',
-        vcdName: t.vcdName || '',
-        binName: t.binName || '',
-        linName: t.linName || '',
-        boardId: t.boardId || '',
-        tryCount: typeof t.tryCount === 'number' && t.tryCount > 0 ? t.tryCount : 1,
-        extraColumns: t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {},
-        createdAt: t.createdAt || new Date().toISOString(),
-      }));
+      .map((t) => {
+        const base = normalizeTestCaseName(t.name) || 'Test case';
+        const name = pickUniqueTestCaseName(base, usedNames);
+        usedNames.add(name);
+        return {
+          id: `tc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          name,
+          vcdName: t.vcdName || '',
+          binName: t.binName || '',
+          linName: t.linName || '',
+          boardId: t.boardId || '',
+          tryCount: typeof t.tryCount === 'number' && t.tryCount > 0 ? t.tryCount : 1,
+          extraColumns: t.extraColumns && typeof t.extraColumns === 'object' ? { ...t.extraColumns } : {},
+          createdAt: t.createdAt || new Date().toISOString(),
+        };
+      });
 
     if (!appended.length) return state;
     const next = [...baseList, ...appended];
