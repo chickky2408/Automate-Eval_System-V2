@@ -218,6 +218,26 @@ const saveFileDisplayNames = (names) => {
   }
 };
 
+/** Per-file Vis lock (open/close) — File Library + Test Cases browse modal share this */
+const FILE_VIS_BY_ID_KEY = 'fileVisById';
+const loadFileVisById = () => {
+  try {
+    const raw = localStorage.getItem(FILE_VIS_BY_ID_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    console.error('Failed to load fileVisById', e);
+    return {};
+  }
+};
+const saveFileVisById = (obj) => {
+  try {
+    localStorage.setItem(FILE_VIS_BY_ID_KEY, JSON.stringify(obj || {}));
+  } catch (e) {
+    console.error('Failed to save fileVisById', e);
+  }
+};
+
 // Get active profile id (or create default)
 const getActiveProfileId = () => {
   try {
@@ -452,6 +472,18 @@ export const useTestStore = create((set, get) => ({
   /** Accent color key for tag pills in File Library (mint | sky | …) */
   fileTagColors: (() => loadFileTagColors())(),
   fileDisplayNames: (() => loadFileDisplayNames())(),
+  /** { [fileId]: 'open' | 'close' } — UI lock for select-all / jump-select; persisted */
+  fileVisById: (() => loadFileVisById())(),
+  setFileVisById: (updater) =>
+    set((state) => {
+      const prev = state.fileVisById || {};
+      const next =
+        typeof updater === 'function'
+          ? updater(prev)
+          : { ...prev, ...(updater && typeof updater === 'object' ? updater : {}) };
+      saveFileVisById(next);
+      return { fileVisById: next };
+    }),
 
   // Saved Test Cases (library) — persisted; only shown in Library after "Save to library"
   savedTestCases: (() => loadSavedTestCases())(),

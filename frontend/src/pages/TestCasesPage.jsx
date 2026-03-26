@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
-  ArrowUp, ArrowDown, Copy, FileUp, FolderOpen, Globe, GripVertical, Lock, Plus, Save, Trash2, Users, X
+  ArrowUp, ArrowDown, Copy, FileUp, FolderOpen, Globe, GripVertical, Lock, Plus, Save, Trash2, X
 } from 'lucide-react';
 import { useTestStore } from '../store/useTestStore';
 import api from '../services/api';
@@ -170,6 +170,8 @@ const TestCasesPage = ({ onNavigateBackToLibrary } = {}) => {
   const clearFileToTestCaseDraft = useTestStore((s) => s.clearFileToTestCaseDraft);
   const fileTags = useTestStore((s) => s.fileTags);
   const fileDisplayNames = useTestStore((s) => s.fileDisplayNames);
+  const fileVisById = useTestStore((s) => s.fileVisById);
+  const setFileVisById = useTestStore((s) => s.setFileVisById);
   const jobs = useTestStore((s) => s.jobs);
   const currentClientId = useMemo(() => getClientId(), []);
   const fileNamesInUseByBatch = useMemo(() => {
@@ -566,6 +568,23 @@ const TestCasesPage = ({ onNavigateBackToLibrary } = {}) => {
   const [testCaseTableLayout, setTestCaseTableLayout] = useState('table'); // 'table' | 'step' — ตารางแนวนอน หรือ layout แนวตั้งตามขั้นตอน (ตามภาพ)
   const [localDroppedFiles, setLocalDroppedFiles] = useState([]);
   const [commandMenuTcId, setCommandMenuTcId] = useState(null); // which test case's "Add command" dropdown is open
+  const tcBuilderPanelRef = useRef(null);
+  const [tcBuilderPanelHeight, setTcBuilderPanelHeight] = useState(() => {
+    try {
+      const raw = localStorage.getItem('tcBuilderPanelHeight');
+      const n = raw ? parseInt(raw, 10) : NaN;
+      return Number.isFinite(n) && n >= 260 ? n : 520;
+    } catch {
+      return 520;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('tcBuilderPanelHeight', String(tcBuilderPanelHeight));
+    } catch {
+      // ignore
+    }
+  }, [tcBuilderPanelHeight]);
   const [saveLibraryUploadModal, setSaveLibraryUploadModal] = useState(null); // { prepared, toSave } when showing per-file Reuse/Upload before Save to library
   const justDidSaveSetRef = useRef(false);
 
@@ -1565,6 +1584,15 @@ const TestCasesPage = ({ onNavigateBackToLibrary } = {}) => {
     onNavigateBackToLibrary?.();
   };
 
+  /** Same rules as File Library Files tab: Vis=close from store + API visibility */
+  const isBrowseFileVisClosed = useCallback(
+    (f) => {
+      const vis = String(fileVisById?.[f?.id] || f?.visibility || 'open').toLowerCase();
+      return vis === 'close' || vis === 'closed' || vis === 'lock' || vis === 'locked' || vis === 'private';
+    },
+    [fileVisById]
+  );
+
   const libraryPickerFiles = useMemo(() => {
     const list = uploadedFiles || [];
     const nameQ = libraryPickerNameQ.trim().toLowerCase();
@@ -1606,6 +1634,15 @@ const TestCasesPage = ({ onNavigateBackToLibrary } = {}) => {
     libraryPickerTimeQ,
     currentClientId,
   ]);
+
+  const libraryPickerSelectableIds = useMemo(
+    () =>
+      libraryPickerFiles
+        .filter((f) => !fileNamesInUseByBatch.has(f.name) && !isBrowseFileVisClosed(f))
+        .map((f) => f.id)
+        .filter(Boolean),
+    [libraryPickerFiles, fileNamesInUseByBatch, isBrowseFileVisClosed]
+  );
 
   return (
     <div className="w-full max-w-6xl mx-auto space-y-6">
@@ -1700,8 +1737,9 @@ const TestCasesPage = ({ onNavigateBackToLibrary } = {}) => {
               <div className="flex flex-wrap items-center gap-3 mt-3">
                 <button
                   type="button"
-                  onClick={() => setLibraryPickerSelectedIds(libraryPickerFiles.map((f) => f.id))}
+                  onClick={() => setLibraryPickerSelectedIds([...libraryPickerSelectableIds])}
                   className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                  title="Same as File Library: skips Vis=close and files in running/pending jobs"
                 >
                   Select all shown
                 </button>
@@ -1766,18 +1804,24 @@ const TestCasesPage = ({ onNavigateBackToLibrary } = {}) => {
                       const setNames = getSetNamesUsingFile(f.name, savedTestCaseSets);
                       const lastModified = f.updatedAt || f.uploadDate || f.createdAt || null;
                       const ownerShort = f.ownerId === currentClientId ? 'Me' : f.ownerId ? 'Other' : '—';
+                      const inUseByBatch = fileNamesInUseByBatch.has(f.name);
+                      const isFileClosed = isBrowseFileVisClosed(f);
                       return (
                         <tr
                           key={f.id}
-                          className="hover:bg-slate-50 dark:hover:bg-slate-700/40 text-slate-800 dark:text-slate-100 cursor-default"
+                          className={`text-slate-800 dark:text-slate-100 ${
+                            isFileClosed ? 'opacity-75 bg-slate-50/50 dark:bg-slate-800/30 cursor-not-allowed' : 'hover:bg-slate-50 dark:hover:bg-slate-700/40 cursor-default'
+                          }`}
                           onMouseDown={(e) => {
                             if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return;
+                            if (isFileClosed) return;
                             if (e.button !== 0) return;
                             e.preventDefault();
                             libraryPickerDragSelectRef.current = true;
                             setLibraryPickerSelectedIds((prev) => (prev.includes(f.id) ? prev : [...prev, f.id]));
                           }}
                           onMouseEnter={() => {
+                            if (isFileClosed) return;
                             if (!libraryPickerDragSelectRef.current) return;
                             setLibraryPickerSelectedIds((prev) => (prev.includes(f.id) ? prev : [...prev, f.id]));
                           }}
@@ -1786,14 +1830,17 @@ const TestCasesPage = ({ onNavigateBackToLibrary } = {}) => {
                             <input
                               type="checkbox"
                               checked={libraryPickerSelectedIds.includes(f.id)}
+                              disabled={isFileClosed}
                               onChange={() => {
+                                if (isFileClosed) return;
                                 setLibraryPickerSelectedIds((prev) =>
                                   prev.includes(f.id) ? prev.filter((id) => id !== f.id) : [...prev, f.id]
                                 );
                               }}
                               onClick={(e) => e.stopPropagation()}
-                              className="w-4 h-4 rounded border-slate-300 text-blue-600"
+                              className={`w-4 h-4 rounded border-slate-300 text-blue-600 ${isFileClosed ? 'cursor-not-allowed opacity-50' : ''}`}
                               aria-label={`Select ${f.name}`}
+                              title={isFileClosed ? 'Vis=close — not selectable (same as File Library)' : undefined}
                             />
                           </td>
                           <td className="px-2 py-1.5 align-top">
@@ -1914,8 +1961,39 @@ const TestCasesPage = ({ onNavigateBackToLibrary } = {}) => {
                           <td className="px-2 py-1.5 align-top text-slate-600 dark:text-slate-300" title={f.ownerId ? String(f.ownerId) : ''}>
                             {ownerShort}
                           </td>
-                          <td className="px-2 py-1.5 align-top text-center text-slate-400" title={f.visibility || 'public'}>
-                            {f.visibility === 'private' ? <Lock size={14} className="inline" /> : f.visibility === 'team' ? <Users size={14} className="inline" /> : <Globe size={14} className="inline" />}
+                          <td className="px-2 py-1.5 align-top text-center text-slate-400">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (inUseByBatch) {
+                                  addToast({
+                                    type: 'warning',
+                                    message: 'ไฟล์นี้ถูกล็อกจาก process (running/pending) — ไม่สามารถเปลี่ยน Vis ได้',
+                                  });
+                                  return;
+                                }
+                                const nextClosed = !isFileClosed;
+                                setFileVisById((prev) => ({ ...prev, [f.id]: nextClosed ? 'close' : 'open' }));
+                                setLibraryPickerSelectedIds((prev) => prev.filter((id) => id !== f.id));
+                              }}
+                              className={`inline-flex items-center justify-center p-1 rounded ${
+                                inUseByBatch
+                                  ? 'text-blue-500 hover:bg-blue-500/10 cursor-not-allowed opacity-80'
+                                  : isFileClosed
+                                    ? 'text-amber-500 hover:bg-amber-500/10'
+                                    : 'text-slate-400 hover:bg-slate-500/10'
+                              }`}
+                              title={
+                                inUseByBatch
+                                  ? 'Locked by system (running/pending)'
+                                  : isFileClosed
+                                    ? 'Closed — click to open/selectable'
+                                    : 'Open — click to close/lock from select all'
+                              }
+                            >
+                              {inUseByBatch ? <Lock size={14} className="inline" /> : isFileClosed ? <Lock size={14} className="inline" /> : <Globe size={14} className="inline" />}
+                            </button>
                           </td>
                           <td className="px-2 py-1.5 align-top whitespace-nowrap text-slate-500 dark:text-slate-400" title={lastModified ? String(lastModified) : ''}>
                             {lastModified ? String(lastModified).replace('T', ' ').slice(0, 16) : '—'}
@@ -2510,9 +2588,21 @@ const TestCasesPage = ({ onNavigateBackToLibrary } = {}) => {
             </label>
           )}
         </div>
+        <div
+          ref={tcBuilderPanelRef}
+          className="resize-y overflow-auto min-h-[260px] max-h-[80vh]"
+          style={{ height: tcBuilderPanelHeight }}
+          onMouseUp={() => {
+            const el = tcBuilderPanelRef.current;
+            if (!el) return;
+            const h = Math.round(el.getBoundingClientRect().height);
+            if (Number.isFinite(h) && h >= 260) setTcBuilderPanelHeight(h);
+          }}
+          title="Drag bottom edge to resize"
+        >
         {testCaseTableLayout === 'table' ? (
           /* Tab 1: Table layout (horizontal) — original */
-          <div className="overflow-x-auto border border-slate-200 dark:border-slate-600 rounded-lg">
+          <div className="overflow-x-auto overflow-y-visible border border-slate-200 dark:border-slate-600 rounded-lg">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-100 dark:bg-slate-800 text-left text-xs font-bold text-slate-600 dark:text-slate-400">
@@ -2884,7 +2974,7 @@ const TestCasesPage = ({ onNavigateBackToLibrary } = {}) => {
                         </button>
                         {commandMenuTcId === tc.id && (
                           <>
-                            <div className="absolute right-0 top-full mt-1 z-10 py-1 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-lg min-w-[180px]">
+                            <div className="absolute right-0 top-full mt-1 z-50 py-1 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-lg min-w-[180px]">
                               <button
                                 type="button"
                                 onClick={() => {
@@ -2926,7 +3016,7 @@ const TestCasesPage = ({ onNavigateBackToLibrary } = {}) => {
                                 Add ULP
                               </button>
                             </div>
-                            <div className="fixed inset-0 z-[5]" aria-hidden onClick={() => setCommandMenuTcId(null)} />
+                            <div className="fixed inset-0 z-40" aria-hidden onClick={() => setCommandMenuTcId(null)} />
                           </>
                         )}
                       </div>
@@ -3146,9 +3236,13 @@ const TestCasesPage = ({ onNavigateBackToLibrary } = {}) => {
                       </div>
                       {tc.extraColumns && Object.keys(tc.extraColumns).length > 0 ? (
                         Object.entries(tc.extraColumns)
-                          .filter(([col]) => {
+                          .filter(([col, val]) => {
                             const m = col.match(/^(VCD|ERoM|ULP)(\d+)$/);
                             if (!m) return true;
+                            // Avoid duplicate "empty" columns:
+                            // - The command section already renders dropdowns for added commands (even when file is empty)
+                            // - So in this extraColumns block, only show file columns when the value is not empty.
+                            if (!String(val || '').trim()) return false;
                             const type = m[1] === 'VCD' ? 'vcd' : m[1] === 'ERoM' ? 'erom' : 'ulp';
                             const idx = parseInt(m[2], 10) - 2;
                             const cmds = (tc.commands || []).filter((c) => c.type === type && (c.file || '').trim());
@@ -3320,6 +3414,7 @@ const TestCasesPage = ({ onNavigateBackToLibrary } = {}) => {
             )}
           </div>
         )}
+        </div>
 
         <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-700 flex justify-end">
           <button

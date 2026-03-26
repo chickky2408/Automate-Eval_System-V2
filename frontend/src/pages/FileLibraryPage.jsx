@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, AlertCircle, ArrowDown, ArrowUp, Bell, CheckCircle2, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock, Cpu, Download, Eye, FileCode, FileDown, FileJson, FileUp, Filter, FolderOpen, Globe, GripVertical, Grid3x3, HardDrive, History, Layers, LayoutDashboard, List, Lock, LogOut, Menu, Monitor, MoreVertical, Pause, PaintBucket, Pencil, Play, PlayCircle, Plus, RefreshCw, Save, Search, Settings, Square, StopCircle, Tag, Terminal, Trash2, Upload, User, UserPlus, Users, Wifi, WifiOff, X, XCircle, Zap
+  Activity, AlertCircle, ArrowDown, ArrowUp, Bell, CheckCircle2, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Clock, Copy, Cpu, Download, Eye, FileCode, FileDown, FileJson, FileUp, Filter, FolderOpen, Globe, GripVertical, Grid3x3, HardDrive, History, Layers, LayoutDashboard, List, Lock, LogOut, Menu, Monitor, MoreVertical, Pause, PaintBucket, Pencil, Play, PlayCircle, Plus, RefreshCw, Save, Search, Settings, Square, StopCircle, Tag, Terminal, Trash2, Upload, User, UserPlus, Users, Wifi, WifiOff, X, XCircle, Zap
 } from 'lucide-react';
 import { useTestStore } from '../store/useTestStore';
 import api from '../services/api';
@@ -132,6 +132,9 @@ const isTcManuallyClosed = (tc) => {
   return vis === 'close' || vis === 'closed' || vis === 'lock' || vis === 'locked' || vis === 'private';
 };
 
+// System lock = test case is part of a running/pending job, so the user should not change it
+const isTcSystemLocked = (tc) => tc?._status === 'running' || tc?._status === 'pending';
+
 /** Tag pill colors in Files tab + Tags modal (per file id in store) */
 const FILE_TAG_PALETTE_MAP = {
   mint: 'bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-200 dark:border-emerald-700',
@@ -153,7 +156,9 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
     savedTestCaseSets,
     savedTestCases,
     removeSavedTestCase,
+    addSavedTestCase,
     updateSavedTestCase,
+    duplicateSavedTestCase,
     updateSavedTestCaseSet,
     removeSavedTestCaseSet,
     fileTags,
@@ -415,6 +420,10 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
   /** Raw Test Cases: inline editor — key = row _key */
   const [rawTcEditorKey, setRawTcEditorKey] = useState(null);
   const [rawTcEditorDraft, setRawTcEditorDraft] = useState(null);
+  // 'edit' = modify existing row; 'duplicate' = force "save as new" flow (used for running/pending)
+  const [rawTcEditorMode, setRawTcEditorMode] = useState('edit'); // 'edit' | 'duplicate'
+  const [rawTcEditorSourceRow, setRawTcEditorSourceRow] = useState(null);
+  const [rawTcFilePicker, setRawTcFilePicker] = useState(null); // { kind: 'bin'|'vcd'|'lin', q: string } | null
   /** Raw Test Cases table: tag overflow modal + inline + (same UX as Test Cases page) */
   const [libraryRawTcTagOverflowKey, setLibraryRawTcTagOverflowKey] = useState(null);
   const [libraryRawTcTagModalAddDraft, setLibraryRawTcTagModalAddDraft] = useState('');
@@ -447,22 +456,8 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
   };
   const [allProfilesTestData, setAllProfilesTestData] = useState({ savedTestCases: [], savedTestCaseSets: [] });
   const [allProfilesTestDataLoading, setAllProfilesTestDataLoading] = useState(false);
-  const [fileVisById, setFileVisById] = useState(() => {
-    try {
-      const raw = localStorage.getItem('fileVisById');
-      const parsed = raw ? JSON.parse(raw) : {};
-      return parsed && typeof parsed === 'object' ? parsed : {};
-    } catch {
-      return {};
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem('fileVisById', JSON.stringify(fileVisById || {}));
-    } catch {
-      // ignore
-    }
-  }, [fileVisById]);
+  const fileVisById = useTestStore((s) => s.fileVisById);
+  const setFileVisById = useTestStore((s) => s.setFileVisById);
 
   // Load test cases/sets from all profiles when filtering by "all" or "shared"
   useEffect(() => {
@@ -931,8 +926,21 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
       }
       setRawTcEditorKey(tc._key);
       setRawTcEditorDraft(buildRawTcDraft(tc));
+      setRawTcEditorMode('edit');
+      setRawTcEditorSourceRow(null);
     },
     [activeProfileId, addToast, buildRawTcDraft, canEditRawTcRow]
+  );
+
+  const openRawTcDuplicateEditor = useCallback(
+    (row) => {
+      if (!row) return;
+      setRawTcEditorKey(row._key);
+      setRawTcEditorDraft(buildRawTcDraft(row));
+      setRawTcEditorMode('duplicate');
+      setRawTcEditorSourceRow(row);
+    },
+    [buildRawTcDraft]
   );
 
   const isFileManuallyClosed = useCallback(
@@ -1070,16 +1078,65 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
   const closeRawTcEditor = useCallback(() => {
     setRawTcEditorKey(null);
     setRawTcEditorDraft(null);
+    setRawTcEditorMode('edit');
+    setRawTcEditorSourceRow(null);
+    setRawTcFilePicker(null);
   }, []);
+
+  const rawTcPickerFiles = useMemo(() => {
+    if (!rawTcFilePicker) return [];
+    const list = Array.isArray(uploadedFiles) ? uploadedFiles : [];
+    const q = String(rawTcFilePicker.q || '').trim().toLowerCase();
+    const kind = rawTcFilePicker.kind;
+    const kindOf = (name) => {
+      const ext = String(name || '').split('.').pop()?.toLowerCase();
+      if (ext === 'vcd') return 'vcd';
+      if (['bin', 'hex', 'elf', 'erom'].includes(ext)) return 'bin';
+      if (['lin', 'ulp'].includes(ext)) return 'lin';
+      return null;
+    };
+    const matchQ = (f) => {
+      if (!q) return true;
+      const name = String(f?.name || '').toLowerCase();
+      if (name.includes(q)) return true;
+      const tagRaw = String((fileTags && fileTags[f?.id]) || '').toLowerCase();
+      if (tagRaw.includes(q)) return true;
+      const sizeTxt = String(f?.sizeFormatted ?? f?.size ?? '').toLowerCase();
+      if (sizeTxt.includes(q)) return true;
+      const ownerLabel = f?.ownerId === currentClientId ? 'me' : f?.ownerId ? 'other' : '';
+      const ownerId = String(f?.ownerId || '').toLowerCase();
+      if (`${ownerLabel} ${ownerId}`.includes(q)) return true;
+      const usedByTcs = getTestCasesUsingFile(f?.name, savedTestCases, savedTestCaseSets) || [];
+      const usedTxt = usedByTcs.map((u) => `${u.name} ${u.set || ''}`).join(' ').toLowerCase();
+      if (usedTxt.includes(q)) return true;
+      const setNames = getSetNamesUsingFile(f?.name, savedTestCaseSets) || [];
+      if (setNames.join(' ').toLowerCase().includes(q)) return true;
+      return false;
+    };
+    return list
+      .filter((f) => kindOf(f?.name) === kind)
+      .filter(matchQ);
+  }, [rawTcFilePicker, uploadedFiles, fileTags, currentClientId, savedTestCases, savedTestCaseSets]);
+
+  const pickRawTcFileName = useCallback((fileObj) => {
+    if (!fileObj?.name) return;
+    if (!rawTcFilePicker) return;
+    const name = String(fileObj.name);
+    const kind = rawTcFilePicker.kind;
+    if (kind === 'bin') setRawTcEditorDraft((d) => (d ? { ...d, binName: name } : d));
+    if (kind === 'vcd') setRawTcEditorDraft((d) => (d ? { ...d, vcdName: name } : d));
+    if (kind === 'lin') setRawTcEditorDraft((d) => (d ? { ...d, linName: name } : d));
+    setRawTcFilePicker(null);
+  }, [rawTcFilePicker]);
 
   const handleSaveRawTcEditor = useCallback(() => {
     if (!rawTcEditorKey || !rawTcEditorDraft) return;
-    const row = libraryRawRows.find((r) => r._key === rawTcEditorKey);
+    const row = libraryRawRows.find((r) => r._key === rawTcEditorKey) || rawTcEditorSourceRow;
     if (!row) {
       addToast({ type: 'warning', message: 'ไม่สามารถบันทึกรายการนี้ได้' });
       return;
     }
-    if (!canEditRawTcRow(row)) {
+    if (rawTcEditorMode !== 'duplicate' && !canEditRawTcRow(row)) {
       addToast({ type: 'warning', message: 'ไม่สามารถบันทึกรายการนี้ได้' });
       return;
     }
@@ -1148,6 +1205,16 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
       extraColumns: Object.keys(mergedExtra).length ? mergedExtra : undefined,
     };
 
+    if (rawTcEditorMode === 'duplicate') {
+      addSavedTestCase({
+        ...payload,
+        createdAt: new Date().toISOString(),
+      });
+      addToast({ type: 'success', message: 'Saved as new test case' });
+      closeRawTcEditor();
+      return;
+    }
+
     if (row._source === 'current' && row.id) {
       updateSavedTestCase(row.id, payload);
       addToast({ type: 'success', message: 'บันทึกเทสต์เคสแล้ว' });
@@ -1191,10 +1258,13 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
     addToast,
     mergeCommandsIntoExtraForTc,
     collectFileNamesFromTestCase,
+    addSavedTestCase,
     updateSavedTestCase,
     updateSavedTestCaseSet,
     savedTestCaseSets,
     closeRawTcEditor,
+    rawTcEditorMode,
+    rawTcEditorSourceRow,
   ]);
 
   useEffect(() => {
@@ -2139,19 +2209,24 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
                                 const key = rowKey(tc);
                                 const isSelected = selectedSetKeys.has(key);
                                 const isClosed = isTcManuallyClosed(tc);
+                                  const isSystemLocked = isTcSystemLocked(tc);
                                 const historyCount = getTestCaseHistory(tc).length;
                                 return (
                                   <tr
                                     key={key}
-                                    className={`border-b border-slate-100 dark:border-slate-700 cursor-pointer select-none ${isClosed ? 'opacity-70 bg-slate-50 dark:bg-slate-800/50 cursor-not-allowed' : ''} ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : !isClosed ? 'hover:bg-slate-50 dark:hover:bg-slate-800/50' : ''}`}
+                                      className={`border-b border-slate-100 dark:border-slate-700 cursor-pointer select-none ${
+                                        isClosed || isSystemLocked
+                                          ? 'opacity-70 bg-slate-50 dark:bg-slate-800/50 cursor-not-allowed'
+                                          : ''
+                                      } ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : !isClosed && !isSystemLocked ? 'hover:bg-slate-50 dark:hover:bg-slate-800/50' : ''}`}
                                     onClick={(e) => {
                                       if (e.target.closest('input[type="checkbox"]') || e.target.closest('button')) return;
-                                      if (isClosed) return;
+                                        if (isClosed || isSystemLocked) return;
                                       toggleSetTc(key, idx, e);
                                     }}
                                     onDoubleClick={(e) => {
                                       if (e.target.closest('input[type="checkbox"]')) return;
-                                      if (isClosed) return;
+                                        if (isClosed || isSystemLocked) return;
                                       if (onNavigateToTestCases && setLibraryEditContext) {
                                         setLibraryEditContext({ loadSetId: set.id, focusTcIndex: tc._origIndex });
                                         onNavigateToTestCases();
@@ -2159,16 +2234,28 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
                                     }}
                                     title="Double-click to edit in Test Cases page"
                                     onMouseDown={(e) => {
-                                      if (e.target.closest('input[type="checkbox"]') || e.target.closest('button') || isClosed) return;
+                                        if (e.target.closest('input[type="checkbox"]') || e.target.closest('button') || isClosed || isSystemLocked) return;
                                       if (e.button === 0) {
                                         isDragSelectingLibrarySetRef.current = true;
                                         if (!selectedSetKeys.has(key)) setSelectedLibrarySetTcKeys((prev) => [...prev, key]);
                                       }
                                     }}
-                                    onMouseEnter={() => { if (!isDragSelectingLibrarySetRef.current || isClosed) return; if (!selectedSetKeys.has(key)) setSelectedLibrarySetTcKeys((prev) => [...prev, key]); }}
+                                      onMouseEnter={() => {
+                                        if (!isDragSelectingLibrarySetRef.current || isClosed || isSystemLocked) return;
+                                        if (!selectedSetKeys.has(key)) setSelectedLibrarySetTcKeys((prev) => [...prev, key]);
+                                      }}
                                   >
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700" onClick={(e) => e.stopPropagation()}>
-                                      <input type="checkbox" checked={isSelected} disabled={isClosed} onChange={() => { if (!isClosed) toggleSetTc(key, idx, { shiftKey: false, ctrlKey: false, metaKey: false }); }} className={`w-4 h-4 rounded ${isClosed ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`} />
+                                      <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        disabled={isClosed || isSystemLocked}
+                                        onChange={() => {
+                                          if (isClosed || isSystemLocked) return;
+                                          toggleSetTc(key, idx, { shiftKey: false, ctrlKey: false, metaKey: false });
+                                        }}
+                                        className={`w-4 h-4 rounded ${isClosed || isSystemLocked ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+                                      />
                                     </td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-slate-500">{idx + 1}</td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 font-medium text-slate-800 dark:text-slate-200">{tc.name || '—'}</td>
@@ -2178,13 +2265,32 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
                                         type="button"
                                         onClick={(e) => {
                                           e.stopPropagation();
+                                            if (isSystemLocked) {
+                                              addToast({
+                                                type: 'warning',
+                                                message: 'เทสต์เคสนี้ถูกล็อกจาก process (running/pending) — ไม่สามารถเปลี่ยน Vis ได้',
+                                              });
+                                              return;
+                                            }
                                           updateTcVisibility({ ...tc, _source: 'set', _setId: set.id, _itemIndex: tc._origIndex }, !isClosed);
                                           setSelectedLibrarySetTcKeys((prev) => prev.filter((k) => k !== key));
                                         }}
-                                        className={`inline-flex items-center justify-center p-1 rounded ${isClosed ? 'text-amber-500 hover:bg-amber-500/10' : 'text-slate-400 hover:bg-slate-500/10'}`}
-                                        title={isClosed ? 'Closed — click to open/selectable' : 'Open — click to close/lock from select all'}
+                                          className={`inline-flex items-center justify-center p-1 rounded ${
+                                            isSystemLocked
+                                              ? 'text-blue-500 hover:bg-blue-500/10 cursor-not-allowed'
+                                              : isClosed
+                                                ? 'text-amber-500 hover:bg-amber-500/10'
+                                                : 'text-slate-400 hover:bg-slate-500/10'
+                                          }`}
+                                          title={
+                                            isSystemLocked
+                                              ? 'Locked by system (running/pending) — system lock'
+                                              : isClosed
+                                                ? 'Closed — click to open/selectable'
+                                                : 'Open — click to close/lock from select all'
+                                          }
                                       >
-                                        {isClosed ? <Lock size={14} /> : <Globe size={14} />}
+                                          {isSystemLocked ? <Lock size={14} /> : isClosed ? <Lock size={14} /> : <Globe size={14} />}
                                       </button>
                                     </td>
                                     <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center text-slate-500 dark:text-slate-400 text-xs">{tc.createdAt ? new Date(tc.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'}</td>
@@ -2449,10 +2555,9 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
                     type="button"
                     onClick={handleSendSelectedToRunSet}
                     disabled={selectedSet.size === 0}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                    className="ml-auto inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 disabled:pointer-events-none transition-colors"
                     title={selectedSet.size > 0 ? `Send ${selectedSet.size} selected to Run Set` : 'Select test cases to send'}
                   >
-                    <Plus size={14} />
                     Send to Run Set
                   </button>
                 )}
@@ -2576,13 +2681,29 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
+                                  if (isTcSystemLocked(tc)) {
+                                    addToast({ type: 'warning', message: 'เทสต์เคสนี้ถูกล็อกจาก process (running/pending) — ไม่สามารถเปลี่ยน Vis ได้' });
+                                    return;
+                                  }
                                   updateTcVisibility(tc, !isTcManuallyClosed(tc));
                                   setSelectedLibraryTcKeys((prev) => prev.filter((k) => k !== key));
                                 }}
-                                className={`inline-flex items-center justify-center p-1 rounded ${isTcManuallyClosed(tc) ? 'text-amber-500 hover:bg-amber-500/10' : 'text-slate-400 hover:bg-slate-500/10'}`}
-                                title={isTcManuallyClosed(tc) ? 'Closed — click to open/selectable' : 'Open — click to close/lock from select all'}
+                                className={`inline-flex items-center justify-center p-1 rounded ${
+                                  isTcSystemLocked(tc)
+                                    ? 'text-blue-500 hover:bg-blue-500/10 cursor-not-allowed'
+                                    : isTcManuallyClosed(tc)
+                                      ? 'text-amber-500 hover:bg-amber-500/10'
+                                      : 'text-slate-400 hover:bg-slate-500/10'
+                                }`}
+                                title={
+                                  isTcSystemLocked(tc)
+                                    ? 'Locked by system (running/pending) — system lock'
+                                    : isTcManuallyClosed(tc)
+                                      ? 'Closed — click to open/selectable'
+                                      : 'Open — click to close/lock from select all'
+                                }
                               >
-                                {isTcManuallyClosed(tc) ? <Lock size={14} /> : <Globe size={14} />}
+                                {isTcSystemLocked(tc) ? <Lock size={14} /> : isTcManuallyClosed(tc) ? <Lock size={14} /> : <Globe size={14} />}
                               </button>
                             </td>
                             <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 min-w-[160px]">
@@ -2935,19 +3056,31 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
+                                  if (isTcSystemLocked(tc)) {
+                                    openRawTcDuplicateEditor(tc);
+                                    return;
+                                  }
                                   openRawTcEditor(tc);
                                 }}
-                                disabled={!canEditRawTcRow(tc)}
+                                disabled={!canEditRawTcRow(tc) && !isTcSystemLocked(tc)}
                                 className={`inline-flex items-center justify-center p-1.5 rounded-lg transition-colors ${
                                   canEditRawTcRow(tc)
                                     ? rawTcEditorKey === key
                                       ? 'bg-blue-600 text-white'
                                       : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
-                                    : 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                                    : isTcSystemLocked(tc)
+                                      ? 'text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30'
+                                      : 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
                                 }`}
-                                title={canEditRawTcRow(tc) ? 'แก้ไขในหน้านี้' : 'แก้ไม่ได้ (ล็อกหรือไม่ใช่โปรไฟล์คุณ)'}
+                                title={
+                                  canEditRawTcRow(tc)
+                                    ? 'แก้ไขในหน้านี้'
+                                    : isTcSystemLocked(tc)
+                                      ? 'Running/Pending — Duplicate เพื่อแก้ไขได้'
+                                      : 'แก้ไม่ได้ (ล็อกหรือไม่ใช่โปรไฟล์คุณ)'
+                                }
                               >
-                                <Pencil size={16} />
+                                {isTcSystemLocked(tc) ? <Copy size={16} /> : <Pencil size={16} />}
                               </button>
                             </td>
                             <td className="px-2 py-2 border-r border-slate-100 dark:border-slate-700 text-center">
@@ -2971,7 +3104,9 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
                 {rawTcEditorDraft && (
                   <div className="w-full xl:w-[min(400px,calc(100vw-2rem))] flex-shrink-0 rounded-xl border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-800/50 p-4 space-y-3 shadow-sm">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-bold text-slate-800 dark:text-slate-100">Edit Test Case</span>
+                      <span className="text-sm font-bold text-slate-800 dark:text-slate-100">
+                        {rawTcEditorMode === 'duplicate' ? 'Duplicate Test Case' : 'Edit Test Case'}
+                      </span>
                       <button
                         type="button"
                         onClick={closeRawTcEditor}
@@ -3034,37 +3169,296 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
                     </div>
                     <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
                       ERoM
-                      <input
-                        type="text"
-                        list="raw-tc-bin-datalist"
-                        value={rawTcEditorDraft.binName}
-                        onChange={(e) => setRawTcEditorDraft((d) => (d ? { ...d, binName: e.target.value } : d))}
-                        className="mt-1 w-full px-2 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900"
-                        placeholder="select file"
-                      />
+                      <div className="relative mt-1">
+                        <input
+                          type="text"
+                          value={rawTcEditorDraft.binName}
+                          onChange={(e) => setRawTcEditorDraft((d) => (d ? { ...d, binName: e.target.value } : d))}
+                          className="w-full pr-10 px-2 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900"
+                          placeholder="Type to search…"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setRawTcFilePicker({ kind: 'bin', q: rawTcEditorDraft.binName || '' })}
+                          className="absolute inset-y-0 right-0 px-2 inline-flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                          title="Browse from Library"
+                        >
+                          <ChevronDown size={16} />
+                        </button>
+                      </div>
                     </label>
                     <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
                       VCD
-                      <input
-                        type="text"
-                        list="raw-tc-vcd-datalist"
-                        value={rawTcEditorDraft.vcdName}
-                        onChange={(e) => setRawTcEditorDraft((d) => (d ? { ...d, vcdName: e.target.value } : d))}
-                        className="mt-1 w-full px-2 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900"
-                        placeholder="select file"
-                      />
+                      <div className="relative mt-1">
+                        <input
+                          type="text"
+                          value={rawTcEditorDraft.vcdName}
+                          onChange={(e) => setRawTcEditorDraft((d) => (d ? { ...d, vcdName: e.target.value } : d))}
+                          className="w-full pr-10 px-2 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900"
+                          placeholder="Type to search…"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setRawTcFilePicker({ kind: 'vcd', q: rawTcEditorDraft.vcdName || '' })}
+                          className="absolute inset-y-0 right-0 px-2 inline-flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                          title="Browse from Library"
+                        >
+                          <ChevronDown size={16} />
+                        </button>
+                      </div>
                     </label>
                     <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">
                       ULP
-                      <input
-                        type="text"
-                        list="raw-tc-lin-datalist"
-                        value={rawTcEditorDraft.linName}
-                        onChange={(e) => setRawTcEditorDraft((d) => (d ? { ...d, linName: e.target.value } : d))}
-                        className="mt-1 w-full px-2 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900"
-                        placeholder="select file"
-                      />
+                      <div className="relative mt-1">
+                        <input
+                          type="text"
+                          value={rawTcEditorDraft.linName}
+                          onChange={(e) => setRawTcEditorDraft((d) => (d ? { ...d, linName: e.target.value } : d))}
+                          className="w-full pr-10 px-2 py-1.5 text-sm rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900"
+                          placeholder="Type to search…"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setRawTcFilePicker({ kind: 'lin', q: rawTcEditorDraft.linName || '' })}
+                          className="absolute inset-y-0 right-0 px-2 inline-flex items-center justify-center text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                          title="Browse from Library"
+                        >
+                          <ChevronDown size={16} />
+                        </button>
+                      </div>
                     </label>
+                    {rawTcFilePicker && (
+                      <div className="fixed inset-0 z-[120] flex items-center justify-center p-4">
+                        <div className="absolute inset-0 bg-black/50" onClick={() => setRawTcFilePicker(null)} role="presentation" />
+                        <div className="relative w-[min(980px,calc(100vw-2rem))] max-h-[80vh] overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl flex flex-col">
+                          <div className="px-5 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+                            <div className="text-sm font-bold text-slate-800 dark:text-slate-100 truncate">
+                              Browse file — {rawTcFilePicker.kind === 'bin' ? 'ERoM' : rawTcFilePicker.kind === 'vcd' ? 'VCD' : 'ULP'}
+                            </div>
+                            <input
+                              type="text"
+                              value={rawTcFilePicker.q}
+                              onChange={(e) => setRawTcFilePicker((p) => (p ? { ...p, q: e.target.value } : p))}
+                              placeholder="Type to search…"
+                              className="ml-3 flex-1 min-w-0 px-3 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setRawTcFilePicker(null)}
+                              className="ml-auto p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                              title="Close"
+                            >
+                              <X size={18} />
+                            </button>
+                          </div>
+                          <div className="overflow-auto flex-1">
+                            <table className="w-full text-left text-xs border-collapse select-none">
+                              <thead className="sticky top-0 z-10 bg-slate-100 dark:bg-slate-900/95 border-b border-slate-200 dark:border-slate-600">
+                                <tr className="text-slate-600 dark:text-slate-300">
+                                  <th className="px-2 py-2 font-semibold min-w-[220px]">Name</th>
+                                  <th className="px-2 py-2 font-semibold min-w-[140px]">Tags</th>
+                                  <th className="px-2 py-2 font-semibold min-w-[120px]">Used by TC</th>
+                                  <th className="px-2 py-2 font-semibold min-w-[120px]">Sets</th>
+                                  <th className="px-2 py-2 font-semibold w-16">Owner</th>
+                                  <th className="px-2 py-2 font-semibold w-10 text-center" title="Visibility">Vis</th>
+                                  <th className="px-2 py-2 font-semibold min-w-[120px]">Modified</th>
+                                  <th className="px-2 py-2 font-semibold w-20 text-right">Size</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                                {rawTcPickerFiles.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={8} className="p-8 text-center text-slate-400">No files</td>
+                                  </tr>
+                                ) : (
+                                  rawTcPickerFiles.map((f) => {
+                                    const tagVal = (fileTags && fileTags[f.id]) || '';
+                                    const tags = splitTags(tagVal);
+                                    const displayName = (fileDisplayNames && fileDisplayNames[f.id]) || (String(f.name || '').split('/').pop() || f.name);
+                                    const usedByTcs = getTestCasesUsingFile(f.name, savedTestCases, savedTestCaseSets);
+                                    const setNames = getSetNamesUsingFile(f.name, savedTestCaseSets);
+                                    const lastModified = f.updatedAt || f.uploadDate || f.createdAt || null;
+                                    const ownerShort = f.ownerId === currentClientId ? 'Me' : f.ownerId ? 'Other' : '—';
+                                    const inUseByBatch = fileNamesInUseByBatch.has(f.name);
+                                    const isClosed = isFileManuallyClosed(f);
+                                    return (
+                                      <tr
+                                        key={`rawtc-pick-${rawTcFilePicker.kind}-${f.id}`}
+                                        className={`text-slate-800 dark:text-slate-100 ${isClosed ? 'opacity-70 bg-slate-50 dark:bg-slate-800/50 cursor-not-allowed' : 'hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer'}`}
+                                        onClick={() => { if (!isClosed) pickRawTcFileName(f); }}
+                                        title={isClosed ? 'Vis=close — not selectable' : 'Click to choose'}
+                                      >
+                                        <td className="px-2 py-2">
+                                          <div className="font-medium break-all" title={f.name}>{displayName}</div>
+                                          {displayName !== f.name && <div className="text-[10px] text-slate-400 truncate" title={f.name}>{String(f.name || '').split('/').pop() || f.name}</div>}
+                                        </td>
+                                        <td className="px-2 py-2">
+                                          {tags.length === 0 ? (
+                                            <span className="text-slate-400">—</span>
+                                          ) : (
+                                            <div className="flex flex-wrap items-center gap-0.5">
+                                              {tags.slice(0, 3).map((t, ti) => (
+                                                <button
+                                                  key={`rawtc-pick-tag-${f.id}-${ti}-${t}`}
+                                                  className="px-1 py-0.5 rounded-full text-[10px] bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700"
+                                                  title={t}
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setRawTcFilePicker(null);
+                                                    setShowAllUsedByTcForFileName(null);
+                                                    setShowAllSetsForFileName(null);
+                                                    setFileTagsModalEditIndex(null);
+                                                    setFileTagsModalEditDraft('');
+                                                    setFileTagsModalAddDraft('');
+                                                    setFileTagsModalAddOpen(false);
+                                                    setShowAllTagsForFileId(f.id);
+                                                  }}
+                                                >
+                                                  {t}
+                                                </button>
+                                              ))}
+                                              {tags.length > 3 && (
+                                                <button
+                                                  className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800 text-slate-600 dark:text-slate-200"
+                                                  title={tags.join(', ')}
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setRawTcFilePicker(null);
+                                                    setShowAllUsedByTcForFileName(null);
+                                                    setShowAllSetsForFileName(null);
+                                                    setFileTagsModalEditIndex(null);
+                                                    setFileTagsModalEditDraft('');
+                                                    setFileTagsModalAddDraft('');
+                                                    setFileTagsModalAddOpen(false);
+                                                    setShowAllTagsForFileId(f.id);
+                                                  }}
+                                                >
+                                                  …
+                                                </button>
+                                              )}
+                                            </div>
+                                          )}
+                                        </td>
+                                        <td className="px-2 py-2">
+                                          {usedByTcs.length === 0 ? (
+                                            <span className="text-slate-400">—</span>
+                                          ) : (
+                                            <div className="flex flex-wrap items-center gap-0.5">
+                                              {usedByTcs.slice(0, 3).map((u, ui) => (
+                                                <button
+                                                  key={`rawtc-pick-ub-${f.id}-${ui}-${u.name}-${u.set || ''}`}
+                                                  className="px-1 py-0.5 rounded-full text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700"
+                                                  title={u.set ? `${u.name} (${u.set})` : u.name}
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setRawTcFilePicker(null);
+                                                    setShowAllTagsForFileId(null);
+                                                    setShowAllSetsForFileName(null);
+                                                    setShowAllUsedByTcForFileName(f.name);
+                                                  }}
+                                                >
+                                                  {u.name}
+                                                </button>
+                                              ))}
+                                              {usedByTcs.length > 3 && (
+                                                <button
+                                                  className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800 text-slate-600 dark:text-slate-200"
+                                                  title={usedByTcs.map((u) => (u.set ? `${u.name} (${u.set})` : u.name)).join('\n')}
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setRawTcFilePicker(null);
+                                                    setShowAllTagsForFileId(null);
+                                                    setShowAllSetsForFileName(null);
+                                                    setShowAllUsedByTcForFileName(f.name);
+                                                  }}
+                                                >
+                                                  …
+                                                </button>
+                                              )}
+                                            </div>
+                                          )}
+                                        </td>
+                                        <td className="px-2 py-2">
+                                          {setNames.length === 0 ? (
+                                            <span className="text-slate-400">—</span>
+                                          ) : (
+                                            <div className="flex flex-wrap items-center gap-0.5">
+                                              {setNames.slice(0, 3).map((sn) => {
+                                                const st = setStatusByName.get(sn) ?? null;
+                                                return (
+                                                  <button
+                                                    key={`rawtc-pick-set-${f.id}-${sn}`}
+                                                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium border max-w-[180px] truncate ${getSetJobStatusPillClass(st)}`}
+                                                    title={st ? `${sn} — job: ${st}` : `${sn} — no active job`}
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      setRawTcFilePicker(null);
+                                                      setShowAllTagsForFileId(null);
+                                                      setShowAllUsedByTcForFileName(null);
+                                                      setShowAllSetsForFileName(f.name);
+                                                    }}
+                                                  >
+                                                    {sn}
+                                                  </button>
+                                                );
+                                              })}
+                                              {setNames.length > 3 && (
+                                                <button
+                                                  className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800 text-slate-600 dark:text-slate-200"
+                                                  title={setNames.join(', ')}
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setRawTcFilePicker(null);
+                                                    setShowAllTagsForFileId(null);
+                                                    setShowAllUsedByTcForFileName(null);
+                                                    setShowAllSetsForFileName(f.name);
+                                                  }}
+                                                >
+                                                  …
+                                                </button>
+                                              )}
+                                            </div>
+                                          )}
+                                        </td>
+                                        <td className="px-2 py-2 text-slate-600 dark:text-slate-300">{ownerShort}</td>
+                                        <td className="px-2 py-2 text-center text-slate-400">
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              if (inUseByBatch) {
+                                                addToast({ type: 'warning', message: 'ไฟล์นี้ถูกล็อกจาก process (running/pending) — ไม่สามารถเปลี่ยน Vis ได้' });
+                                                return;
+                                              }
+                                              const nextClosed = !isClosed;
+                                              setFileVisById((prev) => ({ ...prev, [f.id]: nextClosed ? 'close' : 'open' }));
+                                            }}
+                                            className={`inline-flex items-center justify-center p-1 rounded ${
+                                              inUseByBatch ? 'text-blue-500 hover:bg-blue-500/10 cursor-not-allowed opacity-80' : isClosed ? 'text-amber-500 hover:bg-amber-500/10' : 'text-slate-400 hover:bg-slate-500/10'
+                                            }`}
+                                            title={inUseByBatch ? 'Locked by system (running/pending)' : isClosed ? 'Closed — click to open/selectable' : 'Open — click to close/lock from select all'}
+                                          >
+                                            {inUseByBatch ? <Lock size={14} className="inline" /> : isClosed ? <Lock size={14} className="inline" /> : <Globe size={14} className="inline" />}
+                                          </button>
+                                        </td>
+                                        <td className="px-2 py-2 whitespace-nowrap text-slate-500 dark:text-slate-400 text-[11px]">{lastModified ? String(lastModified).replace('T', ' ').slice(0, 16) : '—'}</td>
+                                        <td className="px-2 py-2 text-right text-slate-600 dark:text-slate-300 whitespace-nowrap">{f.sizeFormatted ?? f.size ?? '—'}</td>
+                                      </tr>
+                                    );
+                                  })
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-600">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
@@ -3225,7 +3619,7 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
                         className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700"
                       >
                         <Save size={14} />
-                        save
+                        {rawTcEditorMode === 'duplicate' ? 'Save as new' : 'save'}
                       </button>
                       <button
                         type="button"
@@ -3845,14 +4239,22 @@ const FileLibraryPage = ({ onNavigateToTestCases, onNavigateToRunSet }) => {
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
+                                    if (inUseByBatch) {
+                                      addToast({ type: 'warning', message: 'ไฟล์นี้ถูกล็อกจาก process (running/pending) — ไม่สามารถเปลี่ยน Vis ได้' });
+                                      return;
+                                    }
                                     const nextClosed = !isFileClosed;
                                     setFileVisById((prev) => ({ ...prev, [f.id]: nextClosed ? 'close' : 'open' }));
                                     setSelectedLibraryFileIds((prev) => prev.filter((id) => id !== f.id));
                                   }}
-                                  className={`inline-flex items-center justify-center p-1 rounded ${isFileClosed ? 'text-amber-500 hover:bg-amber-500/10' : 'text-slate-400 hover:bg-slate-500/10'}`}
-                                  title={isFileClosed ? 'Closed — click to open/selectable' : 'Open — click to close/lock from select all'}
+                                  className={`inline-flex items-center justify-center p-1 rounded ${
+                                    inUseByBatch ? 'text-blue-500 hover:bg-blue-500/10 cursor-not-allowed opacity-80' : isFileClosed ? 'text-amber-500 hover:bg-amber-500/10' : 'text-slate-400 hover:bg-slate-500/10'
+                                  }`}
+                                  title={
+                                    inUseByBatch ? 'Locked by system (running/pending) — system lock' : isFileClosed ? 'Closed — click to open/selectable' : 'Open — click to close/lock from select all'
+                                  }
                                 >
-                                  {isFileClosed ? <Lock size={14} className="inline" /> : <Globe size={14} className="inline" />}
+                                  {inUseByBatch ? <Lock size={14} className="inline" /> : isFileClosed ? <Lock size={14} className="inline" /> : <Globe size={14} className="inline" />}
                                 </button>
                               </td>
                               <td className="px-2 py-1.5 align-top whitespace-nowrap text-slate-500 dark:text-slate-400 text-[11px]" title={lastModified ? String(lastModified) : ''}>
